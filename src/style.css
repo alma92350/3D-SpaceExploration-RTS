@@ -133,6 +133,16 @@ html, body {
 .hud-panel { min-width: 170px; }
 .hud-title { font-weight: 600; }
 .hud-detail { color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* Building detail (P2-T09). The status carries a glyph in the text as well as this colour: N-05
+   forbids colour alone, and "running slow" versus "stopped dead" are different things to do. */
+.hud-recipe { color: var(--muted); font-size: 12px; margin-top: 4px; }
+.hud-status { font-size: 12px; margin-top: 2px; }
+.hud-status[data-severity="ok"] { color: #7fd39b; }
+.hud-status[data-severity="warn"] { color: #e8b558; }
+.hud-status[data-severity="bad"] { color: #e87a6b; }
+.hud-status[data-severity="paused"] { color: var(--muted); }
+.hud-buffers { color: var(--muted); font-size: 11px; margin-top: 2px; font-variant-numeric: tabular-nums; }
 .hud-actions { display: flex; flex-direction: column; gap: 6px; }
 .hud-row { display: flex; flex-wrap: wrap; gap: 6px; }
 

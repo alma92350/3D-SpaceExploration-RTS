@@ -10,6 +10,7 @@
 // but layout is not free, and this runs inside the same 16.6 ms as the renderer.
 
 import { BUILDINGS, UNITS } from "../engine/index.js";
+import { type BuildingPanelModel, buildingPanelModel } from "./building-panel.js";
 import { FLAG_BUILDING_KIND, type Snapshot } from "../bridge/snapshot.js";
 
 export interface SelectionEntry {
@@ -65,6 +66,14 @@ export interface HudModel {
   /** Structures a selected worker can start. Empty unless a worker is selected. */
   readonly builds: readonly BuildOption[];
   readonly tickText: string;
+  /**
+   * The selected building's detail, composed in rather than inlined (ADR-0012 §4).
+   *
+   * `hudModel` calls `buildingPanelModel` and hands the result through. That is what "composed"
+   * means here: one model per panel, each testable alone, assembled at the top rather than grown
+   * into one function with six branches.
+   */
+  readonly buildingDetail: BuildingPanelModel;
 }
 
 /** The MVP's build menu. A deliberate subset — the rest of the roster is Phase 2 (PRD §5). */
@@ -158,6 +167,7 @@ export function hudModel(snap: Snapshot): HudModel {
     production,
     builds,
     tickText: formatClock(snap.time),
+    buildingDetail: buildingPanelModel(snap),
   };
 }
 
@@ -222,6 +232,8 @@ export class HudView {
       ? `${model.selection[0]!.hp} / ${model.selection[0]!.maxHp} HP`
       : model.selection.length > 1 ? `${model.selection.length} selected` : "");
 
+    this.renderBuildingDetail(model.buildingDetail);
+
     // Buttons are rebuilt only when the SET changes, not when affordability does — affordability
     // is a class toggle. Rebuilding a button list every frame is both garbage and a lost click.
     if (model.canDeploy !== this.lastDeploy) {
@@ -279,6 +291,30 @@ export class HudView {
     }
   }
 
+  /**
+   * The building detail (P2-T09). Text-only and cheap: a factory's status changes on a tick, not on
+   * a frame, so every write here is guarded by `setText`'s "only if it changed" check.
+   *
+   * The status carries a **glyph as well as a class**, because N-05 forbids colour alone — a player
+   * who cannot separate the amber warning from the red stop still has to be able to tell "running
+   * slow" from "stopped dead", which are different things to do about it.
+   */
+  private renderBuildingDetail(detail: BuildingPanelModel): void {
+    this.setText("recipe", detail.recipeText ?? "");
+    const glyph = detail.severity === "ok" ? "▶" : detail.severity === "paused" ? "❙❙"
+      : detail.severity === "warn" ? "▲" : "■";
+    this.setText("status", detail.building ? `${glyph} ${detail.statusText}` : "");
+    const status = this.root.querySelector<HTMLElement>('[data-hud="status"]');
+    if (status) status.dataset.severity = detail.building ? detail.severity : "";
+
+    // Buffers are a string rather than a node list: at most a handful of commodities, changing on
+    // a tick, and a rebuilt node list per tick is the garbage this HUD is careful not to make.
+    const buffers = [...detail.inputs, ...detail.outputs]
+      .map((b) => `${b.com} ${Math.floor(b.qty)}/${Math.round(b.cap)}`)
+      .join(" · ");
+    this.setText("buffers", buffers);
+  }
+
   private setText(key: string, value: string): void {
     if (this.lastText.get(key) === value) return;
     this.lastText.set(key, value);
@@ -302,6 +338,9 @@ const TEMPLATE = `
     <div class="hud-panel">
       <div class="hud-title" data-hud="selection-summary">Nothing selected</div>
       <div class="hud-detail" data-hud="selection-detail"></div>
+      <div class="hud-recipe" data-hud="recipe"></div>
+      <div class="hud-status" data-hud="status"></div>
+      <div class="hud-buffers" data-hud="buffers"></div>
     </div>
     <div class="hud-actions">
       <div class="hud-row" data-hud="deploy"></div>
