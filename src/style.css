@@ -1,0 +1,183 @@
+/* The shell. Deliberately plain: the HUD is DOM (ADR-0007, no UI framework) and every pixel it
+   costs comes out of the same frame budget as the renderer, so there are no shadows, no blurs,
+   no transitions on anything that updates per frame. */
+
+:root {
+  --bg: #05060b;
+  --panel: rgba(12, 15, 22, 0.88);
+  --edge: rgba(120, 140, 170, 0.22);
+  --text: #dbe3ef;
+  --muted: #8e9bb0;
+  --player: #4fd1ff;
+  --warn: #ff9d4f;
+  --good: #7dffb0;
+  --bad: #ff5c5c;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.4 "Segoe UI", system-ui, -apple-system, sans-serif;
+  user-select: none;
+}
+
+#viewport {
+  position: fixed;
+  inset: 0;
+  cursor: crosshair;
+}
+
+#scene, #overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* The overlay never eats a click — every gesture belongs to #viewport. */
+#overlay { pointer-events: none; }
+
+#boot {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  letter-spacing: 0.08em;
+}
+
+/* ---------- HUD ---------- */
+
+#hud {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+}
+
+#hud > * { pointer-events: auto; }
+
+.hud-top {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  gap: 18px;
+  padding: 7px 14px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--edge);
+  border-right: 1px solid var(--edge);
+  border-bottom-right-radius: 6px;
+}
+
+.hud-res { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
+.hud-res b { color: var(--text); font-variant-numeric: tabular-nums; }
+.hud-res.blocked b, .hud-res.blocked span { color: var(--warn); }
+.hud-clock { color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.dot { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+.dot.ore { background: #b9a37a; }
+.dot.crystals { background: #7fd7ff; }
+.dot.radioactives { background: #a6ff8f; }
+.dot.credits { background: #ffd479; }
+
+.hud-notice {
+  position: absolute;
+  top: 44px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 6px 12px;
+  background: rgba(30, 12, 12, 0.92);
+  border: 1px solid var(--bad);
+  border-radius: 4px;
+  opacity: 0;
+}
+.hud-notice.visible { opacity: 1; }
+
+.hud-bottom {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+  padding: 10px 14px;
+  background: var(--panel);
+  border-top: 1px solid var(--edge);
+  border-right: 1px solid var(--edge);
+  border-top-right-radius: 6px;
+  min-width: 380px;
+}
+
+.hud-panel { min-width: 170px; }
+.hud-title { font-weight: 600; }
+.hud-detail { color: var(--muted); font-variant-numeric: tabular-nums; }
+.hud-actions { display: flex; flex-direction: column; gap: 6px; }
+.hud-row { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.hud-button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 92px;
+  padding: 5px 8px;
+  background: rgba(30, 38, 52, 0.9);
+  border: 1px solid var(--edge);
+  border-radius: 4px;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.hud-button:hover { border-color: var(--player); }
+.hud-button-cost { color: var(--muted); font-size: 11px; }
+/* Unaffordable is dimming AND a struck-through cost — never colour alone (N-05). */
+.hud-button.unaffordable { opacity: 0.45; }
+.hud-button.unaffordable .hud-button-cost { text-decoration: line-through; }
+
+/* ---------- Sidebar ---------- */
+
+#sidebar {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  width: 244px;
+  padding: 10px;
+  background: var(--panel);
+  border-top: 1px solid var(--edge);
+  border-left: 1px solid var(--edge);
+  border-top-left-radius: 6px;
+}
+
+#minimap {
+  width: 220px;
+  height: 138px;
+  display: block;
+  border: 1px solid var(--edge);
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.tier-picker { display: flex; gap: 4px; margin-top: 8px; }
+.tier {
+  flex: 1;
+  padding: 3px 0;
+  background: rgba(30, 38, 52, 0.9);
+  border: 1px solid var(--edge);
+  border-radius: 3px;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+}
+.tier.active { color: var(--bg); background: var(--player); border-color: var(--player); }
+
+.fallback-notice { display: none; margin: 8px 0 0; color: var(--warn); font-size: 11px; }
+.fallback-notice.visible { display: block; }
+
+.hint { margin: 8px 0 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
+.hint b { color: var(--text); font-weight: 600; }

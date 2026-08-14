@@ -1,0 +1,308 @@
+{
+  "upstream": "https://github.com/alma92350/SpaceExploration-RTS",
+  "ref": "main",
+  "commit": "93f607ae46fb444cfd11fb9f31ef4de5834452a8",
+  "syncedFrom": "scripts/sync-engine.mjs",
+  "note": "Vendored, unmodified (ADR-0003). Do not edit anything listed here — CI fails on drift. Behaviour changes go upstream first, then arrive by bumping `ref` and re-running the sync.",
+  "excludedTests": [
+    {
+      "file": "ai-selfplay.test.js",
+      "reachesOutside": "../tools/selfplay.js"
+    },
+    {
+      "file": "aiStrategy.test.js",
+      "reachesOutside": "../setup.js"
+    },
+    {
+      "file": "ailab.test.js",
+      "reachesOutside": "../tools/ailab.js"
+    },
+    {
+      "file": "boot.test.js",
+      "reachesOutside": "../session.js"
+    },
+    {
+      "file": "camera.test.js",
+      "reachesOutside": "../camera.js"
+    },
+    {
+      "file": "competition.test.js",
+      "reachesOutside": "../competition.js"
+    },
+    {
+      "file": "competitionGauntlet.test.js",
+      "reachesOutside": "../competitionLedger.js"
+    },
+    {
+      "file": "competitionLedger.test.js",
+      "reachesOutside": "../competitionLedger.js"
+    },
+    {
+      "file": "competitionWorker.test.js",
+      "reachesOutside": "../competitionWorker.js"
+    },
+    {
+      "file": "dom.test.js",
+      "reachesOutside": "../dom.js"
+    },
+    {
+      "file": "duelCore.test.js",
+      "reachesOutside": "../tools/duelCore.js"
+    },
+    {
+      "file": "elo.test.js",
+      "reachesOutside": "../elo.js"
+    },
+    {
+      "file": "engine-purity.test.js",
+      "reachesOutside": "index.html"
+    },
+    {
+      "file": "genome.test.js",
+      "reachesOutside": "../tools/genome.js"
+    },
+    {
+      "file": "hud.test.js",
+      "reachesOutside": "../sound.js"
+    },
+    {
+      "file": "hudSelection-golden.test.js",
+      "reachesOutside": "../sound.js"
+    },
+    {
+      "file": "hudSelection.test.js",
+      "reachesOutside": "../sound.js"
+    },
+    {
+      "file": "input.test.js",
+      "reachesOutside": "../sound.js"
+    },
+    {
+      "file": "landing.test.js",
+      "reachesOutside": "../landingPicker.js"
+    },
+    {
+      "file": "loop.test.js",
+      "reachesOutside": "../tools/selfplay.js"
+    },
+    {
+      "file": "minimap.test.js",
+      "reachesOutside": "../minimap.js"
+    },
+    {
+      "file": "observer.test.js",
+      "reachesOutside": "../boot.js"
+    },
+    {
+      "file": "overlays.test.js",
+      "reachesOutside": "../sound.js"
+    },
+    {
+      "file": "pairing.test.js",
+      "reachesOutside": "../pairing.js"
+    },
+    {
+      "file": "playerFingerprint.test.js",
+      "reachesOutside": "../playerFingerprint.js"
+    },
+    {
+      "file": "release-manifest.test.js",
+      "reachesOutside": "../version.js"
+    },
+    {
+      "file": "render-roster.test.js",
+      "reachesOutside": "../renderUnits.js"
+    },
+    {
+      "file": "render.test.js",
+      "reachesOutside": "../render.js"
+    },
+    {
+      "file": "renderBuildings.test.js",
+      "reachesOutside": "../renderBuildings.js"
+    },
+    {
+      "file": "renderEffects.test.js",
+      "reachesOutside": "../renderEffects.js"
+    },
+    {
+      "file": "renderNodes.test.js",
+      "reachesOutside": "../renderNodes.js"
+    },
+    {
+      "file": "renderShared.test.js",
+      "reachesOutside": "../renderShared.js"
+    },
+    {
+      "file": "renderUnits.test.js",
+      "reachesOutside": "../renderUnits.js"
+    },
+    {
+      "file": "save-shape.test.js",
+      "reachesOutside": "../saveShape.js"
+    },
+    {
+      "file": "saveload.test.js",
+      "reachesOutside": "../saveload.js"
+    },
+    {
+      "file": "serve.test.js",
+      "reachesOutside": "../tools/serve.js"
+    },
+    {
+      "file": "starmap.test.js",
+      "reachesOutside": "../boot.js"
+    },
+    {
+      "file": "static-integrity.test.js",
+      "reachesOutside": "index.html"
+    },
+    {
+      "file": "suite-integrity.test.js",
+      "reachesOutside": "CONTRIBUTING.md"
+    },
+    {
+      "file": "supply.test.js",
+      "reachesOutside": "../setup.js"
+    },
+    {
+      "file": "techChart.test.js",
+      "reachesOutside": "../sound.js"
+    },
+    {
+      "file": "types-contract.test.js",
+      "reachesOutside": "../competitionLedger.js"
+    },
+    {
+      "file": "update.test.js",
+      "reachesOutside": "../update.js"
+    },
+    {
+      "file": "version.test.js",
+      "reachesOutside": "../version.js"
+    }
+  ],
+  "files": {
+    "data.js": "2a2efb722d1ebff17c94fc8dadb8b27c3baab98a7c7086be89c6dfc0f98fc657",
+    "engine/ai.js": "e84799b1d58d7af2680d38ec959a68235c9f0449ee7600b12faeabf9c56e848f",
+    "engine/aiArchetypes.js": "4d193ff04387d0616acf07796d717107280e1ed098b136181e704c38ac147063",
+    "engine/aiCommon.js": "927ce0dd83cd87e4dc1e22733b9a50bc8594a93875b38cc124d73c92056077fd",
+    "engine/aiDifficulty.js": "3f88280b7302de7791a43e31b5d292e9aa8ef00b30857fb3553c954898906559",
+    "engine/aiEconomy.js": "b541432d76178f3936cebd649e30b724b8ecd01536337b2ec7d14a3e86ca8d27",
+    "engine/aiIndustry.js": "efd72d1f6e10bc1cd8cdfcc5ea94bf334b4b2ed5e2111f78e2374ea5739415cf",
+    "engine/aiIntel.js": "767cdf5593ce8481ccbcae090c90e0bb216c51d76d55db4fcb6eec94296d825a",
+    "engine/aiMilitary.js": "75dc7e2208f3d78bfb998030e8425d47de1b7de55bd132ac40ee0bbd86cd2fd9",
+    "engine/aiStrategy.js": "3d7c91a63e6f9fe6ee325c90c9a327765beff7f3a5583f0413cd0b0824976577",
+    "engine/aiSuperweapon.js": "5b5aaa8f9ec9ab96a812a613e9122fda370b5f207954dd23fc2cb1cedd74a217",
+    "engine/aiWorkers.js": "5aef7cc4e17faa70d6bda5fde6e401ab87db3c02b69c78bcda484e9ebe24ef07",
+    "engine/bomb.js": "c640bb16217f8b87d01564c02fad3ab30d6736f318725643e395d39650374594",
+    "engine/colliders.js": "fa86ba1421fc399e55e623d577ead70ae1aa7a533e5fd14f94f1a87230e3a6e2",
+    "engine/colony.js": "f5d2513f78ff7f18e9d8ec5f016efbfceb0dcf71a81195a57a2a40189e3a6d6c",
+    "engine/colonyPolicy.js": "b6701ca1c575bdb5893eb70cb57191f09c738efe05b5005d37889bb0f2cfd3cd",
+    "engine/combat.js": "3eb9a4c9f3d80f848fb420759638f08d4000bf688464ff3c630d4008c03db934",
+    "engine/commands.js": "91e2164264b80fb86b954d2c3345618ec4e2919276b6379db17ad6e9d4a105dc",
+    "engine/diplomacy.js": "00c6808198f0c65fb3a406d686ca2c8cc92a6d1fbfb5b8388c5f3436b88987c3",
+    "engine/entities.js": "9b8ca709b945665a00a2b7d038dfd2f14ae269b2cd536e7e02a9b4fc598ae6bb",
+    "engine/factions.js": "65a67556f01d07d58b3d6f1ac2d6834ced9e71ad3591476504e926f5a830ffe8",
+    "engine/fog.js": "877caa0b942217de42aa6ac9ca3a25613d8bb58e9260de95ce17631848b2860c",
+    "engine/formation.js": "82a66b59c2afc378fc5c284b17b41c99bcdc8c56078ab65b58f0ee05fa2d305d",
+    "engine/galaxy.js": "b222aed3de4e780969c82590935545693a4c21115cf63b8c94965de909bc41da",
+    "engine/gather.js": "99ab9e797d8eddcb0a7cbc47671c619a2657d86817688fea1d066430093ab9e4",
+    "engine/grid.js": "bea9f39a3ca522a626a023a640777ba97e558a0fad7058058aee88e5eff8b2dc",
+    "engine/haul.js": "b316c08a8ab57613d1ae7b6481934f6862aae5af63a2fb086a2fe8ce179136b3",
+    "engine/industry.js": "c56c76847e61a95966dee6a7376052f0e1fd60d76306cac44051a69c6b2f670d",
+    "engine/loop.js": "40edee6a0233c81190750a8bd719666008843369f2306350cbc89a34a763b854",
+    "engine/map.js": "5f4847879158d851d67f8969fc6d45081e2f8ffd8f694bf48496271b6c43d2f8",
+    "engine/market.js": "d37da8ff4d98bebaf25edfb21359cbad1a3c835c0d5d0d2804bc073d75a825cc",
+    "engine/movement.js": "570c72dc236ea62a4df125780aa1a5b3d525cb9dbdae0c5a47eeda920b6666ab",
+    "engine/persist.js": "8c25d50b2f668862e0ccf79dadc7775dfa354a05d553a79667275b474c47c585",
+    "engine/production.js": "a64203e9eaf5a7ab5d11531a41c1c1d814c8214ae7a6aa85a5d9a410405ad623",
+    "engine/recycle.js": "a34c4ee173c12515c71c7db33019242b7f60bad302f59955ece82fb70c0fab1d",
+    "engine/repair.js": "3aec57ad8d7c9e5390df711d5f913b4b105d600b71bc5932318dcaf4cde39857",
+    "engine/rig.js": "6148fac484061984cd44e010b30b9a7838367384cb5698bd77b2c36a17aa437e",
+    "engine/rng.js": "c4f91528e0e47bef4e7d2f9b7203b401051fd809880b4dac6f53a93f6898bafc",
+    "engine/scenarios.js": "fc66275c023365ff8253de387d3ec55f7c760c1439faffe9ac2fcd699034a140",
+    "engine/scout.js": "a81fd1ec68d4b165b45af2ce869409284686d4230250709e4f6f3a855f0d244b",
+    "engine/separation.js": "5e2c5469c3e3d044f021fc525e2c2df8d51de5cc4fcde9b5cbbfd9d5470066d3",
+    "engine/sim.js": "8050c5ca9917aadcc07658ae2374d29894299f29659bf1eaeae11d14866f1d35",
+    "engine/state.js": "01abe701871ff31c4e2c76969b4c706e9fe0f1bccafa013195c493da25a6f15f",
+    "engine/supply.js": "46a5250d1ccf69f31a059cd154831aedfbbd389c0373bf85767f57692e176450",
+    "engine/techtree.js": "df275346569e40e30f117d85d2944d7eeb0adae947ec597d8adb6f9589977ad0",
+    "engine/types.js": "66e90df719896efbde19b690ff3aec93d358122e474c3309fdfcb1f0ccf98059",
+    "engine/victory.js": "ec0fc2557616b8075ada0c29525f8c9d6c4f0d0bd8fb38fc15f59b206e70f9bd",
+    "engine/wonder.js": "36988e9e701ed562f9822be7da38bc2f805e9f16cbf464273f567b380de94a81",
+    "engine/wreckage.js": "78d2a4570cc9f27ad0ec9d37d718dd287d4e0a8377770cba6c28e77eef9e4f6c",
+    "test/_helpers.js": "87cf0f0edad8948b2e830f32fee92ab2621bfc4b227577ba38564a4ae8ba51a9",
+    "test/ai-odyssey.test.js": "a2e66080ac5b06ae8e4a613eac9db6cb71aec13d06bbeb4cc033ed2dc739cdc3",
+    "test/ai.test.js": "02b9be8e020e1cf791b09db09a4d2f587646dd9baede98e13af0f7426c771d41",
+    "test/aiArchetypes.test.js": "7d31b7f4c213962d326e229709564c347a08a42235ed2fcd62f406debda1ac50",
+    "test/aiDifficulty.test.js": "b93e2235f92fbdda6a98d86d19f482d6fa2e357b9ea275d8a23f9f9b8f1a7426",
+    "test/aiEconomyOdyssey.test.js": "7ea918fdee25b722b8a4cf639355fc39783989794a520c4606e8b1dcbda15fae",
+    "test/aiIndustry.test.js": "a4c2e692348f6e0af8fad64c78ccfe728f75862b3419d6b3c57d77a714bd9acb",
+    "test/aiIntel.test.js": "dd3df81ef0db4c6d6cdd5e446392dd8679bef234df32c1e9c0fcfe10e98b078a",
+    "test/aiMilitary.test.js": "8c3d444800d7ac9446da99f3c6fdc51c6304c1ed37f517bd24c4d7ecf81c6b04",
+    "test/aiSuperweapon.test.js": "40ca87849fc65805a321d2a15f5834d58a18424bf1a13c0e50d6433eec189785",
+    "test/balance.test.js": "3155504d0fa7ef876170fce1f17f6cd023832530ceff36b44b8c429effd6b636",
+    "test/bomb.test.js": "35bced60647695d62c6fdfc04add53ebf66ed2b6ba0094f69aaac00df01b286a",
+    "test/cargo.test.js": "a9fc949b7796b9966ce8b5eac2ddc5e2460bad5ae37829696f2d16ece2936e88",
+    "test/colliders.test.js": "2c5815645ba36195eb3c678e8fd8fb6a1e8c2e53fafcc4016ea9a0e450979d8f",
+    "test/colony.test.js": "91171cd1e317df3b008315d72919c2bb2ab3e2741a20f9cd0dfa9f9f2b0f92e3",
+    "test/colonyPolicy.test.js": "8fe9142503deaf5e227cf39b3778ab71945e6f94bedacc8ce5d7702dc9f34079",
+    "test/combat.test.js": "5d289e29d740a470c8a037b361bef359de520ef79ca5092ac89bf53a1982cc00",
+    "test/combustor.test.js": "9a0b259fb1c9ef2d464a7bce1118f9afb981f3257c44f686edc359a39478070f",
+    "test/commands.test.js": "abafbe4af66f0c71851b1381c6c72762e42a74701df7c32dafef07faf89bcbac",
+    "test/data-integrity.test.js": "2720da3176e8cbfb0dc29536fe913ba8ef694dc423c3c8cc4832153bb21e2204",
+    "test/determinism-roster.test.js": "590504217e6e6d6f41b84c25738b40d2bbe0923eb901c62a9405676918654eff",
+    "test/determinism.test.js": "d88fa04079c41784b4733fad83d3d0de4226ccbd267a41185dfe06dc57763618",
+    "test/devDiplomacy.test.js": "0186c4168c9020de8a5b5bcc0dc4abd81db4ee40a03039ed53ffd877297ea97b",
+    "test/diplomacy.test.js": "c04b2f0060f550dea102f0266ab5140d31e0b4d67a376f37987c162594e83213",
+    "test/domination.test.js": "db243d65ded2143799e52ed6dd779b507624139d4e7e90830b4f6ba094bc159d",
+    "test/economy.test.js": "97f05cb9f340e4212f131b13f1fbbdcbc7408b3f06d246797e18aaca56f2dea1",
+    "test/electrify.test.js": "4ee6a3504fd85ddf44e7eefab829c3f34b8d95ebea3e889943ad8f5b5af8996f",
+    "test/engine-guards.test.js": "18a9a4fc0d8cff822c700456829241c7631a31616c2c26ca9900d1d5c1df7fc3",
+    "test/entities.test.js": "7a15864254643af81cad3579ca0547174e449fd1a4d0470f14d65f74dd86c529",
+    "test/escort.test.js": "b97951b7238815220a2eec7c59680fa94db5468040cff2ef1642fbdc63eedfcc",
+    "test/factionSpread.test.js": "90c9ac8249cff65f9c39edd58df8bcdbabfb9770eb028da57b5604d5f50fa331",
+    "test/factions.test.js": "62b036ee09b182c703db60cff8493c30e39b0080a4e8d583119ad31268ee4e61",
+    "test/ferry.test.js": "89c80886144345fcfc5fb81c5280594af177152316bd1dc5fbccafe151519718",
+    "test/finale.test.js": "2e7ee9dca864c36a7b05a56963e416f5caf89cba8ac8769d31ee043dc1ab3bbd",
+    "test/fog.test.js": "07897ae60308994237faf5ca80a33cc437a0bc1288d913ff04c50de2a6d92fe6",
+    "test/formation.test.js": "356875efd999e18b1a8437e6352381aef5fad1350abb7e2dfd21403cd345f2a5",
+    "test/galaxy-persist.test.js": "f5182aeccd33b8658e4d59bc74827e4e5d2e28687888a67c376c10dc4ffa3e79",
+    "test/gather.test.js": "01ee5d9643e9b53e2816e1fc8831244e2d0c627346708afc87d5efe3ba39f92f",
+    "test/grid.test.js": "fc367f56a18fef43c5d2bbad491911119e3a043ccde69c8cd5e932f74b9a85ac",
+    "test/haul.test.js": "3df2fbb9dd8a07c9d11e6843ea0ba7b9e10f7d8976ff62f34534ffe4e7e59015",
+    "test/industry.test.js": "4651ca36e76f05146d20673b91a22e1eee3b86bfee90f75ae9a30d310aaffdbf",
+    "test/lanes.test.js": "c3bf915d40fd5a3ad762ea42fced3202684a442c7d7cab823104f99684105012",
+    "test/livingGalaxy.test.js": "4d470a13e2b3441424ea01c7913564aaf78444c22ccb73cbe1f29482e1a79240",
+    "test/maintenance.test.js": "4f464efd7b644a764de059f5421c1906a206f353c96c252c249fc4a3a9ebe155",
+    "test/map.test.js": "c3764fb72b8c7aa3486da698a0bc5b0ee84bed6e7506fdbfc7d90dbf418cb8aa",
+    "test/market.test.js": "1787dcfd3adc3917afc6acc140b114be492c3f3745ce8d40bd034c9b709e10bd",
+    "test/movement.test.js": "00bac8655b9aec0e1e1c8090e87a1e2f83e707286c98d739e55dfc94a137df5b",
+    "test/odyssey-meta.test.js": "85cee956a6a0d5631c5dd1a5bacea3c01ac097439173d14d044365a3d86c942d",
+    "test/odyssey.test.js": "114d1e6aa8000012cdb1687a0f15929872d8b5ae3c56845d615ff4bf6ed4e968",
+    "test/ownerScaffold.test.js": "f497d98ab5608eff28aeba3eaccb46cb88855ea2889a0122f0b8af5edef984b9",
+    "test/perf-guard.test.js": "8555e074e60e7d35f16dfa8728056cda53754c3d03fad8202d4367e5ff1198b3",
+    "test/persist.test.js": "242c873287c95318c78538625d188725799cf1ec4caa61d7d9b71fad22bc8780",
+    "test/production.test.js": "f5c8ad3c1f9667ea998e92063c635665ea4af7a976bc76b5e9c2f344d0f82560",
+    "test/recycle.test.js": "424aee68f66cfd9e2ea5da6d3148ed6b58d2cc3d54e01580135608da6d0c0af6",
+    "test/repair.test.js": "e61dba7c89e639608221c64ff0c0e0ea2ab048867301d0d5ee51dd875c2c1729",
+    "test/repairJob.test.js": "b0935f5598feb934d8b5844f019f54f17664453dce8e7cd2bc76b410eeff07a5",
+    "test/rig.test.js": "7bc8b16c87e1fe4df879c308c47f650a6829434c90a25ac3b7246644115cb5fb",
+    "test/rivalgate.test.js": "8cea1c0e6b37d49529a3ae7f11465bbd5b009d10ac815bd9ed9e7d421b78bea6",
+    "test/sanitize.test.js": "320894f694857bdc23b239eb27ebc880da0ceb0d20e605549592e73af4e14732",
+    "test/save-hardening.test.js": "99555ca249fdb57cade7010c17e1ca9f7358d706792d11bf669989552ea1ba70",
+    "test/scenario.test.js": "e67bb916a2af34f26b1ee771a07b4818e94fd9f9c7d3527a27f7e527392464f6",
+    "test/scout.test.js": "1386ce3eb7a09271f6d7e10d3406d70862d3f1b61939f2e5d334c3a21bc6c91b",
+    "test/separation.test.js": "09eed4b2c2e8a4642c2428009f631f2e522f7759acde56fd7fb1fff4129e95b7",
+    "test/serialize-string.test.js": "6561097c7acd2032ddcb240cc7509986ed68e828adfba803487cd2ee5e7361de",
+    "test/sim.test.js": "cf9fe3aa6abd27722f3a62a7ba7165bfc5e30cbb84665984817bb29825ab3af4",
+    "test/strategic.test.js": "3ba8b28f1a525d20729e943027fda6c9f521f01aee5c7c39f6f8ae1f923841e1",
+    "test/techtree.test.js": "a8230a98c8bdcd1bee0e42f1bf930782063edf2ef022fdc9ced78777dcc010a3",
+    "test/terrain.test.js": "4b62f6cad1d776cbb3e1ed987041416bb6cd7ee449e14a58821a6ad6b533edf9",
+    "test/victory.test.js": "ed39accad1a648445e73b1dbdae653f022453ecbc16b5d6b08ba04ae2cf0e938",
+    "test/wonder.test.js": "07ca849dfd2c53c54e1edf63b4d635bc9dad3a17cadae1e1c7851cd4247f3a97",
+    "test/wreckage.test.js": "ac635f07c8feda56abb2727b1313aa09c7823446eb35634017e6ab99c028ca4f",
+    "test/zones.test.js": "7be6766a8b465ce1c4b20147615a76bc986795dd92a19c0e88f78e108a4f9a44"
+  }
+}

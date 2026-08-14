@@ -1,0 +1,34 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "types": ["vitest/globals", "node"],
+
+    // The JS/TS seam (ADR-0003, ADR-0007). `@engine/*` resolves to hand-written declarations here
+    // and to the vendored JavaScript in vite.config.ts — see src/engine/index.ts for why it takes
+    // both halves. Change one and you must change the other.
+    "paths": {
+      "@engine/*": ["./src/engine/types/*"]
+    },
+
+    "strict": true,
+    "noUncheckedIndexedAccess": false,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "exactOptionalPropertyTypes": false,
+
+    "allowJs": false,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "noEmit": true
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts", "perf/**/*.ts", "e2e/**/*.ts"],
+  "exclude": ["src/engine/engine/**", "src/engine/test/**", "dist"]
+}

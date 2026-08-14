@@ -10,9 +10,20 @@ write down the question verbatim.
 ## Setup
 
 - Build under test: commit hash ______, tier auto-detected ______, machine ______.
+- `npm ci && npm run dev`, then open the page. The MVP always lands on **Helix Belt** with a fixed
+  seed (ADR-0010), so every tester sees the same terrain, the same deposits and the same neighbour —
+  which is what makes their reports comparable.
 - Run at least one session on a machine with **no GPU** (or Chromium started with
-  `--use-gl=swiftshader --disable-gpu`). Note frame-time HUD readings during combat.
+  `--use-gl=swiftshader --disable-gpu`). Note frame-time readings during combat.
+- Force a tier with the T0–T3 buttons in the sidebar to check the drop-a-tier path by hand; the
+  choice persists across a reload.
 - Five testers, at least two who have never played the 2D game.
+
+**Controls, for the facilitator only — never read these to a tester.** Left-click selects,
+left-drag box-selects, double-click selects the type on screen, right-click orders. `Z` deploy ·
+`A` attack-move · `X` stop · `H` hold · `R` patrol · `WASD`/arrows/screen-edge pan · `,` `.` rotate ·
+`Space` focus base · mouse wheel zooms (and tilts). Whether a tester finds any of these unaided is
+the point of the exercise.
 
 ## Tasks (do not read the parenthetical to the tester)
 

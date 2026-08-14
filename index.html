@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Stellar Frontier: Odyssey 3D</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="viewport">
+      <!-- Two stacked canvases: the scene, and the overlays that must stay crisp over it
+           (ADR-0005 §4). The Canvas2D fallback renderer draws the whole world onto #overlay. -->
+      <canvas id="scene"></canvas>
+      <canvas id="overlay"></canvas>
+      <div id="boot">Loading the Odyssey…</div>
+    </div>
+
+    <div id="hud"></div>
+
+    <aside id="sidebar">
+      <canvas id="minimap" width="220" height="138"></canvas>
+      <div id="tier-picker" class="tier-picker" title="Graphics tier"></div>
+      <p id="fallback-notice" class="fallback-notice"></p>
+      <p class="hint">
+        <b>LMB</b> select · <b>drag</b> box-select · <b>RMB</b> order ·
+        <b>Z</b> deploy · <b>A</b> attack-move · <b>X</b> stop · <b>H</b> hold · <b>R</b> patrol ·
+        <b>WASD</b> pan · <b>,</b>/<b>.</b> rotate · <b>Space</b> focus base
+      </p>
+    </aside>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
