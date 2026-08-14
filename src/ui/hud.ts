@@ -38,6 +38,15 @@ export interface BuildOption {
 
 export interface HudModel {
   /**
+   * What to do next, or null once the player is under way.
+   *
+   * S6 asks that a first-time player work out what to click WITHOUT documentation, and the opening
+   * gives them one ship on an unexplored map with no visible affordance. This is the interface
+   * answering the question rather than a tutorial: one line, only while the player has no base,
+   * derived entirely from the snapshot so it cannot drift out of step with the world.
+   */
+  readonly prompt: string | null;
+  /**
    * True when a colony ship is selected. The Odyssey opening is "land, then deploy", and S6 asks
    * that a first-time player find what to click WITHOUT documentation — so the one action available
    * at t=0 gets its own prominent button rather than hiding behind a hotkey they have not read.
@@ -109,6 +118,20 @@ export function hudModel(snap: Snapshot): HudModel {
 
   const canDeploy = selection.some((s) => s.type === "colonyship");
 
+  const hasBase = (() => {
+    for (let i = 0; i < e.count; i++) {
+      if (e.owner[i] !== 0) continue;
+      if ((e.flags[i]! & FLAG_BUILDING_KIND) === 0) continue;
+      if (snap.typeNames[e.typeIndex[i]!] === "command") return true;
+    }
+    return false;
+  })();
+  const prompt = hasBase
+    ? null
+    : canDeploy
+      ? "Press Deploy base to found your Command Center."
+      : "Click your colony ship to select it.";
+
   const builds: BuildOption[] = [];
   const hasWorker = selection.some((s) => !s.isBuilding && UNITS[s.type]?.buildCategories?.length);
   if (hasWorker) {
@@ -123,6 +146,7 @@ export function hudModel(snap: Snapshot): HudModel {
 
   return {
     canDeploy,
+    prompt,
     ore: Math.floor(res.ore),
     crystals: Math.floor(res.crystals),
     radioactives: Math.floor(res.radioactives),
@@ -187,6 +211,9 @@ export class HudView {
     this.setText("supply", model.supplyText);
     this.setText("clock", model.tickText);
     this.setText("selection-summary", model.selectionSummary);
+    this.setText("prompt", model.prompt ?? "");
+    const prompt = this.root.querySelector<HTMLElement>('[data-hud="prompt"]');
+    if (prompt) prompt.classList.toggle("visible", model.prompt !== null);
 
     const supply = this.root.querySelector<HTMLElement>('[data-hud="supply"]');
     if (supply) supply.classList.toggle("blocked", model.supplyBlocked);
@@ -270,6 +297,7 @@ const TEMPLATE = `
     <span class="hud-res hud-clock" data-hud="clock">0:00</span>
   </div>
   <div class="hud-notice" data-hud="notice"></div>
+  <div class="hud-prompt" data-hud="prompt"></div>
   <div class="hud-bottom">
     <div class="hud-panel">
       <div class="hud-title" data-hud="selection-summary">Nothing selected</div>

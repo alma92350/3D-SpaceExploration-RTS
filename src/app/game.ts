@@ -32,6 +32,7 @@ const EDGE_SCROLL_MARGIN = 18;
 const EDGE_SCROLL_SPEED = 900;      // world units per second at full tilt
 const KEY_PAN_SPEED = 900;
 const ENTITY_PICK_SLACK = 6;        // extra world units around an entity that still counts as a click
+const OPENING_DISTANCE = 210;       // see the constructor
 
 export class Game {
   readonly bridge: WorldBridge;
@@ -69,8 +70,15 @@ export class Game {
     this.field = elevationFieldFrom(map.terrain, map.width, map.height);
     this.camera = new CameraRig({ mapWidth: map.width, mapHeight: map.height }, this.field);
     this.camera.focusOn(map.bases.player.x, map.bases.player.y);
+    // Start close. The rig's own default is a mid-range 420, which is right once you have a base
+    // to look at and wrong for the opening: at t=0 the player owns one colony ship and can see
+    // about 200 units around it, so 420 frames a lone speck in a mostly unexplored map. Opening
+    // near enough to read the ship is the difference between "a world" and "a loading screen".
+    this.camera.distance = OPENING_DISTANCE;
     this.composer = new SceneComposer(this.field);
-    this.terrain = buildTerrainMesh(this.field, { relief: TIERS[tier].terrain === "relief" });
+    this.terrain = buildTerrainMesh(this.field, {
+      relief: TIERS[tier].terrain === "relief", apron: TIERS[tier].apron,
+    });
     this.tierMonitor = new TierMonitor(tier);
     if (settings.tierOverride) this.tierMonitor.setManual(settings.tierOverride);
 
@@ -153,7 +161,9 @@ export class Game {
   private rebuildTerrainForTier(): void {
     // The terrain mesh is the one asset a tier switch genuinely changes (T0 collapses it flat,
     // ADR-0004). Rebuilding here — and only here — keeps the "rebuilt only on change" contract.
-    this.terrain = buildTerrainMesh(this.field, { relief: TIERS[this.tier].terrain === "relief" });
+    this.terrain = buildTerrainMesh(this.field, {
+      relief: TIERS[this.tier].terrain === "relief", apron: TIERS[this.tier].apron,
+    });
   }
 
   private renderFrame(alpha: number, frameMs: number): void {

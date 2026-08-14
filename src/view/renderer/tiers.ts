@@ -29,8 +29,20 @@ export interface TierConfig {
   readonly terrain: "flat" | "relief";
   readonly shadows: "none" | "blob" | "map";
   readonly antialias: boolean;
-  /** Whether the sky is a starfield mesh or a flat clear colour. */
-  readonly starfield: boolean;
+  /**
+   * How far the dark apron extends past the map edge, in world units.
+   *
+   * There USED to be a `starfield` knob here, and PRD §5 lists a starfield skybox in Phase 1's
+   * scope. It was cut after being built, because the camera cannot see the sky: pitch ramps
+   * between 35.5° and 74.5° below horizontal and the vertical FOV is 51.6°, so the top edge of the
+   * view is between 9.7° and 48.7° BELOW the horizon at every zoom. A skybox would have been
+   * invisible in every frame the game ever draws.
+   *
+   * What actually looked like empty sky was the void past the map edge, where the terrain mesh
+   * simply stops. This is the fix for that: a dark border that carries the ground out beyond the
+   * playable area so the world does not end in a hard diagonal line of nothing.
+   */
+  readonly apron: number;
 }
 
 export const TIERS: Readonly<Record<Tier, TierConfig>> = {
@@ -40,22 +52,22 @@ export const TIERS: Readonly<Record<Tier, TierConfig>> = {
   T0: {
     tier: "T0", label: "Compatibility (no GPU)", frameBudgetMs: 33, renderScale: 0.75,
     lodDistance: 340, cullDistance: 1100, terrain: "flat", shadows: "none",
-    antialias: false, starfield: false,
+    antialias: false, apron: 700,
   },
   T1: {
     tier: "T1", label: "Low", frameBudgetMs: 16.6, renderScale: 0.9,
     lodDistance: 520, cullDistance: 1500, terrain: "relief", shadows: "blob",
-    antialias: false, starfield: true,
+    antialias: false, apron: 900,
   },
   T2: {
     tier: "T2", label: "Standard", frameBudgetMs: 16.6, renderScale: 1,
     lodDistance: 800, cullDistance: 2200, terrain: "relief", shadows: "blob",
-    antialias: true, starfield: true,
+    antialias: true, apron: 1200,
   },
   T3: {
     tier: "T3", label: "High", frameBudgetMs: 16.6, renderScale: 1,
     lodDistance: 2400, cullDistance: 4000, terrain: "relief", shadows: "map",
-    antialias: true, starfield: true,
+    antialias: true, apron: 1800,
   },
 };
 

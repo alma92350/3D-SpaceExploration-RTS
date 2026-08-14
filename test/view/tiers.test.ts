@@ -27,6 +27,21 @@ describe("tier table", () => {
     expect(TIERS.T0.antialias).toBe(false);
   });
 
+  it("gives every tier an apron past the map edge", () => {
+    // The map has to stop somewhere, and where it stops must not read as a rendering failure. Every
+    // tier gets a border; richer tiers get a wider one because they can see further.
+    for (const tier of TIER_ORDER) {
+      expect(TIERS[tier].apron, `${tier} has no apron`).toBeGreaterThan(0);
+    }
+    for (let i = 1; i < TIER_ORDER.length; i++) {
+      expect(TIERS[TIER_ORDER[i]!].apron).toBeGreaterThanOrEqual(TIERS[TIER_ORDER[i - 1]!].apron);
+    }
+    // Wide enough to fill the view at the tier's own draw distance.
+    for (const tier of TIER_ORDER) {
+      expect(TIERS[tier].apron).toBeGreaterThan(TIERS[tier].lodDistance * 0.5);
+    }
+  });
+
   it("keeps LOD and cull distances monotonic across tiers", () => {
     for (let i = 1; i < TIER_ORDER.length; i++) {
       const lower = TIERS[TIER_ORDER[i - 1]!];

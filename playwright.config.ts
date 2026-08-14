@@ -40,9 +40,20 @@ export default defineConfig({
   webServer: {
     // The production build, not the dev server: N-03's payload budget and S5's cold-load target
     // are about what actually ships.
-    command: `npm run build && npm run preview -- --port ${PORT} --strictPort`,
+    //
+    // The `preview` script binds **127.0.0.1 explicitly**, and that is load-bearing rather than
+    // tidy. Vite's default is `localhost`, which on a dual-stack host resolves to `::1` first — so
+    // on a GitHub runner the server listened on IPv6 while Playwright polled the IPv4 address here
+    // and timed out after three minutes without ever running a test. It passed locally because
+    // this machine resolves `localhost` to 127.0.0.1. Naming the interface removes the ambiguity
+    // on both.
+    command: "npm run build && npm run preview",
     url: `http://127.0.0.1:${PORT}`,
-    reuseExistingServer: !process.env.CI,
+    // Never reuse: a preview server left over from an earlier run keeps serving the OLD dist/, so
+    // the browser suite silently tests a build that no longer matches the source. It cost an hour
+    // of "my change did nothing" once already. A rebuild is about a second; a lying test suite is
+    // not worth saving it.
+    reuseExistingServer: false,
     timeout: 180_000,
   },
 });

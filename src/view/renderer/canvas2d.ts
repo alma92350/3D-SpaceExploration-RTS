@@ -123,7 +123,6 @@ export class Canvas2DRenderer implements Renderer {
     for (let cy = 0; cy < fog.rows; cy++) {
       for (let cx = 0; cx < fog.cols; cx++) {
         const vis = fog.state[cy * fog.cols + cx]!;
-        if (vis === 0) continue;                       // unexplored: leave it black
         const x0 = cx * cell;
         const y0 = cy * cell;
         projectToScreen(camera, x0, 0, y0, P0);
@@ -133,7 +132,9 @@ export class Canvas2DRenderer implements Renderer {
         projectToScreen(camera, x0, 0, y0 + cell, P3);
         if (!onScreen(P0, this.width, this.height) && !onScreen(P2, this.width, this.height)) continue;
 
-        this.ctx.fillStyle = vis === 2 ? "#2a2f3a" : "#14171d";
+        // Unexplored is drawn, not skipped — dark enough to hide everything, light enough that the
+        // world exists. Same reasoning as the WebGL path's fog ramp; see the comment there.
+        this.ctx.fillStyle = vis === 2 ? "#2a2f3a" : vis === 1 ? "#14171d" : "#0b0d12";
         this.ctx.beginPath();
         this.ctx.moveTo(P0.x, P0.y);
         this.ctx.lineTo(P1.x, P1.y);

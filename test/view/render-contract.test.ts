@@ -41,7 +41,9 @@ function harness(field: ElevationField, tierKey: keyof typeof TIERS = "T2") {
   renderer.registerMeshes(buildMeshes());
   const composer = new SceneComposer(field);
   const rig = new CameraRig({ mapWidth: field.width, mapHeight: field.height }, field);
-  const terrain = buildTerrainMesh(field, { relief: TIERS[tierKey].terrain === "relief" });
+  const terrain = buildTerrainMesh(field, {
+    relief: TIERS[tierKey].terrain === "relief", apron: TIERS[tierKey].apron,
+  });
   return { renderer, composer, rig, terrain, tier: TIERS[tierKey] };
 }
 
@@ -68,6 +70,8 @@ describe("mesh budgets", () => {
 
   it("stands every mesh on the ground with a usable bounding radius", () => {
     for (const mesh of buildMeshes()) {
+      // The imposter is a billboard the renderer orients; it has no ground contact point.
+      if (mesh.id === "imposter") continue;
       let minY = Infinity;
       for (let i = 1; i < mesh.positions.length; i += 3) minY = Math.min(minY, mesh.positions[i]!);
       expect(minY, `${mesh.id} floats or sinks: its lowest vertex is at y=${minY}`).toBeCloseTo(0, 5);
@@ -99,8 +103,8 @@ describe("terrain mesh", () => {
       [0, 2, 2, 0],
       [0, 0, 1, 0],
     ]);
-    const flat = buildTerrainMesh(field, { relief: false });
-    const relief = buildTerrainMesh(field, { relief: true });
+    const flat = buildTerrainMesh(field, { relief: false, apron: 0 });
+    const relief = buildTerrainMesh(field, { relief: true, apron: 0 });
 
     let flatMax = 0;
     for (let i = 1; i < flat.positions.length; i += 3) flatMax = Math.max(flatMax, flat.positions[i]!);
@@ -112,10 +116,35 @@ describe("terrain mesh", () => {
     expect(flat.triangles).toBe(relief.triangles);
   });
 
+  it("carries a dark apron past the map edge so the world does not end in a black wedge", () => {
+    const { field } = world();
+    const bare = buildTerrainMesh(field, { relief: true, apron: 0 });
+    const fringed = buildTerrainMesh(field, { relief: true, apron: 900 });
+
+    // Eight quads: a picture frame, in the SAME mesh, so it stays one draw call.
+    expect(fringed.triangles - bare.triangles).toBe(8);
+
+    let minX = Infinity;
+    let maxX = -Infinity;
+    for (let i = 0; i < fringed.positions.length; i += 3) {
+      minX = Math.min(minX, fringed.positions[i]!);
+      maxX = Math.max(maxX, fringed.positions[i]!);
+    }
+    expect(minX).toBeCloseTo(-900, 3);
+    expect(maxX).toBeCloseTo(field.width + 900, 3);
+
+    // …and it must be nearly black: its job is to be ignored, not to draw the eye off the map.
+    let brightest = 0;
+    for (let i = bare.colors.length; i < fringed.colors.length; i++) {
+      brightest = Math.max(brightest, fringed.colors[i]!);
+    }
+    expect(brightest, "the apron is meant to recede, not compete with the play area").toBeLessThan(0.1);
+  });
+
   it("stays inside its vertex budget at MVP map size", () => {
     const { field } = world();
-    const mesh = buildTerrainMesh(field, { relief: true });
-    expect(mesh.triangles).toBe(expectedTriangles(field));
+    const mesh = buildTerrainMesh(field, { relief: true, apron: 900 });
+    expect(mesh.triangles).toBe(expectedTriangles(field, 900));
     // One draw call, and small next to 200 instanced units — the argument for merging it.
     expect(mesh.triangles).toBeLessThan(12_000);
   });
@@ -136,7 +165,7 @@ describe("instancing", () => {
     rig.focusOn(base.x, base.y);
     composer.compose(renderer, snap, rig.update(1280, 720), tier, terrain, 0, null);
 
-    const instanced = renderer.lastFrame.batches;
+    const instanced = renderer.lastFrame.batches.filter((b) => b.mesh !== "node");
     const keys = new Set(instanced.map((b) => `${b.mesh}|${b.owner}|${b.lod}`));
     expect(keys.size, `instancing regressed: ${keys.size} batches for 4 types × 2 owners`).toBeLessThanOrEqual(8);
     expect(instanced.length).toBe(keys.size);   // no key drawn twice
