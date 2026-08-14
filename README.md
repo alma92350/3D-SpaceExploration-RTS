@@ -40,6 +40,7 @@ and the Odyssey starts.
 | `Z` `A` `X` `H` `R` | deploy · attack-move · stop · hold · patrol |
 | `WASD`, arrows, screen edge, middle-drag | pan |
 | `,` `.` · wheel · `Space` | rotate · zoom (and tilt) · focus base |
+| `G` | show the power grid — on automatically while placing a building |
 
 The **T0–T3** buttons in the sidebar force a graphics tier; the choice persists. T0 is what a
 machine with no GPU gets automatically.

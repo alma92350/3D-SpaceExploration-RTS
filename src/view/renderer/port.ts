@@ -139,6 +139,21 @@ export interface FogField {
   readonly version: number;
 }
 
+/**
+ * The power grid as a band per cell, at fog resolution (ADR-0012 §2).
+ *
+ * Deliberately the same shape as `FogField`, because it is the same kind of thing: a low-res
+ * scalar field over the map, uploaded once per tick that changed it, sampled once by the terrain
+ * material. 0 is "no grid reaches here"; 1–4 are the engine's `POWER_TIERS` bands.
+ */
+export interface PowerField {
+  readonly cols: number;
+  readonly rows: number;
+  readonly cell: number;
+  readonly state: Uint8Array;
+  readonly version: number;
+}
+
 /** What the frame actually cost. Asserted by the render-contract tests and the perf gate. */
 export interface FrameStats {
   drawCalls: number;
@@ -149,6 +164,8 @@ export interface FrameStats {
   terrainUploads: number;
   /** How many times the fog field was uploaded since the renderer was created. */
   fogUploads: number;
+  /** How many times the power field was uploaded. Same version-gated contract as `fogUploads`. */
+  powerUploads: number;
   cpuMs: number;
 }
 
@@ -167,6 +184,16 @@ export interface Renderer {
   setTier(tier: Tier): void;
   /** Off-frame: uploads only when `fog.version` has moved since the last call. */
   setFog(fog: FogField): void;
+  /**
+   * Show the power grid, or pass `null` to hide it.
+   *
+   * Off-frame, version-gated, exactly like `setFog`. It is `null` most of the time: painting power
+   * bands over the whole map at all times fights with the fog and the terrain for the same pixels,
+   * so this follows upstream and treats the grid as a **placement cue** — visible while a ghost is
+   * up, and on a deliberate toggle. Hiding does not discard the texture, so toggling it back on
+   * costs nothing.
+   */
+  setPower(power: PowerField | null): void;
   beginFrame(camera: CameraState): void;
   /** Off-frame upload, on-frame draw: re-uploads only when `terrain.version` has moved. */
   drawTerrain(terrain: TerrainMesh): void;

@@ -53,6 +53,8 @@ export class Game {
   private pointerInside = false;
   private dragStart: { x: number; y: number; worldX: number; worldY: number } | null = null;
   private ghost: GhostState | null = null;
+  /** Power-grid overlay, toggled with `G`. View state: nothing in the simulation knows about it. */
+  private showPower = false;
   private running = false;
   private rafHandle = 0;
   /** Told whenever the tier changes, however it changed. Set by the shell so the picker tracks it. */
@@ -175,6 +177,10 @@ export class Game {
     const camera = this.camera.update(rect.width, rect.height);
 
     this.renderer.setFog(snap.fog);
+    // The power grid is a placement cue first and a toggle second (ADR-0012 §2): it is on while a
+    // build ghost is up, because "will this run efficiently here?" is a question asked at exactly
+    // that moment, and otherwise only when the player asked for it with `G`.
+    this.renderer.setPower(this.ghost || this.showPower ? snap.power : null);
     this.composer.compose(this.renderer, snap, camera, TIERS[this.tier], this.terrain, alpha, this.ghost);
 
     this.hud.render(hudModel(snap));
@@ -278,6 +284,7 @@ export class Game {
     this.keys.add(e.key.toLowerCase());
     const result = translateKey({ key: e.key, shift: e.shiftKey, ctrl: e.ctrlKey });
     if (result.mode) this.mode = result.mode;
+    if (result.togglePower) this.showPower = !this.showPower;
     if (result.cancel) this.ghost = null;
     if (result.intent) this.bridge.enqueue(result.intent);
     switch (result.camera) {

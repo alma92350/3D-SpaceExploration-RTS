@@ -19,12 +19,12 @@
 
 import {
   BufferAttribute, BufferGeometry, Color, DataTexture, DoubleSide, DynamicDrawUsage,
-  Float32BufferAttribute, InstancedBufferAttribute, InstancedMesh, LinearFilter, Mesh, Object3D,
+  Float32BufferAttribute, InstancedBufferAttribute, InstancedMesh, LinearFilter, Mesh, NearestFilter, Object3D,
   PerspectiveCamera, RedFormat, Scene, ShaderMaterial, UnsignedByteType,
   WebGLRenderer as ThreeWebGLRenderer,
 } from "three";
 import {
-  type CameraState, type FogField, type FrameStats, type InstanceBatch, type MeshData,
+  type CameraState, type FogField, type PowerField, type FrameStats, type InstanceBatch, type MeshData,
   type OverlayLayer, type Renderer, type TerrainMesh, type Tier,
 } from "./port.js";
 import { OWNER_COLORS, drawOverlayLayer } from "./overlays2d.js";
@@ -56,12 +56,15 @@ export class WebGLRenderer implements Renderer {
   private terrainVersion = -1;
   private fogTexture: DataTexture | null = null;
   private fogVersion = -1;
+  private powerTexture: DataTexture | null = null;
+  private powerVersion = -1;
+  private showPower = 0;
 
   private tier: Tier;
   private frameStart = 0;
   private readonly stats: FrameStats = {
     drawCalls: 0, instances: 0, triangles: 0, overlayItems: 0,
-    terrainUploads: 0, fogUploads: 0, cpuMs: 0,
+    terrainUploads: 0, fogUploads: 0, powerUploads: 0, cpuMs: 0,
   };
   private cssWidth = 1280;
   private cssHeight = 720;
@@ -120,6 +123,7 @@ export class WebGLRenderer implements Renderer {
     this.fogVersion = fog.version;
     if (!this.fogTexture || this.fogTexture.image.width !== fog.cols || this.fogTexture.image.height !== fog.rows) {
       this.fogTexture?.dispose();
+    this.powerTexture?.dispose();
       this.fogTexture = new DataTexture(new Uint8Array(fog.cols * fog.rows), fog.cols, fog.rows, RedFormat, UnsignedByteType);
       this.fogTexture.minFilter = LinearFilter;
       this.fogTexture.magFilter = LinearFilter;
@@ -138,6 +142,32 @@ export class WebGLRenderer implements Renderer {
     this.stats.fogUploads++;
     const material = this.terrainMesh?.material as ShaderMaterial | undefined;
     if (material?.uniforms?.fogMap) material.uniforms.fogMap.value = this.fogTexture;
+  }
+
+  setPower(power: PowerField | null): void {
+    // The uniform is set every call so a toggle takes effect immediately; the TEXTURE is only
+    // rebuilt when the version moves, which is the same contract the fog has and the reason
+    // switching the overlay on and off costs nothing.
+    this.showPower = power === null ? 0 : 1;
+    const material = this.terrainMesh?.material as ShaderMaterial | undefined;
+    if (material?.uniforms?.powerOn) material.uniforms.powerOn.value = this.showPower;
+    if (power === null || power.version === this.powerVersion) return;
+    this.powerVersion = power.version;
+
+    if (!this.powerTexture || this.powerTexture.image.width !== power.cols || this.powerTexture.image.height !== power.rows) {
+      this.powerTexture?.dispose();
+      this.powerTexture = new DataTexture(new Uint8Array(power.cols * power.rows), power.cols, power.rows, RedFormat, UnsignedByteType);
+      // NEAREST, unlike the fog: a band edge is information — it is where the cost multiplier
+      // changes — and smoothing it would draw a gradient the engine does not have.
+      this.powerTexture.minFilter = NearestFilter;
+      this.powerTexture.magFilter = NearestFilter;
+    }
+    const data = this.powerTexture.image.data as Uint8Array;
+    // Band index → a value the shader can threshold. 0 stays 0 so "no grid" is a clean test.
+    for (let i = 0; i < data.length; i++) data[i] = power.state[i]! * 60;
+    this.powerTexture.needsUpdate = true;
+    this.stats.powerUploads++;
+    if (material?.uniforms?.powerMap) material.uniforms.powerMap.value = this.powerTexture;
   }
 
   beginFrame(camera: CameraState): void {
@@ -308,6 +338,8 @@ export class WebGLRenderer implements Renderer {
     const material = new ShaderMaterial({
       uniforms: {
         fogMap: { value: this.fogTexture },
+        powerMap: { value: this.powerTexture },
+        powerOn: { value: this.showPower },
         mapSize: { value: [terrain.width, terrain.height] },
       },
       vertexShader: `
@@ -323,6 +355,8 @@ export class WebGLRenderer implements Renderer {
         varying vec3 vColor;
         varying vec2 vUv;
         uniform sampler2D fogMap;
+        uniform sampler2D powerMap;
+        uniform float powerOn;
         void main() {
           // One texture fetch for the whole fog of war (ADR-0006): three states arrive as three
           // brightnesses and the whole thing is a single multiply.
@@ -334,7 +368,16 @@ export class WebGLRenderer implements Renderer {
           vec2 d = abs(vUv - 0.5) * 2.0;
           float outside = step(1.0, max(d.x, d.y));
           float vis = mix(texture2D(fogMap, vUv).r, 1.0, outside);
-          gl_FragColor = vec4(vColor * vis, 1.0);
+          vec3 lit = vColor * vis;
+
+          // The power grid: a SECOND fetch of the same shape, and only when the overlay is on
+          // (ADR-0012 §2). Bands arrive as 0/60/120/180/240; the tint goes from a confident green
+          // on-grid to a warning amber at the isolated band, which is where a factory costs 2.3x
+          // the grid capacity to run. Off-grid ground is left alone rather than tinted, so the
+          // overlay reads as "here is your grid" and not as "here is a coloured map".
+          float band = texture2D(powerMap, vUv).r * powerOn * (1.0 - outside);
+          vec3 tint = mix(vec3(0.25, 0.85, 0.45), vec3(0.95, 0.65, 0.2), clamp((band - 0.235) / 0.71, 0.0, 1.0));
+          gl_FragColor = vec4(mix(lit, tint, step(0.01, band) * 0.35), 1.0);
         }`,
       vertexColors: true,
       side: DoubleSide,

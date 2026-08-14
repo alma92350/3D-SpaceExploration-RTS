@@ -11,7 +11,7 @@
 // have been overwritten by then. Allocation tests measure the production renderers, not this one.
 
 import {
-  type CameraState, type FogField, type FrameStats, type InstanceBatch, type MeshData,
+  type CameraState, type FogField, type PowerField, type FrameStats, type InstanceBatch, type MeshData,
   type OverlayKind, type OverlayLayer, type OwnerSlot, type Renderer, type TerrainMesh, type Tier,
   type LodLevel, OVERLAY_STRIDE,
 } from "./port.js";
@@ -59,6 +59,8 @@ export class RecordingRenderer implements Renderer {
   private open: RecordedFrame | null = null;
   private terrainUploads = 0;
   private fogUploads = 0;
+  private powerVersion = -1;
+  private powerUploads = 0;
   private lastTerrainVersion = -1;
   private meshTriangles = new Map<string, number>();
 
@@ -86,6 +88,16 @@ export class RecordingRenderer implements Renderer {
     this.fogUploads++;
   }
 
+  setPower(power: PowerField | null): void {
+    if (this.open) throw new Error("setPower during a frame — same once-per-tick contract as the fog");
+    // Hiding must NOT count as an upload and must not forget the version, or toggling the overlay
+    // twice a second would re-upload a field that never changed.
+    if (power === null) return;
+    if (power.version === this.powerVersion) return;
+    this.powerVersion = power.version;
+    this.powerUploads++;
+  }
+
   beginFrame(camera: CameraState): void {
     if (this.open) throw new Error("beginFrame without endFrame — the port's call order is fixed");
     this.open = {
@@ -93,7 +105,7 @@ export class RecordingRenderer implements Renderer {
       terrainVersion: null,
       batches: [],
       overlays: [],
-      stats: { drawCalls: 0, instances: 0, triangles: 0, overlayItems: 0, terrainUploads: 0, fogUploads: 0, cpuMs: 0 },
+      stats: { drawCalls: 0, instances: 0, triangles: 0, overlayItems: 0, terrainUploads: 0, fogUploads: 0, powerUploads: 0, cpuMs: 0 },
     };
   }
 
@@ -147,6 +159,7 @@ export class RecordingRenderer implements Renderer {
     const frame = this.requireFrame("endFrame");
     frame.stats.terrainUploads = this.terrainUploads;
     frame.stats.fogUploads = this.fogUploads;
+    frame.stats.powerUploads = this.powerUploads;
     this.open = null;
     this.frames.push(frame);
     if (this.frames.length > this.keepFrames) this.frames.shift();

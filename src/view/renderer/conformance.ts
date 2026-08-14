@@ -14,7 +14,7 @@
 // arithmetic, the upload-once rules, and that every overlay kind is accepted.
 
 import {
-  type CameraState, type FogField, type InstanceBatch, type MeshData, type OverlayKind,
+  type CameraState, type FogField, type PowerField, type InstanceBatch, type MeshData, type OverlayKind,
   type OverlayLayer, type Renderer, type TerrainMesh, OVERLAY_STRIDE,
 } from "./port.js";
 
@@ -67,6 +67,14 @@ export function stubFog(version = 1): FogField {
   return { cols, rows, cell: 200, state, version };
 }
 
+/** The power grid at fog resolution, every cell on-grid. Same shape as `stubFog` by design. */
+export function stubPower(version = 1): PowerField {
+  const cols = 8;
+  const rows = 5;
+  const state = new Uint8Array(cols * rows).fill(1);
+  return { cols, rows, cell: 200, state, version };
+}
+
 function stubBatch(mesh: string, count: number): InstanceBatch {
   const xyz = new Float32Array(count * 3);
   const yaw = new Float32Array(count);
@@ -116,7 +124,7 @@ export function runConformance(opts: ConformanceOptions): ConformanceCase[] {
     const stats = r.endFrame();
     r.dispose();
     if (!stats) return "endFrame returned nothing";
-    for (const field of ["drawCalls", "instances", "triangles", "overlayItems", "terrainUploads", "fogUploads", "cpuMs"]) {
+    for (const field of ["drawCalls", "instances", "triangles", "overlayItems", "terrainUploads", "fogUploads", "powerUploads", "cpuMs"]) {
       if (typeof (stats as unknown as Record<string, unknown>)[field] !== "number") return `FrameStats.${field} is not a number`;
     }
     return null;
@@ -214,6 +222,35 @@ export function runConformance(opts: ConformanceOptions): ConformanceCase[] {
     const stats = r.endFrame();
     r.dispose();
     return stats.fogUploads === 2 ? null : `expected 2 fog uploads across 11 calls, got ${stats.fogUploads}`;
+  });
+
+  check("uploads the power field only when its version moves", () => {
+    // The same version-gated contract the fog has, and for the same reason: the field changes when
+    // a reactor is built or runs dry, not on every frame that draws it (ADR-0012 §2).
+    const r = fresh();
+    const power = stubPower(3);
+    for (let i = 0; i < 10; i++) r.setPower(power);
+    r.setPower(stubPower(4));
+    r.beginFrame(stubCamera());
+    r.drawTerrain(stubTerrain());
+    const stats = r.endFrame();
+    r.dispose();
+    return stats.powerUploads === 2 ? null : `expected 2 power uploads across 11 calls, got ${stats.powerUploads}`;
+  });
+
+  check("hiding the power overlay is not an upload", () => {
+    // Toggling the overlay off and on must not re-upload a field that never changed — otherwise a
+    // player who leaves the key held, or a ghost that flickers, re-uploads a texture every frame,
+    // which is exactly what the version counter exists to prevent.
+    const r = fresh();
+    const power = stubPower(5);
+    r.setPower(power);
+    for (let i = 0; i < 6; i++) { r.setPower(null); r.setPower(power); }
+    r.beginFrame(stubCamera());
+    r.drawTerrain(stubTerrain());
+    const stats = r.endFrame();
+    r.dispose();
+    return stats.powerUploads === 1 ? null : `expected 1 power upload across 13 calls, got ${stats.powerUploads}`;
   });
 
   check("resets per-frame counters between frames", () => {
