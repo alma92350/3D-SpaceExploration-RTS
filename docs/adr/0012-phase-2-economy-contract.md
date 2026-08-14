@@ -1,6 +1,6 @@
 # ADR-0012: The Phase 2 economy contract — snapshot width, power, draw calls and panels
 
-**Status:** Accepted
+**Status:** Accepted — **§3's mechanism is superseded by [ADR-0013](0013-silhouette-families-not-a-variant-attribute.md)**; its ≤ 28 draw-call budget stands
 **Date:** 2026-08-14
 **Deciders:** @alma92350
 **Relates to:** PRD §5 (Phase 2), §10 (Q-07…Q-10); ADR-0004, ADR-0005, ADR-0006, ADR-0008
