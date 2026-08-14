@@ -44,6 +44,7 @@ Goal: an empty but trustworthy repo. Exit criteria: PRD §5, Phase 0.
 | P1-T23 | Perf gate at MVP content: T0 200 units @ 33 ms, T2 400 units @ 16.6 ms | PARTIAL | P1-T09, P1-T14 | `npm run perf` green at both tiers on the committed scene; baseline recorded | **T0 passes: p95 12.7 ms against 33 ms**, under SwiftShader, which *is* the T0 target. **T2's budget cannot be gated in CI** — it is defined as "integrated GPU ≥ 2019" and CI has no GPU at all, so the T2 scene is run for its hardware-independent contracts and its frame time is recorded, not asserted. See the gate note below |
 | P1-T25 | First-run readability: the opening must not read as a blank page | DONE | P1-T16 | The first frame shows a legible colony ship, ground rather than void, and one line saying what to do | Raised by looking at the built app. Four causes, all fixed: the camera opened at 420 on a single small ship; unexplored terrain rendered pure black over ~90% of the view; the map edge ended in a hard black wedge; nothing said what to click. **Scope change: the starfield in PRD §5 is cut** — the camera's pitch ramp means the horizon is never on screen, so a skybox is invisible by construction. A dark terrain apron replaces it (ADR-0010 §5–6) |
 | P1-T26 | CI: the browser job could never start | DONE | P0-T02 | `npm run smoke` reaches the tests on a GitHub runner | `vite preview` binds `localhost`, which resolves to `::1` on a dual-stack runner while Playwright polled `127.0.0.1` — three minutes of webServer timeout with no test ever running. Binds explicitly now. Also stopped reusing an existing preview server: a stale one silently serves an old `dist/`, so the browser suite tests a build that no longer matches the source |
+| P1-T27 | Publish the build to GitHub Pages | DONE | P0-T02 | A public URL serves the playable game; the build works from a subpath | Pages had been pointed at a *branch*, which publishes Vite source and yields an unstyled "Loading the Odyssey…" that never boots. Source must be **GitHub Actions**. `base` is `"./"` so one artefact works at both `/` and `/<repo>/` — no deploy-only build path for nobody to test — and `e2e/subpath.spec.ts` serves the real build from a nested path so a rooted asset URL fails CI rather than the public site |
 | P1-T24 | Playtest script `docs/playtests/mvp.md` + one recorded playtest against S1/S6 | IN-PROGRESS | P1-T18 | Script exists; 3 of 5 testers find the build menu unaided, or a follow-up task is filed | Script written and updated for the built MVP (world, controls, tier switching). **The five-tester session has not been run** — it needs people, not code |
 
 ---
@@ -68,7 +69,8 @@ the sky. The PRD should be amended for both.
 
 **What the next session should pick up, in order:**
 
-1. **P1-T24** — run the playtest with five people. It gates S1 and S6, and it is the only thing that
+1. **P1-T24** — run the playtest with five people, now that there is a URL to send them:
+   https://alma92350.github.io/3D-SpaceExploration-RTS/ It gates S1 and S6, and it is the only thing that
    can tell us whether the meshes and overlays actually read. Everything else on this board is green
    without it and means less than it looks.
 2. **S3 on real hardware** — one run of `npm run smoke` on a laptop with a 2019-or-later integrated

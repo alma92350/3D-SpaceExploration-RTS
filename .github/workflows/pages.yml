@@ -1,0 +1,56 @@
+# Publish the built game to GitHub Pages.
+#
+# **The Pages source must be "GitHub Actions", not a branch.** Serving a branch publishes the repo
+# root, which is Vite *source* — its `index.html` points at `/src/main.ts`, which no browser can
+# execute, so a branch-served site is a blank page. Only `dist/` is a website, and `dist/` exists
+# only after a build. Repo → Settings → Pages → Build and deployment → Source: GitHub Actions.
+#
+# This deliberately does NOT re-run the test suite: `ci.yml` already gates every push to main, and
+# duplicating it here would double the wait for a deploy without adding a signal. What this job
+# guarantees is only that what ships is what `npm run build` produces from the commit on main.
+
+name: Pages
+
+on:
+  push:
+    branches: [main]
+  # So a broken deploy can be re-run without an empty commit.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never cancel a running deploy: a half-published site is worse than a slightly stale one.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      # The payload budget applies to what players actually download, so it applies here too.
+      - run: npm run check:size
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

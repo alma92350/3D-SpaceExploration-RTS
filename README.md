@@ -14,10 +14,21 @@ should pick up: [`docs/planning/TASKS.md`](docs/planning/TASKS.md).
 
 ## Run it
 
+**Play it now:** https://alma92350.github.io/3D-SpaceExploration-RTS/ — published from `main` by
+`.github/workflows/pages.yml`. Nothing to install; the whole game is a static bundle.
+
+Locally:
+
 ```sh
 npm ci
 npm run dev          # http://localhost:5173
 ```
+
+> **Pages must be set to "GitHub Actions", not a branch.** Serving a branch publishes the repo
+> root, which is Vite *source* — its `index.html` points at `/src/main.ts`, which no browser can
+> execute, so you get an unstyled "Loading the Odyssey…" that never finishes. Only `dist/` is a
+> site, and `dist/` only exists after a build. `e2e/subpath.spec.ts` guards the other half of this:
+> it serves the real build from a nested path and fails if any asset URL is rooted at `/`.
 
 You land on **Helix Belt** with a colony ship and nothing else. Select it, press **Deploy base**,
 and the Odyssey starts.
