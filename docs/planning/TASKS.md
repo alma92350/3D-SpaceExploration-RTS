@@ -45,6 +45,8 @@ Goal: an empty but trustworthy repo. Exit criteria: PRD §5, Phase 0.
 | P1-T25 | First-run readability: the opening must not read as a blank page | DONE | P1-T16 | The first frame shows a legible colony ship, ground rather than void, and one line saying what to do | Raised by looking at the built app. Four causes, all fixed: the camera opened at 420 on a single small ship; unexplored terrain rendered pure black over ~90% of the view; the map edge ended in a hard black wedge; nothing said what to click. **Scope change: the starfield in PRD §5 is cut** — the camera's pitch ramp means the horizon is never on screen, so a skybox is invisible by construction. A dark terrain apron replaces it (ADR-0010 §5–6) |
 | P1-T26 | CI: the browser job could never start | DONE | P0-T02 | `npm run smoke` reaches the tests on a GitHub runner | `vite preview` binds `localhost`, which resolves to `::1` on a dual-stack runner while Playwright polled `127.0.0.1` — three minutes of webServer timeout with no test ever running. Binds explicitly now. Also stopped reusing an existing preview server: a stale one silently serves an old `dist/`, so the browser suite tests a build that no longer matches the source |
 | P1-T27 | Publish the build to GitHub Pages | DONE | P0-T02 | A public URL serves the playable game; the build works from a subpath | Pages had been pointed at a *branch*, which publishes Vite source and yields an unstyled "Loading the Odyssey…" that never boots. Source must be **GitHub Actions**. `base` is `"./"` so one artefact works at both `/` and `/<repo>/` — no deploy-only build path for nobody to test — and `e2e/subpath.spec.ts` serves the real build from a nested path so a rooted asset URL fails CI rather than the public site |
+| P1-T28 | S5 measured rather than inferred: cold load to interactive under a throttled connection | DONE | P1-T16 | `npm run smoke` fails if a cold load at 10 Mbit reaches a playable frame later than 5 s | S5 had been called a pass by arithmetic — 192 kB at 10 Mbit is 0.15 s, therefore fine — which ignores everything between the last byte and a playable frame: parse, compile, GL context creation, mesh generation, the terrain build, the first draw. On a machine with no GPU that is where the time actually is. `performance.mark("odyssey:interactive")` is set from the entry point after the first frame returns (§4.2 asks for `performance` marks), and CDP throttles the link. **Measured: 331 ms against 5 000 ms.** The second test in the file is the important one — it re-runs the load unthrottled and fails if the two numbers match, because a throttling harness that silently fails open reports a comfortable number forever |
+| P1-T29 | The perf gate's regression message pointed at the one action that disables the gate | DONE | P1-T23 | `judge()` has tests; a regression message sends the reader to re-measure on a clean checkout before it mentions the baseline | Found by hitting it: this container measured T2 p95 **7.16 ms against a 5.16 ms baseline it had recorded itself hours earlier**, with no code change and CI green on the same commit — host load, not a regression. The old message's only advice was "re-record the baseline", and following it would have written a loaded machine's number into the repo, after which the gate passes forever and detects nothing. Message fixed and pinned; `judge()` had no tests at all before this, so its four real rules got them too. **The baseline was deliberately NOT re-recorded** |
 | P1-T24 | Playtest script `docs/playtests/mvp.md` + one recorded playtest against S1/S6 | IN-PROGRESS | P1-T18 | Script exists; 3 of 5 testers find the build menu unaided, or a follow-up task is filed | Script written and updated for the built MVP (world, controls, tier switching). **The five-tester session has not been run** — it needs people, not code |
 
 ---
@@ -60,7 +62,7 @@ writing more code.
 | S2 — 30 fps at 1280×720, 200 units, software rendering | **PASS** | p95 **12.7 ms** against a 33 ms budget, Chromium forced to SwiftShader (`e2e/perf.spec.ts`) |
 | S3 — 60 fps at 1600×900, 400 units, integrated GPU ≥ 2019 | **NOT VERIFIABLE IN CI** | CI has no GPU. The T2 scene's frame time is measured and printed but not asserted; S3 needs a run on real 2019-or-later integrated hardware before the gate can be called green |
 | S4 — bit-identical simulation for the same seed and inputs | **PASS in CI, unconfirmed across machines** | `test/determinism/replay.test.ts`. The PRD asks for three machines; this is one |
-| S5 — cold load to interactive ≤ 5 s on 10 Mbit | **PASS by payload** | 192 kB gzipped against a 3 MB budget — ~0.15 s of transfer at 10 Mbit. A real Lighthouse run on a throttled connection has not been done |
+| S5 — cold load to interactive ≤ 5 s on 10 Mbit | **PASS, measured** | **331 ms** to a drawn frame with the link throttled to 10 Mbit and the HTTP cache disabled (`e2e/coldload.spec.ts`, P1-T28). Was previously a pass by arithmetic from the payload size, which measured none of the parse/compile/GL-init/first-draw time that actually dominates it |
 | S6 — a first-time player finds the build menu unaided | **NOT MEASURED** | Needs P1-T24's five testers |
 
 **Scope deviations from PRD §5, both recorded in ADR-0010:** the MVP world is Helix Belt rather
@@ -76,14 +78,60 @@ the sky. The PRD should be amended for both.
 2. **S3 on real hardware** — one run of `npm run smoke` on a laptop with a 2019-or-later integrated
    GPU, with the T2 assertion turned back on locally. File what it says.
 3. **S4 on two more machines** — `npx vitest run test/determinism` elsewhere and compare the hash.
-4. **S5 properly** — a throttled Lighthouse run, not an inference from payload size.
+
+All three need a person or a machine this project does not have in CI. Everything on the gate that
+could be closed by writing code has been: S5 was the last of them (P1-T28).
 
 ## Phase 2 — The economy
 
-Not yet decomposed. Decompose at the Phase 1 gate — the MVP will teach us what is actually hard.
-Known headings: gathering/hauling visuals and cargo, the industrial chain and its buffers, power
-zones, the market panel, doctrines and research UI, supply/Habitats, repair and recycling, the
-remaining buildings.
+Goal: the full per-world build/economy loop that Odyssey actually runs on. Exit criteria: PRD §5,
+Phase 2 — *a player can run the full 2D economy in 3D with no panel missing; every economy panel has
+a logic test; perf budgets hold with 300 buildings on screen.*
+
+> **Every row below is BLOCKED on one thing: the Phase 1 exit gate.** PRD §5 is explicit that
+> phases do not overlap, and Phase 1 is not green — S1, S3 and S6 are open and none of them can be
+> closed by writing code. The moment the gate is green these become READY in dependency order;
+> nothing here is blocked on anything else. The `Deps` column is the task-level dependency.
+
+**What the MVP taught us, which is why this decomposition looks like it does.** The numbers below
+are from the vendored engine, not from the PRD's prose:
+
+- **29 buildings and 23 commodities.** The MVP renders 9 building types and shows 3 commodities plus
+  credits. Phase 2 is mostly *breadth*: 20 more building types, 20 more commodities, and the panels
+  to read them. That is a different kind of work from Phase 1's, and it is why the perf risk is
+  draw calls and snapshot width rather than any single clever system.
+- **The industrial chain is 9 recipes, not 7.** `recipeOf` covers smelter, assembler, chipfab,
+  machineworks, antimatterforge, aifoundry, torpedoworks, chemplant and fabricator — PRD §5's arrow
+  diagram omits the Chemical Plant and the Fabricator, and both are on the consumer-goods path.
+  Four recipes are tech-gated (`metallurgy`, `electronics`, `antimatter`, `aicores`), so the
+  research UI (P2-T11) is a dependency of the chain reading correctly, not a side panel.
+- **Power is a distance field, not a boolean.** `POWER_TIERS` bands by range — on-grid ≤ 190,
+  near ≤ 320, far ≤ 470, isolated beyond — each with a cost multiplier (1×, 1.3×, 1.7×, 2.3×). It
+  is the same shape of problem as fog, which is already solved as one low-res texture with a version
+  counter, and Q-08 asks whether to reuse that machinery.
+
+| ID | Task | Status | Deps | Definition of done | Notes |
+|---|---|---|---|---|---|
+| P2-T01 | Snapshot: the owner's full commodity stockpile, supply and power totals | BLOCKED | P1-T02 | Every commodity in `COM` (23) reaches the view with the engine's own value; 600 frames allocate nothing; growth stays power-of-two and off-frame | The MVP carries ore/crystals/radioactives/credits. Widening the stockpile is cheap — it is per-owner, not per-entity — and it is the dependency of every panel below |
+| P2-T02 | Snapshot: per-building production state (recipe, progress, input buffers, output buffer, throttle reason) | BLOCKED | P2-T01 | Matches `recipeOf` + the engine's building fields for a hand-built world of every producing type; no per-frame allocation | **Answer Q-07 first.** 23 commodities × 300 buildings is 6 900 floats a tick if every buffer crosses every tick; the alternative is totals for all, detail for the selection only |
+| P2-T03 | Bridge commands: research, recycle, repair, market buy/sell, doctrine, logistics priority | BLOCKED | P2-T01 | Each intent produces exactly one engine call and is refused exactly when the engine refuses it — asserted against the engine's own predicate, not a copy of its rules | The MVP's rule: the bridge never re-implements a rule it can ask about (`canPlaceBuilding` is the precedent). `researchTech`, `beginRecycle`/`canRecycle`, `buy`/`sell`, `LOGI_PRIORITIES` |
+| P2-T04 | Meshes for the remaining 19 building types | BLOCKED | P1-T06 | Deterministic, inside a per-mesh triangle budget, and **distinguishable from every other building by silhouette alone** at MVP camera distance | The silhouette test is the point: 29 low-poly boxes at 210 units of distance is a legibility problem, and colour cannot carry it (N-05). Expect to spend the budget on distinct rooflines |
+| P2-T05 | Logistics unit meshes + visible cargo | BLOCKED | P2-T04 | `hauler`, `heavyhauler`, `bulkfreighter`, `freighter` render; a laden unit is distinguishable from an empty one at camera distance; **cargo adds no draw call** | Cargo as a per-instance attribute, like `instanceShade` — a second mesh per laden unit would double the logistics draw calls, which is the one place unit counts are highest |
+| P2-T06 | Power / electrification zones rendered | BLOCKED | P1-T14 | The four `POWER_TIERS` bands are legible; one lookup, no per-entity branching; uploaded once per tick behind a version counter, asserted by the conformance suite | **Q-08.** Fog already solved this exact shape. If the answer is "reuse it", this task is small; if it is "overlay", it is not |
+| P2-T07 | Gathering and hauling read correctly in 3D | BLOCKED | P2-T05 | A recorded worker round trip — `updateGather` → `nearestGatherDrop` → drop-off — matches the visible cargo state at every tick of the replay | The economy's most-watched animation. `zoneFirst` means workers prefer their home zone, so the visuals must not imply nearest-node behaviour |
+| P2-T08 | Building state reads without colour: constructing, working, idle, throttled, unpowered | BLOCKED | P2-T02 | Each of the five states is distinguishable by shape or motion in a still frame; conformance suite covers both renderer implementations | N-05 again. "Unpowered" and "idle" being confusable is the failure mode that makes a player think the game is broken |
+| P2-T09 | Building detail panel: recipe, buffers, throughput, why it is stopped | BLOCKED | P2-T02 | Pure `panelModel(snapshot, id)` tested without a DOM; every number equals the engine's; the stop reason names the actual cause (`powerThrottle`, missing input, output full) | `hudModel`'s pattern, one model per panel (**Q-10**) |
+| P2-T10 | Market panel | BLOCKED | P2-T03 | Every price equals `unitPrice`/`quoteSell`; a trade goes through `buy`/`sell` and the panel shows the engine's result rather than its own arithmetic; `TRADE_LOT` and the glut/pressure bounds are visible, not implied | Price pressure swings 40–160% of equilibrium and a saturated market pays 15% — a panel that recomputes prices locally will disagree with the engine within one trade |
+| P2-T11 | Research / tech UI | BLOCKED | P2-T03 | Available, queued, in-progress and locked match the engine's gating exactly, swept over all of `TECHS`; cancel returns what the engine says it returns | Blocks four of the nine recipes, so it lands early despite reading like polish |
+| P2-T12 | Refinery doctrines UI | BLOCKED | P2-T03 | Selecting a doctrine changes exactly what the engine changes; the panel states the trade-off in the engine's own numbers | |
+| P2-T13 | Logistics panel: haulers, priorities, upkeep | BLOCKED | P2-T03 | `LOGI_PRIORITIES` round-trip through the UI; `countLogistics` and `aiUpkeepRate` shown per owner; a priority change re-targets the next assignment, asserted on `assignHaul` | The finite-storage loop is invisible without this: a stalled chain looks identical to an idle one |
+| P2-T14 | Supply and Habitats in the HUD | BLOCKED | P2-T01 | Supply used/cap match `supplyUsed`/`supplyCap`; being supply-blocked is stated, not left to be inferred from a failed click | Partly exists from P1-T16; this closes it |
+| P2-T15 | Repair and recycling UI | BLOCKED | P2-T03 | Recycle shows `recycleValue` before committing and is cancellable; repair targeting matches `pickRepairTarget` | `NEEDS_REPAIR`/`HEALED` hysteresis must be visible, or menders will look indecisive |
+| P2-T16 | Plasma Rig survey and yield UI | BLOCKED | P2-T03 | `rigSurvey` results render inside `SURVEY_RADIUS`; the rolled `YIELD_TIERS` tier is shown from `rigInfo`, never re-derived | The one building whose value depends on *where* it is put, so the survey has to be readable at placement time (P1-T18's ghost) |
+| P2-T17 | The remaining commodity/resource node meshes | BLOCKED | P1-T06 | Ice, gas, biomass, spice and relics nodes are distinguishable from ore/crystals/radioactives at camera distance | `PLASMA_VEINS` names six vein types; the MVP renders three |
+| P2-T18 | Perf: the Phase 2 scene and its gate | BLOCKED | P2-T04, P2-T06 | 300 buildings across all 29 types plus 200 units holds the T0 budget; baseline committed; draw calls asserted | **Q-09 decides whether this is possible as specified.** One draw call per (mesh, owner, LOD) × 29 types × 2 owners is ~58 draws for buildings alone against 15 measured today |
+| P2-T19 | Determinism fixture extended with economy orders | BLOCKED | P2-T03 | The recorded replay includes research, market, recycle and priority orders and hashes identically | Re-record with `RECORD_FIXTURE=1` in its own commit (P1-T21's rule) — never hand-edit the fixture |
+| P2-T20 | Phase 2 playtest script + one recorded session | BLOCKED | P2-T09 … P2-T16 | Script exists; a tester runs the full chain to machinery without help, or a follow-up task is filed | The Phase 2 equivalent of P1-T24, and it will be the gate again |
 
 ## Phase 3 — Combat and the opponent
 
@@ -117,6 +165,10 @@ here and in the ADR it produces.
 |---|---|---|---|
 | Q-01 | Camera yaw: free orbit or snapped? | Phase 1 (P1-T10) | **ANSWERED** — snapped to 8, ADR-0010. Revisit in Phase 6 with a readability test, not an opinion |
 | Q-02 | MVP starts on a fixed world or the seed's draw? | Phase 1 (P1-T01) | **ANSWERED** — fixed, ADR-0010. The world is **Helix Belt**, not `ferros`: Ferros Prime's terrain grid is uniformly open, so an MVP built on it would render a flat plane and demonstrate none of the relief that is the point of the exercise |
+| Q-07 | Do per-building commodity buffers cross the bridge every tick, or only for the selection? | Phase 2 (P2-T02) | OPEN — 23 commodities × 300 buildings is 6 900 floats a tick against a snapshot designed for ~5 columns per entity. Recommendation: totals for all buildings, full buffers for the selection, because only the selection has a panel to read them |
+| Q-08 | Power/electrification: a second low-res field texture like fog, or a projected overlay? | Phase 2 (P2-T06) | OPEN — `POWER_TIERS` is a distance field, the same shape as fog, and fog's texture + version counter already satisfies ADR-0006's "one lookup, not per-entity branching". Recommendation: reuse it |
+| Q-09 | 29 building types × 2 owners breaks "one draw call per (mesh, owner)". Merge rare types, or raise the budget? | Phase 2 (P2-T18) | OPEN — ~58 building draws against 15 measured for the whole MVP scene. The answer decides whether PRD §5's "300 buildings" exit criterion is reachable at T0 |
+| Q-10 | One pure model per panel, or one growing `hudModel`? | Phase 2 (P2-T09) | OPEN — six or more panels are coming. Recommendation: one model per panel, composed, so a panel's logic test does not have to build the whole HUD |
 | Q-03 | Starmap: true 3D scene or 2.5D diagram? | Phase 4 | OPEN |
 | Q-04 | Ship Observer Mode, or is a free camera enough? | Phase 5 | OPEN |
 | Q-05 | Ever bridge the 3D view back into the 2D repo? | any | OPEN — recommendation: no |

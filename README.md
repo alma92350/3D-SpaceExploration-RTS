@@ -99,7 +99,7 @@ the bridge carries a `z`. See [`test/architecture/layering.test.ts`](test/archit
 | `npm run check:vendor` | the vendored engine is byte-identical to upstream (offline) |
 | `npm run sync:engine` | pull a newer upstream ref and re-pin it |
 | `npm run perf` | CPU-side frame budget against `perf/baseline.json` |
-| `npm run smoke` | Playwright: smoke, conformance, and the T0 budget under a software rasteriser |
+| `npm run smoke` | Playwright: smoke, conformance, the T0 budget and the throttled cold-load gate, all under a software rasteriser |
 | `npm run check:size` | 3 MB payload budget + the three.js import surface |
 | `npm run check:adr` | every ADR is in the index with a status |
 
@@ -107,7 +107,7 @@ the bridge carries a `z`. See [`test/architecture/layering.test.ts`](test/archit
 
 Six jobs, each failing independently so a red build says *which* promise broke:
 **verify** (typecheck · tests · vendored sim suite · build) · **vendor** (drift) · **perf** ·
-**browser** (smoke · conformance · T0 budget) · **size** · **docs**.
+**browser** (smoke · conformance · T0 budget · cold load at 10 Mbit) · **size** · **docs**.
 
 ## How work happens
 

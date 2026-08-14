@@ -26,8 +26,10 @@ function boot(): void {
   // must get out of the way — otherwise it sits on top as an opaque black rectangle.
   if (choice.renderer.name === "canvas2d") el("scene").style.display = "none";
 
-  // The seed is fixed and the world is Ferros Prime (Q-02 / ADR-0010): every playtester sees the
-  // same terrain, the same deposits and the same neighbour, so their reports compare.
+  // The seed is fixed and the world is Helix Belt (Q-02 / ADR-0010 §2): every playtester sees the
+  // same terrain, the same deposits and the same neighbour, so their reports compare. `MVP_WORLD`
+  // is the single source of that choice — this comment named Ferros Prime long after the code
+  // stopped doing so, which is exactly why it points at the constant instead of repeating it.
   const game = new Game(
     { viewport: el("viewport"), hudRoot: el("hud"), minimapCanvas: el<HTMLCanvasElement>("minimap") },
     choice.renderer,
@@ -51,6 +53,17 @@ function boot(): void {
   // nothing in the app reads it back, and it is the only way a Playwright test can assert on
   // FrameStats without a debug UI nobody would otherwise want.
   (globalThis as unknown as { __odyssey: unknown }).__odyssey = game;
+
+  // S5's measuring point (§4.2: "`performance` marks"), and the definition of "interactive" this
+  // project is willing to defend: the input handlers are attached (the constructor did that) AND
+  // the first frame has been drawn. Payload size cannot stand in for it — on a machine with no GPU
+  // most of the wall-clock between the last byte and a playable frame is context creation, mesh
+  // generation and the first rasterised draw, none of which get faster on a better connection.
+  //
+  // `game.start()` queued its frame callback before this one, and callbacks registered outside a
+  // frame run in registration order, so this fires immediately after the first render returns.
+  // It stays out of the render loop deliberately: measurement does not belong in the hot path.
+  requestAnimationFrame(() => performance.mark("odyssey:interactive"));
 }
 
 function buildTierPicker(
