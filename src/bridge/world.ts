@@ -74,9 +74,26 @@ export class WorldBridge {
     return this.extractor.snapshot;
   }
 
+  /** Galaxy credits. They live above the world, which is why trade needs the galaxy (P2-T03). */
+  get galaxyCredits(): number {
+    return this.galaxy.credits;
+  }
+
   /** Queue player intent. Never applied immediately — see the class comment. */
   enqueue(intent: Intent): void {
     this.pending.push(intent);
+  }
+
+  /**
+   * Apply one intent right now and return the engine's refusal, if any.
+   *
+   * The game never calls this — it enqueues, so that an order lands on a tick boundary and a
+   * recorded intent stream replays. It exists because a *test* of "does the engine refuse this?"
+   * should not have to step the clock to find out, and because it is the same code path `drain`
+   * uses rather than a second one that could drift from it.
+   */
+  apply(intent: Intent): string | null {
+    return applyIntent(this.state, intent, this.galaxy);
   }
 
   /** Why the last command was rejected (not enough ore, blocked ground), for the HUD. */
@@ -107,7 +124,7 @@ export class WorldBridge {
     if (this.pending.length === 0) return;
     const state = this.state;
     for (const intent of this.pending) {
-      const err = applyIntent(state, intent);
+      const err = applyIntent(state, intent, this.galaxy);
       if (err) this.lastCommandError = err;
     }
     this.pending.length = 0;

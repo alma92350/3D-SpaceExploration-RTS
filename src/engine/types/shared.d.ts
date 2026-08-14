@@ -100,6 +100,23 @@ declare global {
     rally: { x: number; y: number };
     tier?: number;
     dead?: boolean;
+    // --- economy (Phase 2). All optional: a Command Center has none of them. ---
+    /** Local input larder, filled by worker service runs. Not the owner's stockpile. */
+    input?: Resources;
+    /** Local output buffer, drained by worker haul runs. A full one stalls the factory. */
+    store?: Resources;
+    /** Player-paused: banks nothing, consumes nothing, drops its grid draw to a trickle. */
+    paused?: boolean;
+    /** Fuel-burning sources only: true while actually fed. Sources grant no power when false. */
+    powered?: boolean;
+    /** Being scrapped back into resources (recycle.js). A progress record, not a flag. */
+    recycling?: { progress: number; time: number };
+    /** Electrified for the +30% boost, at the cost of ELECTRIFY_POWER of grid draw. */
+    electrified?: boolean;
+    /** Research in progress at a Datacenter. */
+    research?: Array<{ techId: string; progress: number }>;
+    /** Which end of the logistics queue this building sits at (`LOGI_PRIORITIES`). */
+    logiPriority?: "high" | "normal" | "low";
   }
 
   type Entity = Unit | Building;
@@ -141,6 +158,21 @@ declare global {
     attack?: number;
     range?: number;
     odysseyOnly?: boolean;
+    // --- economy (Phase 2) ---
+    /** Grid capacity this building contributes, if it is a power source. */
+    energyGrants?: number;
+    /** Reference grid reach; a consumer's efficiency band is its distance divided by this. */
+    powerRange?: number;
+    /** A Substation relays the grid one hop, never through another relay. */
+    powerRelay?: boolean;
+    /** Fuel-burning source: which fuels it accepts and how fast it burns them. */
+    combust?: { fuels: string[]; rate: number };
+    /** Plasma Rig: the nuclear fuel draw per second. */
+    rig?: { nuclear: number; [k: string]: unknown };
+    /** Batches per second at full power. */
+    prodRate?: number;
+    storeCap?: number;
+    inputCap?: number;
   }
 
   interface PlayerSide {
@@ -171,6 +203,15 @@ declare global {
     fog: Fog;
     fogAI: Fog;
     events: SimEvent[];
+    /** Odyssey only: the world's commodity market (`engine/market.js`). */
+    market: MarketState;
+  }
+
+  /** Per-world commodity market. Prices move with what has been traded into and out of it. */
+  interface MarketState {
+    base: Record<string, number>;
+    pressure: Record<string, number>;
+    glut: Record<string, number>;
   }
 
   interface Galaxy {

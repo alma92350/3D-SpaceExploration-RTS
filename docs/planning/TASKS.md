@@ -69,6 +69,20 @@ writing more code.
 than the illustrative `ferros`; and the starfield skybox is cut, because the camera can never see
 the sky. The PRD should be amended for both.
 
+## Deferred verification
+
+Criteria that CI cannot decide, kept in one place so a closed phase never quietly implies they
+passed (ADR-0011). This list only grows until someone runs the checks.
+
+| Criterion | Phase | Needs | Deferred because |
+|---|---|---|---|
+| S1 — the chain judged by a person | 1 | five playtesters | Automated end to end in `e2e/smoke.spec.ts`; the *judgement* is the point and needs people |
+| S6 — a first-time player finds the build menu unaided | 1 | five playtesters | The one criterion that asks whether the game is legible rather than fast |
+| S3 — 60 fps at 1600×900, 400 units | 1 | a 2019-or-later integrated GPU | CI has no GPU. **Deferred indefinitely**, not merely delayed: CPU-only is the whole target |
+| S4 on a second and third machine | 1 | two more machines | Reproducible in CI; the PRD asks for three |
+| Mesh and overlay legibility | 1, 2 | playtesters | The silhouette tests fail what a person would obviously fail, which is not the same as reading well |
+| "Every combat cue is legible in a blind readability test" | 3 | playtesters | Same shape as S6, and it will be deferred the same way |
+
 **What the next session should pick up, in order:**
 
 1. **P1-T24** — run the playtest with five people, now that there is a URL to send them:
@@ -88,10 +102,9 @@ Goal: the full per-world build/economy loop that Odyssey actually runs on. Exit 
 Phase 2 — *a player can run the full 2D economy in 3D with no panel missing; every economy panel has
 a logic test; perf budgets hold with 300 buildings on screen.*
 
-> **Every row below is BLOCKED on one thing: the Phase 1 exit gate.** PRD §5 is explicit that
-> phases do not overlap, and Phase 1 is not green — S1, S3 and S6 are open and none of them can be
-> closed by writing code. The moment the gate is green these become READY in dependency order;
-> nothing here is blocked on anything else. The `Deps` column is the task-level dependency.
+> **Phase 1's gate is closed on its automated criteria (ADR-0011).** S1, S3 and S6 are deferred —
+> they need five playtesters and a GPU, not code — so Phase 2 is under way rather than waiting.
+> Rows still marked `BLOCKED` are blocked on their `Deps`, nothing more.
 
 **What the MVP taught us, which is why this decomposition looks like it does.** The numbers below
 are from the vendored engine, not from the PRD's prose:
@@ -112,12 +125,12 @@ are from the vendored engine, not from the PRD's prose:
 
 | ID | Task | Status | Deps | Definition of done | Notes |
 |---|---|---|---|---|---|
-| P2-T01 | Snapshot: the owner's full commodity stockpile, supply and power totals | BLOCKED | P1-T02 | Every commodity in `COM` (23) reaches the view with the engine's own value; 600 frames allocate nothing; growth stays power-of-two and off-frame | The MVP carries ore/crystals/radioactives/credits. Widening the stockpile is cheap — it is per-owner, not per-entity — and it is the dependency of every panel below |
-| P2-T02 | Snapshot: per-building production state (recipe, progress, input buffers, output buffer, throttle reason) | BLOCKED | P2-T01 | Matches `recipeOf` + the engine's building fields for a hand-built world of every producing type; no per-frame allocation | **Answer Q-07 first.** 23 commodities × 300 buildings is 6 900 floats a tick if every buffer crosses every tick; the alternative is totals for all, detail for the selection only |
-| P2-T03 | Bridge commands: research, recycle, repair, market buy/sell, doctrine, logistics priority | BLOCKED | P2-T01 | Each intent produces exactly one engine call and is refused exactly when the engine refuses it — asserted against the engine's own predicate, not a copy of its rules | The MVP's rule: the bridge never re-implements a rule it can ask about (`canPlaceBuilding` is the precedent). `researchTech`, `beginRecycle`/`canRecycle`, `buy`/`sell`, `LOGI_PRIORITIES` |
+| P2-T01 | Snapshot: the owner's full commodity stockpile, supply and power totals | DONE | P1-T02 | Every commodity in `COM` (23) reaches the view with the engine's own value; 600 frames allocate nothing; growth stays power-of-two and off-frame | The MVP carries ore/crystals/radioactives/credits. Widening the stockpile is cheap — it is per-owner, not per-entity — and it is the dependency of every panel below |
+| P2-T02 | Snapshot: per-building production state (recipe, progress, input buffers, output buffer, throttle reason) | DONE | P2-T01 | Matches `recipeOf` + the engine's building fields for a hand-built world of every producing type; no per-frame allocation | **Answer Q-07 first.** 23 commodities × 300 buildings is 6 900 floats a tick if every buffer crosses every tick; the alternative is totals for all, detail for the selection only |
+| P2-T03 | Bridge commands: research, recycle, repair, market buy/sell, doctrine, logistics priority | DONE | P2-T01 | Each intent produces exactly one engine call and is refused exactly when the engine refuses it — asserted against the engine's own predicate, not a copy of its rules | The MVP's rule: the bridge never re-implements a rule it can ask about (`canPlaceBuilding` is the precedent). `researchTech`, `beginRecycle`/`canRecycle`, `buy`/`sell`, `LOGI_PRIORITIES` |
 | P2-T04 | Meshes for the remaining 19 building types | BLOCKED | P1-T06 | Deterministic, inside a per-mesh triangle budget, and **distinguishable from every other building by silhouette alone** at MVP camera distance | The silhouette test is the point: 29 low-poly boxes at 210 units of distance is a legibility problem, and colour cannot carry it (N-05). Expect to spend the budget on distinct rooflines |
 | P2-T05 | Logistics unit meshes + visible cargo | BLOCKED | P2-T04 | `hauler`, `heavyhauler`, `bulkfreighter`, `freighter` render; a laden unit is distinguishable from an empty one at camera distance; **cargo adds no draw call** | Cargo as a per-instance attribute, like `instanceShade` — a second mesh per laden unit would double the logistics draw calls, which is the one place unit counts are highest |
-| P2-T06 | Power / electrification zones rendered | BLOCKED | P1-T14 | The four `POWER_TIERS` bands are legible; one lookup, no per-entity branching; uploaded once per tick behind a version counter, asserted by the conformance suite | **Q-08.** Fog already solved this exact shape. If the answer is "reuse it", this task is small; if it is "overlay", it is not |
+| P2-T06 | Power / electrification zones rendered | PARTIAL | P1-T14 | The four `POWER_TIERS` bands are legible; one lookup, no per-entity branching; uploaded once per tick behind a version counter, asserted by the conformance suite | **Q-08.** Fog already solved this exact shape. If the answer is "reuse it", this task is small; if it is "overlay", it is not |
 | P2-T07 | Gathering and hauling read correctly in 3D | BLOCKED | P2-T05 | A recorded worker round trip — `updateGather` → `nearestGatherDrop` → drop-off — matches the visible cargo state at every tick of the replay | The economy's most-watched animation. `zoneFirst` means workers prefer their home zone, so the visuals must not imply nearest-node behaviour |
 | P2-T08 | Building state reads without colour: constructing, working, idle, throttled, unpowered | BLOCKED | P2-T02 | Each of the five states is distinguishable by shape or motion in a still frame; conformance suite covers both renderer implementations | N-05 again. "Unpowered" and "idle" being confusable is the failure mode that makes a player think the game is broken |
 | P2-T09 | Building detail panel: recipe, buffers, throughput, why it is stopped | BLOCKED | P2-T02 | Pure `panelModel(snapshot, id)` tested without a DOM; every number equals the engine's; the stop reason names the actual cause (`powerThrottle`, missing input, output full) | `hudModel`'s pattern, one model per panel (**Q-10**) |
