@@ -31,6 +31,17 @@ export const TRIANGLE_BUDGET: Readonly<Record<string, number>> = {
   refinery: 70,
   node: 30,
   imposter: 2,
+  // Phase 2 — the six silhouette families (ADR-0013). Budgets are tighter than Phase 1's because
+  // there are far more of these on the field at once: a 300-building base is the perf scene.
+  factory: 60,
+  powerplant: 50,
+  relay: 40,
+  fortress: 60,
+  works: 50,
+  port: 80,
+  civic: 60,
+  plasmarig: 80,
+  gate: 90,
 };
 
 /** The nine types Phase 1 draws, plus the shared node and imposter meshes. */
@@ -41,9 +52,67 @@ export const MVP_MESHES = [
   "colonyship", "worker", "skiff", "bastion", "lancer",
   "command", "barracks", "habitat", "turret", "refinery",
   "node", "imposter",
+  // Phase 2's families. Nine meshes for the nineteen buildings the MVP did not draw (ADR-0013).
+  "factory", "powerplant", "relay", "fortress", "works", "port", "civic", "plasmarig", "gate",
 ] as const;
 
+/** Every mesh the game builds. `MVP_MESHES` kept its name; this is what to iterate. */
+export const MESH_IDS = MVP_MESHES;
+
 export type MeshId = (typeof MVP_MESHES)[number];
+
+/**
+ * Engine building type → the mesh that draws it (ADR-0013).
+ *
+ * This table is the reason a building type added upstream cannot silently render as a fallback
+ * block: `test/view/building-meshes.test.ts` fails on any type missing from it, and names the type.
+ *
+ * A family shares a *role*, and that is the point — the player is not being asked to tell a Chip
+ * Fab from a Smelter by shape, they are being told "that shape is a factory", which is the read
+ * that matters when scanning a base. Identity comes from the panel, not the roofline.
+ */
+export const BUILDING_FAMILY: Readonly<Record<string, MeshId>> = {
+  // Phase 1's five keep their own meshes: they are the ones a player acts on constantly.
+  command: "command",
+  barracks: "barracks",
+  habitat: "habitat",
+  turret: "turret",
+  refinery: "refinery",
+
+  // The industrial chain — nine buildings, one shed with a stack.
+  smelter: "factory",
+  assembler: "factory",
+  chipfab: "factory",
+  machineworks: "factory",
+  antimatterforge: "factory",
+  aifoundry: "factory",
+  torpedoworks: "factory",
+  chemplant: "factory",
+  fabricator: "factory",
+
+  // Power. A squat drum, and the relay mast that extends its reach one hop.
+  reactor: "powerplant",
+  combustor: "powerplant",
+  biomassreactor: "powerplant",
+  substation: "relay",
+
+  // Static defence beyond the Sentinel Turret.
+  bastille: "fortress",
+  aegisbastion: "fortress",
+  torpedobattery: "fortress",
+
+  // Military upgrade halls.
+  foundry: "works",
+  arsenal: "works",
+
+  // Landmarks: the buildings a player navigates by, so they stay distinct and stay tall.
+  spaceport: "port",
+  stardock: "port",
+  market: "civic",
+  datacenter: "civic",
+  plasmarig: "plasmarig",
+  antimatter_gate: "gate",
+};
 
 // ---------------------------------------------------------------------------
 // A tiny mesh builder. Positions are model space with the origin at the ground
@@ -278,9 +347,99 @@ function imposter(): MeshData {
   return b.finish("imposter");
 }
 
+// --- Phase 2's six families (ADR-0013) -------------------------------------------------------
+
+function factory(): MeshData {
+  const b = new Builder();
+  // A long shed with an off-centre stack. The stack is the whole read: it is what separates
+  // "something is being made here" from a barracks or a hall at 210 units of distance.
+  b.box(13, 0, 6.5, 9, HULL[0], HULL[1], HULL[2], 0.28);
+  b.box(9, 6.5, 9, 6.5, DARK[0], DARK[1], DARK[2], 0.12);
+  b.prism(6, 3, 2.6, 9, 19, TRIM[0], TRIM[1], TRIM[2], 0.5, 0, -4.5);
+  return b.finish("factory");
+}
+
+function powerplant(): MeshData {
+  const b = new Builder();
+  // A squat drum, wider than it is tall — the opposite proportion to a factory, deliberately, so
+  // the two never confuse at a glance. Every source in this game burns fuel, so it reads as a tank.
+  b.prism(8, 11, 10, 0, 7, DARK[0], DARK[1], DARK[2], 0.2);
+  b.prism(8, 10, 9.5, 7, 9.5, TRIM[0], TRIM[1], TRIM[2], 0.65);
+  return b.finish("powerplant");
+}
+
+function relay(): MeshData {
+  const b = new Builder();
+  // A thin mast on a small pad. Narrow and tall enough to spot, small enough in footprint that a
+  // player reads it as infrastructure rather than as a building worth defending.
+  b.box(4.5, 0, 2, 4.5, DARK[0], DARK[1], DARK[2], 0.15);
+  b.prism(4, 1.4, 0.9, 2, 16, TRIM[0], TRIM[1], TRIM[2], 0.7, Math.PI / 4);
+  return b.finish("relay");
+}
+
+function fortress(): MeshData {
+  const b = new Builder();
+  // A walled block: a wide, LOW outer wall with a modest core inside it. The first attempt was
+  // taller and narrower and the profile test failed it — it came within 8% of the Refinery, which
+  // means the two would have been the same shape on the field however different their vertices.
+  // Low and wide is the read that says "this holds ground" and it is nothing else's proportion.
+  b.box(15, 0, 3.5, 15, DARK[0], DARK[1], DARK[2], 0.2);
+  b.box(7, 3.5, 10, 7, HULL[0], HULL[1], HULL[2], 0.6);
+  return b.finish("fortress");
+}
+
+function works(): MeshData {
+  const b = new Builder();
+  // A hall — a plain long roof, no stack. Reads as "military support" next to the factory's stack
+  // and the fortress's step.
+  b.box(11, 0, 9, 14, HULL[0], HULL[1], HULL[2], 0.4);
+  b.box(4, 9, 11.5, 12, TRIM[0], TRIM[1], TRIM[2], 0.75);
+  return b.finish("works");
+}
+
+function port(): MeshData {
+  const b = new Builder();
+  // A landing ring on legs. The tallest thing a player builds before the Gate, and the one they
+  // navigate by when their army is halfway across the map.
+  b.prism(8, 15, 13, 0, 4, DARK[0], DARK[1], DARK[2], 0.2);
+  b.box(2, 4, 22, 2, HULL[0], HULL[1], HULL[2], 0.3);
+  b.prism(8, 13, 11, 22, 28, TRIM[0], TRIM[1], TRIM[2], 0.7);
+  return b.finish("port");
+}
+
+function civic(): MeshData {
+  const b = new Builder();
+  // A slab tower: flat-sided and rectangular where every other tall thing is round. The Market and
+  // the Datacenter are where a player goes to *read* something, and they sit near the base core.
+  b.box(9, 0, 20, 6, HULL[0], HULL[1], HULL[2], 0.35);
+  b.box(6.5, 20, 23, 4, TRIM[0], TRIM[1], TRIM[2], 0.8);
+  return b.finish("civic");
+}
+
+function plasmarig(): MeshData {
+  const b = new Builder();
+  // A derrick over a wellhead. Its value depends on where it is put (the survey), so it has to be
+  // findable from across the map to judge whether it was put well.
+  b.prism(6, 10, 9, 0, 3, DARK[0], DARK[1], DARK[2], 0.15);
+  b.prism(4, 6, 1.6, 3, 26, TRIM[0], TRIM[1], TRIM[2], 0.6, Math.PI / 4);
+  return b.finish("plasmarig");
+}
+
+function gate(): MeshData {
+  const b = new Builder();
+  // The Antimatter Gate: the win condition, and it should look like one. A ring on a plinth,
+  // taller than anything else in the game.
+  b.prism(8, 17, 16, 0, 5, DARK[0], DARK[1], DARK[2], 0.2);
+  b.box(2.5, 5, 30, 12, HULL[0], HULL[1], HULL[2], 0.35, -11);
+  b.box(2.5, 5, 30, 12, HULL[0], HULL[1], HULL[2], 0.35, 11);
+  b.box(13, 30, 34, 3, TRIM[0], TRIM[1], TRIM[2], 0.85);
+  return b.finish("gate");
+}
+
 const GENERATORS: Record<MeshId, () => MeshData> = {
   colonyship, worker, skiff, bastion, lancer, command, barracks, habitat, turret, refinery,
   node, imposter,
+  factory, powerplant, relay, fortress, works, port, civic, plasmarig, gate,
 };
 
 /** Build the whole MVP mesh set. Called once, at boot. */
@@ -288,7 +447,15 @@ export function buildMeshes(): MeshData[] {
   return MVP_MESHES.map((id) => GENERATORS[id]());
 }
 
-/** Which mesh draws a given engine type. Unknown types fall back to a worker-sized block. */
+/**
+ * Which mesh draws a given engine type.
+ *
+ * Buildings go through `BUILDING_FAMILY` (ADR-0013); units keep their own meshes. The fallback is
+ * a worker-sized block, which is why a test asserts every engine building type is in the table —
+ * a missing one does not crash, it renders as a small grey lump and nobody notices for a phase.
+ */
 export function meshIdForType(type: string): MeshId {
+  const family = BUILDING_FAMILY[type];
+  if (family) return family;
   return (MVP_MESHES as readonly string[]).includes(type) ? (type as MeshId) : "worker";
 }
