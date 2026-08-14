@@ -109,12 +109,14 @@ declare global {
     paused?: boolean;
     /** Fuel-burning sources only: true while actually fed. Sources grant no power when false. */
     powered?: boolean;
-    /** Being scrapped back into resources (recycle.js). */
-    recycling?: boolean;
+    /** Being scrapped back into resources (recycle.js). A progress record, not a flag. */
+    recycling?: { progress: number; time: number };
     /** Electrified for the +30% boost, at the cost of ELECTRIFY_POWER of grid draw. */
     electrified?: boolean;
     /** Research in progress at a Datacenter. */
     research?: Array<{ techId: string; progress: number }>;
+    /** Which end of the logistics queue this building sits at (`LOGI_PRIORITIES`). */
+    logiPriority?: "high" | "normal" | "low";
   }
 
   type Entity = Unit | Building;
@@ -201,6 +203,15 @@ declare global {
     fog: Fog;
     fogAI: Fog;
     events: SimEvent[];
+    /** Odyssey only: the world's commodity market (`engine/market.js`). */
+    market: MarketState;
+  }
+
+  /** Per-world commodity market. Prices move with what has been traded into and out of it. */
+  interface MarketState {
+    base: Record<string, number>;
+    pressure: Record<string, number>;
+    glut: Record<string, number>;
   }
 
   interface Galaxy {

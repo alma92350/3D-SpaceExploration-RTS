@@ -9,9 +9,11 @@
 // sent through a `postMessage` to a Worker.
 
 import {
-  BUILDINGS, UNITS, canAfford, cancelProduction, canPlaceBuilding, deployColonyShip, getEntity,
-  issueAttack, issueAttackMove, issueBuild, issueGather, issueHold, issueMove, issuePatrol,
-  issueSetRally, issueStop, prereqsMet, queueProduction, sampleTerrain,
+  BUILDINGS, TECHS, UNITS, buy, canAfford, cancelProduction, cancelResearch, canPlaceBuilding,
+  deployColonyShip, getEntity, isElectrifiable, issueAttack, issueAttackMove,
+  issueBuild, issueCancelRecycle, issueGather, issueHold, issueMove, issuePatrol, issueRecycle,
+  issueSetLogiPriority, issueSetRally, issueStop, prereqsMet, queueProduction, researchTech,
+  sampleTerrain, sell, tradeables,
 } from "../engine/index.js";
 
 export type Intent =
@@ -27,15 +29,28 @@ export type Intent =
   | { kind: "train"; buildingId: string; unitType: string }
   | { kind: "cancelTrain"; buildingId: string; queueIndex: number }
   | { kind: "setRally"; buildingId: string; x: number; y: number }
-  | { kind: "deploy" };
+  | { kind: "deploy" }
+  // --- Phase 2, the economy (P2-T03) ---
+  | { kind: "pause"; buildingId: string; paused: boolean }
+  | { kind: "electrify"; buildingId: string; on: boolean }
+  | { kind: "research"; buildingId: string; techId: string }
+  | { kind: "cancelResearch"; buildingId: string; index: number }
+  | { kind: "recycle"; entityId: string }
+  | { kind: "cancelRecycle"; entityId: string }
+  | { kind: "trade"; com: string; qty: number; side: "buy" | "sell" }
+  | { kind: "logiPriority"; buildingId: string; priority: "high" | "normal" | "low" };
 
 /**
  * Apply one intent. Returns a player-facing reason when the engine refused, or null on success.
  *
  * Refusals are returned rather than thrown: "not enough ore" is an ordinary outcome of clicking a
  * button, and an exception in the sim step would take the frame with it.
+ *
+ * `galaxy` is here because trade is galaxy-scoped — credits live above the world, and `buy`/`sell`
+ * move them. Passing it rather than reaching for a module global keeps the bridge a function of
+ * its arguments, which is what lets the determinism harness replay one.
  */
-export function applyIntent(state: State, intent: Intent): string | null {
+export function applyIntent(state: State, intent: Intent, galaxy: Galaxy): string | null {
   switch (intent.kind) {
     case "select":
       return applySelect(state, intent.ids, intent.additive);
@@ -114,6 +129,79 @@ export function applyIntent(state: State, intent: Intent): string | null {
       return deployColonyShip(state, ship.id)
         ? null
         : "Not enough clear ground here — move the colony ship and try again";
+    }
+
+    // --- Phase 2 -------------------------------------------------------------------------------
+    //
+    // Every case below is "ask the engine, report what it said". Two of them — pause and electrify
+    // — set a field directly, and that is not a shortcut: upstream has no command function for
+    // either, because upstream's own HUD flips the flag (see `engine/industry.js`'s note on
+    // `electrified`). Where the engine *does* own a predicate we use it, which is why electrify
+    // asks `isElectrifiable` instead of listing types here.
+
+    case "pause": {
+      const b = state.buildings.get(intent.buildingId);
+      if (!b) return null;                             // recycled or destroyed since the click
+      b.paused = intent.paused;
+      return null;
+    }
+
+    case "electrify": {
+      const b = state.buildings.get(intent.buildingId);
+      if (!b) return null;
+      if (!isElectrifiable(b.type)) return `${BUILDINGS[b.type]?.name ?? b.type} cannot be electrified`;
+      b.electrified = intent.on;
+      return null;
+    }
+
+    case "research": {
+      const tech = TECHS[intent.techId];
+      if (!tech) return "Unknown technology";
+      if (!state.buildings.get(intent.buildingId)) return null;
+      // `researchTech` checks the building, the prerequisites and the cost. Predicting any of that
+      // here would be a second copy of the tech tree, wrong the day upstream edits the first.
+      return researchTech(state, intent.buildingId, intent.techId)
+        ? null
+        : `Cannot research ${tech.name} yet`;
+    }
+
+    case "cancelResearch":
+      cancelResearch(state, intent.buildingId, intent.index);
+      return null;
+
+    case "recycle": {
+      const entity = getEntity(state, intent.entityId);
+      if (!entity) return null;
+      issueRecycle([entity]);
+      return null;
+    }
+
+    case "cancelRecycle": {
+      const entity = getEntity(state, intent.entityId);
+      if (!entity) return null;
+      issueCancelRecycle([entity]);
+      return null;
+    }
+
+    case "trade": {
+      // Both sides clamp themselves: `sell` sells only what is held, `buy` buys only what the
+      // credits cover, and each returns what actually moved. So the refusal is "the engine moved
+      // nothing", which cannot disagree with the engine the way a pre-check would.
+      //
+      // `commodityAvailable` is deliberately NOT used as that pre-check: it answers "can this be
+      // got on this world at all" (a deposit exists, or some is held) and returns a BOOLEAN.
+      // Comparing it to a quantity reads as `true < 25` and refuses every trade — which is what
+      // the first draft of this did.
+      if (!tradeables(state).includes(intent.com)) return `${intent.com} cannot be traded here`;
+      return intent.side === "sell"
+        ? (sell(galaxy, state, intent.com, intent.qty) > 0 ? null : "Not enough to sell")
+        : (buy(galaxy, state, intent.com, intent.qty) > 0 ? null : "Not enough credits");
+    }
+
+    case "logiPriority": {
+      if (!state.buildings.get(intent.buildingId)) return null;
+      issueSetLogiPriority(state, intent.buildingId, intent.priority);
+      return null;
     }
 
     default: {

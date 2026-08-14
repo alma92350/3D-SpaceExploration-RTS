@@ -13,3 +13,5 @@ export declare function storeRoom(building: Building): number;
 export declare function inputTotal(building: Building): number;
 /** Per-commodity input capacity — the larder is split evenly across a recipe's real inputs. */
 export declare function inputCapOf(type: string): number;
+/** Whether a building type can take the +30% electrification upgrade. The engine's own list. */
+export declare function isElectrifiable(type: string): boolean;

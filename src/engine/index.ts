@@ -34,7 +34,8 @@ export {
 
 export {
   issueMove, issueAttackMove, issueAttack, issueGather, issueStop, issueHold, issuePatrol,
-  issueBuild, issueSetRally,
+  issueBuild, issueSetRally, issueRecycle, issueCancelRecycle, issueSetLogiPriority,
+  issueServiceBuilding, issueRepair,
 } from "@engine/engine/commands.js";
 
 export { BUILD_REACH, queueProduction, cancelProduction } from "@engine/engine/production.js";
@@ -69,7 +70,7 @@ export {
 export type { PowerTier, Recipe, BuildingConcern } from "@engine/engine/industry.js";
 
 export {
-  storeCapOf, storeTotal, storeRoom, inputTotal, inputCapOf,
+  storeCapOf, storeTotal, storeRoom, inputTotal, inputCapOf, isElectrifiable,
 } from "@engine/engine/entities.js";
 
 export {
