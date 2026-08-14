@@ -117,6 +117,12 @@ declare global {
     researchQueue?: Array<{ techId: string; progress: number }>;
     /** Which end of the logistics queue this building sits at (`LOGI_PRIORITIES`). */
     logiPriority?: "high" | "normal" | "low";
+    /**
+     * Committed job tallies, written by `countLogistics` — which is a MUTATOR, not a query.
+     * Read these; never call it from above the bridge (see src/ui/operations-panel.ts).
+     */
+    haulers?: number;
+    servers?: number;
   }
 
   type Entity = Unit | Building;
@@ -137,6 +143,8 @@ declare global {
     supplyCost?: number;
     role?: string;
     canGather?: boolean;
+    /** Freighters and haulers: how much freight they carry. Absent for everything else. */
+    cargoHold?: number;
     buildCategories?: string[];
     odysseyOnly?: boolean;
     requires?: string[];
