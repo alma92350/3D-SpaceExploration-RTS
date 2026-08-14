@@ -176,8 +176,12 @@ do next.
 
 **Scope**
 - **World rendering:** terrain as a heightfield derived from the existing terrain grid (open /
-  rough / high ground → three elevations, ADR-0004), map bounds, resource-node meshes, a starfield
-  skybox.
+  rough / high ground → three elevations, ADR-0004), map bounds, resource-node meshes, and a dark
+  apron past the map edge. *(Amended at the Phase 1 gate: this line asked for a **starfield
+  skybox**. It was built, then cut — the camera's pitch ramp puts the top of the view between 9.7°
+  and 48.7° below the horizon at every zoom the rig allows, so a skybox is invisible by
+  construction. The apron replaces it at the cost of eight quads in the terrain's existing draw
+  call. ADR-0010 §5, and revisit if a later phase lowers the pitch floor.)*
 - **Entity rendering:** procedural low-poly meshes for the MVP roster — Worker, Skiff, Bastion,
   Lancer, Command Center, Barracks, Habitat, Turret, Refinery — drawn with **GPU/CPU instancing,
   one draw call per (type, owner)** (ADR-0005, ADR-0006).
@@ -198,7 +202,10 @@ do next.
 tech tree UI, the full unit/building roster, wonders, observer mode, audio.
 
 **Exit criteria**
-- S1, S2, S3, S4, S5 from §4.2 all pass.
+- S1 through **S6** from §4.2 all pass. *(Amended at the Phase 1 gate: this line read "S1, S2, S3,
+  S4, S5" and silently dropped S6, which §4.2 lists as an MVP criterion and which is the whole
+  point of the playtest. Both S1 and S6 are judged by the same session, so omitting S6 would have
+  let the phase close on half a playtest.)*
 - Every input in the MVP scope has a test at the logic layer; the render layer has contract tests
   (draw-call counts, instance counts, no per-frame allocation).
 - A recorded 10-minute input trace replays to a bit-identical end state on three machines.
@@ -213,10 +220,17 @@ machine with the GPU disabled.
 **Goal:** the full per-world build/economy loop that Odyssey actually runs on.
 
 **Scope:** workers gathering and hauling (with visible cargo), the finite-storage logistics loop,
-factories and the industrial chain (Reactor → Smelter → Assembler → Chipfab → Machineworks →
-Plasma Rig → Antimatter Forge), power/electrification zones, the Market panel, the Refinery
+factories and the industrial chain, power/electrification zones, the Market panel, the Refinery
 doctrines and the tech/research UI, supply and Habitats, repair and recycling, the remaining
 buildings.
+
+*Amended at the Phase 1 gate:* this line described the chain as Reactor → Smelter → Assembler →
+Chipfab → Machineworks → Plasma Rig → Antimatter Forge. The engine has **nine** recipes, not seven
+— that list omits the **Chemical Plant** (biomass → chemicals) and the **Fabricator** (alloys +
+chemicals → consumer goods), which are the whole consumer-goods branch — and four of the nine are
+tech-gated (`metallurgy`, `electronics`, `antimatter`, `aicores`), which makes the research UI a
+dependency of the chain rather than a side panel. `recipeOf` in `engine/industry.js` is canonical;
+the decomposition in `planning/TASKS.md` is built from it.
 
 **Exit criteria:** a player can run the full 2D economy in 3D with no panel missing; every economy
 panel has a logic test; perf budgets hold with 300 buildings on screen.
@@ -464,11 +478,26 @@ State that lives only in a conversation is state that is lost. The board is the 
 
 These need an answer before the phase in brackets. Track them as `Q-nn` on the board.
 
-- **Q-01 [Phase 1]** Camera: yaw-free orbit, or yaw snapped to 4/8 directions? Snapping costs
-  expressiveness and buys enormous readability and instancing wins. *Recommendation: snapped for
-  MVP, revisit in Phase 6.*
-- **Q-02 [Phase 1]** Does the MVP start on a fixed world (`ferros`) or the seed's own draw?
-  *Recommendation: fixed, so playtests compare like with like.*
+- **Q-01 [Phase 1] — ANSWERED (ADR-0010 §1): snapped to 8.** Snapping costs expressiveness and
+  buys enormous readability and instancing wins. Pitch is not a separate control; it ramps with
+  zoom. Revisit in Phase 6 against a readability test, not an opinion.
+- **Q-02 [Phase 1] — ANSWERED (ADR-0010 §2): fixed, and the world is `helix`, not `ferros`.**
+  Fixed so playtests compare like with like. The world named here originally does not survive
+  contact with the terrain data — Ferros Prime's grid is uniformly open, zero rough cells and zero
+  high ground, so an MVP built on it renders a flat plane and demonstrates none of the relief that
+  is the point of the exercise. Only six of the eleven worlds carry terrain stamps at all. Phase 4
+  turns the seed's own draw on when the landing picker exists.
+- **Q-07 [Phase 2]** Do per-building commodity buffers cross the bridge every tick, or only for the
+  selected building? *Recommendation: totals for every building, full buffers for the selection —
+  only the selection has a panel that can read them.*
+- **Q-08 [Phase 2]** Are power/electrification zones a second low-res field texture like fog, or a
+  projected overlay? *Recommendation: reuse the fog machinery; it is the same shape of problem and
+  already satisfies §6.2's "one lookup, not per-entity branching".*
+- **Q-09 [Phase 2]** 29 building types across 2 owners breaks "one draw call per (type, owner)".
+  Merge rarely-seen types onto a shared mesh, or raise the budget? *This decides whether Phase 2's
+  "300 buildings on screen" exit criterion is reachable at T0.*
+- **Q-10 [Phase 2]** One pure model per panel, or one growing `hudModel`? *Recommendation: one per
+  panel, so a panel's logic test does not have to build the entire HUD.*
 - **Q-03 [Phase 4]** Is the starmap a true 3D scene, or a 2.5D orbital diagram? The 2D client's
   starmap is an information display, and information displays rarely improve in 3D.
 - **Q-04 [Phase 5]** Do we ship the 2D client's Observer Mode, or is a 3D free camera enough?

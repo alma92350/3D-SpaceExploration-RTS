@@ -140,10 +140,19 @@ export function judge(result: PerfResult, baseline: Baseline[string] | undefined
   if (baseline) {
     const ceiling = round(Math.max(baseline.p95 * REGRESSION_BAND, baseline.p95 + REGRESSION_SLACK_MS));
     if (result.p95 > ceiling) {
+      // The advice matters as much as the number. This check compares absolute milliseconds
+      // against a baseline recorded on one machine on one day, so a loaded or simply slower host
+      // fails it with no code change at all — and a reader told only to "re-record the baseline"
+      // will write their slow machine's number into the repo, after which the gate passes forever
+      // and detects nothing. Diagnostic step first, re-recording last. Pinned by
+      // test/perf/judge.test.ts.
       problems.push(
         `${result.scene}: p95 ${result.p95} ms regressed more than 10% against the baseline `
-        + `${baseline.p95} ms (ceiling ${ceiling} ms). If this is deliberate, re-record the baseline `
-        + `in its own commit with a reason.`,
+        + `${baseline.p95} ms (ceiling ${ceiling} ms). Re-measure on an unmodified checkout before `
+        + `changing anything: this compares absolute milliseconds, so a busy or slower host fails it `
+        + `without any code having changed. You have regressed something only if the clean checkout `
+        + `is fast and yours is not — and only a deliberate, understood slowdown justifies `
+        + `re-recording the baseline, in its own commit, with a reason.`,
       );
     }
     // Draw calls are the instancing contract in numeric form. They should not creep at all, so this
