@@ -37,9 +37,24 @@ export function hashState(state: State): string {
     h.update(`u ${u.id} ${u.type} ${u.owner} ${u.x.toFixed(6)} ${u.y.toFixed(6)} ${u.hp.toFixed(6)} ${u.order?.type ?? "-"}\n`);
   }
   for (const b of [...state.buildings.values()].sort((a, b) => (a.id < b.id ? -1 : 1))) {
-    h.update(`b ${b.id} ${b.type} ${b.owner} ${b.x.toFixed(6)} ${b.y.toFixed(6)} ${b.hp.toFixed(6)} ${b.buildProgress.toFixed(6)} ${b.queue.length}\n`);
+    // The economy fields are hashed as well as the physical ones, and that is not thoroughness for
+    // its own sake. `logiPriority`, `paused` and `recycling` are what Phase 2's new orders CHANGE,
+    // and a hash that ignored them would not move if one of those orders quietly stopped reaching
+    // the engine — leaving a green fixture that proves nothing about the commands it issues. That
+    // is the same failure the recorder itself was built to prevent (see record.test.ts), one layer
+    // down. The buffers are included for the same reason: they are what a factory's whole
+    // production loop moves.
+    h.update(`b ${b.id} ${b.type} ${b.owner} ${b.x.toFixed(6)} ${b.y.toFixed(6)} ${b.hp.toFixed(6)} ${b.buildProgress.toFixed(6)} ${b.queue.length}`);
+    h.update(` p=${b.paused ? 1 : 0} e=${b.electrified ? 1 : 0} lp=${b.logiPriority ?? "-"} rc=${b.recycling ? b.recycling.progress.toFixed(6) : "-"}`);
+    h.update(` in=${buf(b.input)} out=${buf(b.store)}\n`);
   }
   return h.digest("hex");
+}
+
+/** A commodity buffer as a stable string — sorted, so key order can never change the hash. */
+function buf(b: Resources | undefined): string {
+  if (!b) return "-";
+  return Object.keys(b).sort().map((k) => `${k}=${(b[k] ?? 0).toFixed(6)}`).join("|") || "-";
 }
 
 /** Run the fixture's script and return the end-state hash. */
