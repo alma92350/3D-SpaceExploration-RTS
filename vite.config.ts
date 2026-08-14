@@ -5,6 +5,17 @@ import { defineConfig } from "vite";
 // One config, no custom plugins (ADR-0007). The vendored engine ships as plain ES modules and is
 // not transpiled; Vite serves and bundles it as-is.
 export default defineConfig({
+  // Relative asset URLs, so one build works from any path.
+  //
+  // GitHub Pages serves a project site from a SUBPATH (`/3D-SpaceExploration-RTS/`), and Vite's
+  // default absolute `/assets/...` URLs 404 there. The obvious fix is `base: "/3D-Space…/"`, but
+  // then the bundle CI tests at `http://127.0.0.1:4173/` is not the bundle that deploys — and a
+  // deploy-only build path is one nobody ever runs until it breaks. Relative works at both, so
+  // there is exactly one artefact.
+  //
+  // Safe here only because the app has no client-side routing: every page sits at the root of
+  // whatever path it is served from. Add nested routes and this needs revisiting.
+  base: "./",
   resolve: {
     // The runtime half of the JS/TS seam. tsconfig maps `@engine/*` to the declarations in
     // src/engine/types/; this maps it to the vendored JavaScript those declarations describe.
