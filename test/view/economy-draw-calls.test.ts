@@ -14,12 +14,14 @@ import { describe, expect, it } from "vitest";
 import { RecordingRenderer } from "../../src/view/renderer/recording.js";
 import { SceneComposer } from "../../src/view/scene.js";
 import { TIERS } from "../../src/view/renderer/tiers.js";
-import { BUILDING_FAMILY, buildMeshes, meshIdForType } from "../../src/view/meshes/generators.js";
+import {
+  BUILDING_FAMILY, DEPOSIT_FAMILY, buildMeshes, meshIdForCommodity, meshIdForType,
+} from "../../src/view/meshes/generators.js";
 import { buildTerrainMesh } from "../../src/view/terrain/mesh.js";
 import { elevationFieldFrom } from "../../src/view/terrain/elevation.js";
 import { CameraRig } from "../../src/input/camera.js";
 import { SnapshotExtractor } from "../../src/bridge/snapshot.js";
-import { BUILDINGS, activeState, createGalaxy, makeBuilding, makeUnit } from "../../src/engine/index.js";
+import { BUILDINGS, COM, UNITS, activeState, createGalaxy, makeBuilding, makeUnit } from "../../src/engine/index.js";
 
 const SEED = 20260814;
 
@@ -33,12 +35,26 @@ const SEED = 20260814;
 const BUILDING_DRAW_CALL_CEILING = 28;
 
 /**
- * The whole frame: buildings, plus four unit meshes across two owners, plus nodes and imposters.
+ * The whole frame's ceiling, DERIVED rather than chosen (ADR-0014).
  *
- * Stated separately and asserted separately, because a buildings-only ceiling could be held while
- * the frame as a whole crept. Measured: 34.
+ * A hand-picked constant has exactly one failure mode, and it is the one this project keeps
+ * finding: someone adds a mesh, the number goes red, and the number gets edited. So this computes
+ * the ceiling from the batching rule itself — one batch per (mesh, owner, LOD) — over the roster
+ * that actually exists. Adding a mesh changes the derivation visibly, in the same commit as the
+ * mesh, instead of requiring anyone to notice a constant.
+ *
+ * It is a weaker check than a fixed number by construction: it catches BATCHING regressions (a key
+ * that splits, a batch submitted twice) and not roster growth. The buildings cap above is what
+ * catches roster growth, and it stays hand-written and adversarial for exactly that reason.
  */
-const SCENE_DRAW_CALL_CEILING = 36;
+function derivedSceneCeiling(): number {
+  const buildingMeshes = new Set(Object.values(BUILDING_FAMILY));
+  const unitMeshes = new Set(Object.keys(UNITS).map(meshIdForType)).size;
+  const depositMeshes = new Set(Object.values(DEPOSIT_FAMILY)).size;
+  // Owners × LODs for anything owned; deposits are neutral and never LOD (`pushNodes` batches at
+  // LOD_MESH unconditionally), so they cost one batch each. Plus the shared imposter.
+  return (buildingMeshes.size + unitMeshes) * 2 * 2 + depositMeshes + 1;
+}
 
 /**
  * A fully industrialised world: 300 buildings covering **every** type the engine defines, and 200
@@ -116,7 +132,13 @@ describe("the Phase 2 draw-call ceiling", () => {
     ).toBeLessThanOrEqual(BUILDING_DRAW_CALL_CEILING);
 
     const allKeys = new Set(renderer.lastFrame.batches.map((b) => `${b.mesh}|${b.owner}|${b.lod}`));
-    expect(allKeys.size, "the whole frame, not only its buildings").toBeLessThanOrEqual(SCENE_DRAW_CALL_CEILING);
+    const ceiling = derivedSceneCeiling();
+    expect(
+      allKeys.size,
+      `the whole frame submitted ${allKeys.size} batches against a derived ceiling of ${ceiling}. ` +
+      `The ceiling comes from the roster (ADR-0014), so exceeding it means batches are SPLITTING, ` +
+      `not that the roster grew.`,
+    ).toBeLessThanOrEqual(ceiling);
 
     // The scene must actually be the scene: a ceiling passed by drawing nothing is not a ceiling.
     expect(snap.entities.count, "the world should be populated").toBeGreaterThan(400);
@@ -128,6 +150,23 @@ describe("the Phase 2 draw-call ceiling", () => {
     const batches = renderer.lastFrame.batches;
     const keys = batches.map((b) => `${b.mesh}|${b.owner}|${b.lod}`);
     expect(new Set(keys).size, "a (mesh, owner, LOD) key was submitted more than once").toBe(keys.length);
+  });
+
+  it("gives every commodity a deposit mesh that was actually built", () => {
+    // The same guard the buildings have: a commodity missing from DEPOSIT_FAMILY silently falls
+    // back to rock, which looks healthy and is wrong.
+    const built = new Set(buildMeshes().map((m) => m.id));
+    for (const com of Object.keys(COM)) {
+      expect(built.has(meshIdForCommodity(com)), `${com} → ${meshIdForCommodity(com)}, not built`).toBe(true);
+    }
+    expect(new Set(Object.values(DEPOSIT_FAMILY)).size, "two deposit meshes, per ADR-0014").toBe(2);
+  });
+
+  it("draws the four logistics units with one hull, not four", () => {
+    // ADR-0014's whole point. Four meshes would be eight more batches on a frame that had two to
+    // spare, and they are the same silhouette at any distance a player cares about.
+    const hulls = new Set(["hauler", "heavyhauler", "bulkfreighter", "freighter"].map(meshIdForType));
+    expect(hulls.size, `the logistics units use ${[...hulls].join(", ")}`).toBe(1);
   });
 
   it("exercises every silhouette family, or the ceiling proves nothing", () => {

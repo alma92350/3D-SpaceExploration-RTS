@@ -19,7 +19,7 @@ import {
 } from "../bridge/snapshot.js";
 import { type ElevationField, elevation } from "./terrain/elevation.js";
 import { interpolatePositions } from "./interpolate.js";
-import { type MeshId, meshIdForType } from "./meshes/generators.js";
+import { type MeshId, meshIdForCommodity, meshIdForType } from "./meshes/generators.js";
 import {
   type CameraState, type FrameStats, LOD_IMPOSTER, LOD_MESH, type LodLevel, OVERLAY_STRIDE,
   type OwnerSlot, type Renderer, type TerrainMesh,
@@ -234,17 +234,22 @@ export class SceneComposer {
 
   private pushNodes(snap: Snapshot, camera: CameraState, cullSq: number): void {
     const nodes = snap.nodes;
-    const batch = this.batchFor("node", NEUTRAL_SLOT, LOD_MESH);
     for (let i = 0; i < nodes.count; i++) {
       const x = nodes.x[i]!;
       const y = nodes.y[i]!;
       const dx = x - camera.eyeX;
       const dz = y - camera.eyeZ;
       if (dx * dx + dz * dz > cullSq) continue;
+      // The deposit's commodity has crossed the bridge since Phase 1 and was thrown away here —
+      // every deposit drew with the one `node` mesh. Two meshes now, rock and volatile (ADR-0014).
+      // `batchFor` is inside the loop rather than hoisted because there are two batches, and it is
+      // a map lookup rather than an allocation.
+      const mesh = meshIdForCommodity(snap.comNames[nodes.comIndex[i]!] ?? "ore");
       // A worked-out deposit visibly shrinks — the one piece of economy feedback the MVP shows
       // without a panel, and the cheapest possible way to show it.
       const remaining = nodes.remaining[i]!;
-      batch.push(x, elevation(this.field, x, y), y, 0, 0.55 + 0.45 * remaining, 0.8 + 0.2 * remaining);
+      this.batchFor(mesh, NEUTRAL_SLOT, LOD_MESH)
+        .push(x, elevation(this.field, x, y), y, 0, 0.55 + 0.45 * remaining, 0.8 + 0.2 * remaining);
     }
   }
 
