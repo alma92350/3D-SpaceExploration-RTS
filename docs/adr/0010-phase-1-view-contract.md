@@ -69,7 +69,34 @@ that appears exactly when a colony ship is selected, and `Z` on the keyboard —
 positional action key. S6 asks that a first-time player find what to click without documentation,
 and at `t=0` there is precisely one thing to click.
 
-**5. Hotkeys are upstream's, letter for letter.** Stop is `X`, not `S`, because W/A/S/D pan the
+**5. There is no starfield, and PRD §5 is wrong to list one.**
+
+Phase 1's scope names "a starfield skybox". It was built and then cut, because it can never be
+seen: pitch ramps between 35.5° and 74.5° below horizontal and the vertical FOV is 51.6°, so the
+top edge of the view sits between 9.7° and 48.7° BELOW the horizon at every zoom the rig allows.
+The camera never looks up. A skybox would have been dead geometry in every frame the game draws.
+
+What was mistaken for empty sky is the void past the map edge, where the terrain mesh stops. That
+gets a **dark apron** instead — eight quads in the same merged mesh, so the whole border costs one
+sliver of the terrain's existing draw call, exempt from the fog because there is nothing out there
+to hide. If a later phase lowers the pitch floor far enough to show the horizon, a starfield becomes
+worth having again and this decision should be revisited rather than assumed.
+
+**6. Unexplored ground is dark, not black, and the opening is guided.**
+
+Two changes with one cause: the first thing a player saw was a near-empty screen. At `t = 0` the
+player owns one colony ship and has explored ~8% of the map, so pure-black unexplored terrain left
+~90% of the view empty, the camera's default 420-unit distance framed the ship as a speck, and
+nothing on screen said what to do.
+
+So unexplored terrain now renders at 30/255 rather than 0 — enough to show the ground is there,
+nothing else, and it cannot leak because entities under fog never reach the renderer at all. The
+camera opens at 210. And the HUD carries a single contextual line while the player has no Command
+Center ("Click your colony ship to select it" → "Press Deploy base…"), derived purely from the
+snapshot. That last one is the interface answering S6's question rather than a tutorial, which
+remains Phase 6's.
+
+**7. Hotkeys are upstream's, letter for letter.** Stop is `X`, not `S`, because W/A/S/D pan the
 camera (PRD §5) and upstream gave the pan keys priority; `A` genuinely double-books as pan-left and
 arm-attack-move, which is upstream's own resolution. Rotation is `,` and `.` because upstream has
 already spent `Q` and `E` on select-army and scout, and binding rotation to them would collide the

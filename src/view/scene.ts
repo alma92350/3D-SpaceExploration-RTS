@@ -30,6 +30,10 @@ const INITIAL_BATCH_CAPACITY = 64;
 const OWNER_SLOTS = 2;
 const LOD_LEVELS = 2;
 
+/** Neutral owner slot — resource nodes and stars belong to nobody. */
+const NEUTRAL_SLOT = 2 as OwnerSlot;
+
+
 /** One bucket of instances sharing a mesh, an owner and a LOD. Grown in powers of two, off-frame. */
 class Batch {
   count = 0;
@@ -230,7 +234,7 @@ export class SceneComposer {
 
   private pushNodes(snap: Snapshot, camera: CameraState, cullSq: number): void {
     const nodes = snap.nodes;
-    const batch = this.batchFor("node", 2 as OwnerSlot, LOD_MESH);
+    const batch = this.batchFor("node", NEUTRAL_SLOT, LOD_MESH);
     for (let i = 0; i < nodes.count; i++) {
       const x = nodes.x[i]!;
       const y = nodes.y[i]!;

@@ -125,9 +125,15 @@ export class WebGLRenderer implements Renderer {
       this.fogTexture.magFilter = LinearFilter;
     }
     const data = this.fogTexture.image.data as Uint8Array;
-    // 0 unexplored → black, 1 explored → dim, 2 visible → full. A gradient rather than a mask, so
-    // the three states are three brightnesses and the shader stays a single multiply.
-    for (let i = 0; i < data.length; i++) data[i] = fog.state[i] === 2 ? 255 : fog.state[i] === 1 ? 96 : 0;
+    // Three brightnesses rather than a mask, so the shader stays a single multiply and F-06's
+    // three states stay visually distinct.
+    //
+    // Unexplored is 30, not 0. Pure black was correct and awful: at the start of a match the player
+    // has seen ~8% of the map, so ~90% of the screen was a black rectangle that reads as "nothing
+    // loaded" rather than as "a world you have not walked yet". 30/255 shows the ground is THERE
+    // without showing anything on it — and nothing is on it, because entities under fog never
+    // reach the renderer at all (they are dropped at the bridge), so this cannot leak.
+    for (let i = 0; i < data.length; i++) data[i] = fog.state[i] === 2 ? 255 : fog.state[i] === 1 ? 96 : 30;
     this.fogTexture.needsUpdate = true;
     this.stats.fogUploads++;
     const material = this.terrainMesh?.material as ShaderMaterial | undefined;
@@ -318,9 +324,16 @@ export class WebGLRenderer implements Renderer {
         varying vec2 vUv;
         uniform sampler2D fogMap;
         void main() {
-          // One texture fetch for the whole fog of war (ADR-0006). Three states arrive as three
-          // brightnesses, so unexplored ground is genuinely black rather than tinted.
-          float vis = texture2D(fogMap, vUv).r;
+          // One texture fetch for the whole fog of war (ADR-0006): three states arrive as three
+          // brightnesses and the whole thing is a single multiply.
+          //
+          // The apron (terrain/mesh.ts) lies OUTSIDE the map, so its UVs fall outside [0,1] and
+          // sample the clamped edge of the fog texture — which is unexplored, so the border came
+          // out multiplied down to black and the fix looked like it had done nothing. Off-map
+          // ground is not fogged: there is nothing out there to hide.
+          vec2 d = abs(vUv - 0.5) * 2.0;
+          float outside = step(1.0, max(d.x, d.y));
+          float vis = mix(texture2D(fogMap, vUv).r, 1.0, outside);
           gl_FragColor = vec4(vColor * vis, 1.0);
         }`,
       vertexColors: true,

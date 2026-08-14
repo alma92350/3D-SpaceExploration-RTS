@@ -63,7 +63,9 @@ export class PerfScene {
 
     this.extractor = new SnapshotExtractor(state.map, 1024);
     this.field = elevationFieldFrom(state.map.terrain, state.map.width, state.map.height);
-    this.terrain = buildTerrainMesh(this.field, { relief: TIERS[spec.tier].terrain === "relief" });
+    this.terrain = buildTerrainMesh(this.field, {
+      relief: TIERS[spec.tier].terrain === "relief", apron: TIERS[spec.tier].apron,
+    });
     this.composer = new SceneComposer(this.field);
     this.rig = new CameraRig({ mapWidth: state.map.width, mapHeight: state.map.height }, this.field);
   }

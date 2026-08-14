@@ -279,7 +279,8 @@ function imposter(): MeshData {
 }
 
 const GENERATORS: Record<MeshId, () => MeshData> = {
-  colonyship, worker, skiff, bastion, lancer, command, barracks, habitat, turret, refinery, node, imposter,
+  colonyship, worker, skiff, bastion, lancer, command, barracks, habitat, turret, refinery,
+  node, imposter,
 };
 
 /** Build the whole MVP mesh set. Called once, at boot. */

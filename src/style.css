@@ -99,6 +99,22 @@ html, body {
 }
 .hud-notice.visible { opacity: 1; }
 
+/* The opening prompt. Centred high, quiet, and gone the moment the player has a base. */
+.hud-prompt {
+  position: absolute;
+  top: 80px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 7px 16px;
+  background: rgba(12, 20, 30, 0.9);
+  border: 1px solid rgba(79, 209, 255, 0.5);
+  border-radius: 4px;
+  color: var(--player);
+  letter-spacing: 0.02em;
+  display: none;
+}
+.hud-prompt.visible { display: block; }
+
 .hud-bottom {
   position: absolute;
   left: 0;

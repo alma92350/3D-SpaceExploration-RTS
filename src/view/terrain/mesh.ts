@@ -31,7 +31,23 @@ let nextVersion = 1;
 export interface TerrainBuildOptions {
   /** `flat` is the T0 variant: same colours, zero relief, minimum vertices. */
   readonly relief: boolean;
+  /** How far the dark border extends past the map edge, in world units. 0 disables it. */
+  readonly apron: number;
 }
+
+/**
+ * The border beyond the playable area.
+ *
+ * Without it the terrain mesh simply stops at the map bounds and everything past that edge is the
+ * clear colour — which at the MVP's camera angles is a hard black wedge across a third of the
+ * screen, and reads as "the page did not load" rather than as the edge of a map. Eight quads in
+ * the same mesh, so it costs one extra sliver of the terrain's single draw call.
+ *
+ * Deliberately not a bigger heightfield: the apron is flat, unlit and nearly black, because its
+ * whole job is to be ignorable. It should say "the world continues and you cannot go there", not
+ * invite the eye out of the play area.
+ */
+const APRON_COLOR: readonly [number, number, number] = [0.055, 0.062, 0.078];
 
 /**
  * Build the merged mesh. Called once per world load — never per frame, never per tier switch
@@ -82,13 +98,66 @@ export function buildTerrainMesh(field: ElevationField, opts: TerrainBuildOption
     }
   }
 
+  const base = { positions, colors, indices, triangles: cols * rows * 2 };
+  const withApron = opts.apron > 0 ? appendApron(base, field, opts.apron) : base;
+
   return {
-    positions, colors, indices,
-    triangles: cols * rows * 2,
+    positions: withApron.positions,
+    colors: withApron.colors,
+    indices: withApron.indices,
+    triangles: withApron.triangles,
     version: nextVersion++,
     width: field.width,
     height: field.height,
   };
+}
+
+interface RawMesh {
+  positions: Float32Array;
+  colors: Float32Array;
+  indices: Uint32Array;
+  triangles: number;
+}
+
+/** A picture-frame of 8 quads around the map, at ground level, in `APRON_COLOR`. */
+function appendApron(base: RawMesh, field: ElevationField, apron: number): RawMesh {
+  const x0 = -apron, x1 = 0, x2 = field.width, x3 = field.width + apron;
+  const z0 = -apron, z1 = 0, z2 = field.height, z3 = field.height + apron;
+  const quads: Array<[number, number, number, number]> = [
+    [x0, z0, x3, z1],   // top strip, full width
+    [x0, z2, x3, z3],   // bottom strip, full width
+    [x0, z1, x1, z2],   // left strip, between them
+    [x2, z1, x3, z2],   // right strip
+  ];
+
+  const vertexCount = base.positions.length / 3;
+  const positions = new Float32Array(base.positions.length + quads.length * 4 * 3);
+  const colors = new Float32Array(base.colors.length + quads.length * 4 * 3);
+  const indices = new Uint32Array(base.indices.length + quads.length * 6);
+  positions.set(base.positions);
+  colors.set(base.colors);
+  indices.set(base.indices);
+
+  let v = vertexCount;
+  let t = base.indices.length;
+  for (const [qx0, qz0, qx1, qz1] of quads) {
+    const corners: Array<[number, number]> = [[qx0, qz0], [qx1, qz0], [qx1, qz1], [qx0, qz1]];
+    for (const [cx, cz] of corners) {
+      positions[v * 3] = cx;
+      // A whisker below zero so it can never z-fight with the terrain's own edge vertices.
+      positions[v * 3 + 1] = -0.5;
+      positions[v * 3 + 2] = cz;
+      colors[v * 3] = APRON_COLOR[0];
+      colors[v * 3 + 1] = APRON_COLOR[1];
+      colors[v * 3 + 2] = APRON_COLOR[2];
+      v++;
+    }
+    const a = v - 4;
+    indices[t++] = a; indices[t++] = a + 2; indices[t++] = a + 1;
+    indices[t++] = a; indices[t++] = a + 3; indices[t++] = a + 2;
+  }
+
+  return { positions, colors, indices, triangles: base.triangles + quads.length * 2 };
 }
 
 function codeAtWorld(field: ElevationField, x: number, y: number): number {
@@ -104,7 +173,8 @@ function codeAtWorld(field: ElevationField, x: number, y: number): number {
  * That is one draw call and a rounding error next to 200 instanced units, which is the whole
  * argument for merging it (ADR-0006).
  */
-export function expectedTriangles(field: ElevationField): number {
+export function expectedTriangles(field: ElevationField, apron = 0): number {
   const step = field.cell / SUBDIVISION;
-  return Math.ceil(field.width / step) * Math.ceil(field.height / step) * 2;
+  const grid = Math.ceil(field.width / step) * Math.ceil(field.height / step) * 2;
+  return grid + (apron > 0 ? 8 : 0);
 }

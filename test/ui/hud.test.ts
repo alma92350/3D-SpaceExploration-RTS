@@ -46,6 +46,20 @@ describe("hudModel", () => {
     expect(hudModel(bridge.snapshot).canDeploy, "S6: the one action available at t=0 must be visible").toBe(true);
   });
 
+  it("tells a first-time player what to do, and stops once they have a base (S6)", () => {
+    const bridge = new WorldBridge({ seed: SEED, worldId: MVP_WORLD });
+    expect(hudModel(bridge.snapshot).prompt).toMatch(/colony ship/i);
+
+    const ship = [...bridge.state.units.values()].find((u) => u.type === "colonyship" && u.owner === "player")!;
+    bridge.enqueue({ kind: "select", ids: [ship.id], additive: false });
+    bridge.step(STEP_SECONDS);
+    expect(hudModel(bridge.snapshot).prompt, "once the ship is selected, name the action").toMatch(/deploy/i);
+
+    bridge.enqueue({ kind: "deploy" });
+    bridge.step(STEP_SECONDS);
+    expect(hudModel(bridge.snapshot).prompt, "a player with a base needs no prompt").toBeNull();
+  });
+
   it("offers the build menu only when a worker is selected", () => {
     const bridge = opened();
     expect(hudModel(bridge.snapshot).builds).toHaveLength(0);

@@ -42,6 +42,8 @@ Goal: an empty but trustworthy repo. Exit criteria: PRD §5, Phase 0.
 | P1-T21 | Determinism fixtures: recorded seed + command stream → committed end-state hash | DONE | P1-T11 | Replay is bit-identical in CI and on two developer machines; a deliberate engine tweak fails it | The fixture is **generated** by `test/determinism/record.test.ts` (`RECORD_FIXTURE=1`), not hand-written: engine ids depend on *when* an order is issued, so a hand-written fixture hashes deterministically while every order in it silently fails. Still needs confirming on a second and third machine (see the gate note below) |
 | P1-T22 | No-WebGL boot path test (context creation stubbed to fail) | DONE | P1-T19 | App starts, selects Canvas2D, reaches a playable frame, no uncaught error | Asserts pixels were actually drawn, not merely that boot completed |
 | P1-T23 | Perf gate at MVP content: T0 200 units @ 33 ms, T2 400 units @ 16.6 ms | PARTIAL | P1-T09, P1-T14 | `npm run perf` green at both tiers on the committed scene; baseline recorded | **T0 passes: p95 12.7 ms against 33 ms**, under SwiftShader, which *is* the T0 target. **T2's budget cannot be gated in CI** — it is defined as "integrated GPU ≥ 2019" and CI has no GPU at all, so the T2 scene is run for its hardware-independent contracts and its frame time is recorded, not asserted. See the gate note below |
+| P1-T25 | First-run readability: the opening must not read as a blank page | DONE | P1-T16 | The first frame shows a legible colony ship, ground rather than void, and one line saying what to do | Raised by looking at the built app. Four causes, all fixed: the camera opened at 420 on a single small ship; unexplored terrain rendered pure black over ~90% of the view; the map edge ended in a hard black wedge; nothing said what to click. **Scope change: the starfield in PRD §5 is cut** — the camera's pitch ramp means the horizon is never on screen, so a skybox is invisible by construction. A dark terrain apron replaces it (ADR-0010 §5–6) |
+| P1-T26 | CI: the browser job could never start | DONE | P0-T02 | `npm run smoke` reaches the tests on a GitHub runner | `vite preview` binds `localhost`, which resolves to `::1` on a dual-stack runner while Playwright polled `127.0.0.1` — three minutes of webServer timeout with no test ever running. Binds explicitly now. Also stopped reusing an existing preview server: a stale one silently serves an old `dist/`, so the browser suite tests a build that no longer matches the source |
 | P1-T24 | Playtest script `docs/playtests/mvp.md` + one recorded playtest against S1/S6 | IN-PROGRESS | P1-T18 | Script exists; 3 of 5 testers find the build menu unaided, or a follow-up task is filed | Script written and updated for the built MVP (world, controls, tier switching). **The five-tester session has not been run** — it needs people, not code |
 
 ---
@@ -59,6 +61,10 @@ writing more code.
 | S4 — bit-identical simulation for the same seed and inputs | **PASS in CI, unconfirmed across machines** | `test/determinism/replay.test.ts`. The PRD asks for three machines; this is one |
 | S5 — cold load to interactive ≤ 5 s on 10 Mbit | **PASS by payload** | 192 kB gzipped against a 3 MB budget — ~0.15 s of transfer at 10 Mbit. A real Lighthouse run on a throttled connection has not been done |
 | S6 — a first-time player finds the build menu unaided | **NOT MEASURED** | Needs P1-T24's five testers |
+
+**Scope deviations from PRD §5, both recorded in ADR-0010:** the MVP world is Helix Belt rather
+than the illustrative `ferros`; and the starfield skybox is cut, because the camera can never see
+the sky. The PRD should be amended for both.
 
 **What the next session should pick up, in order:**
 
