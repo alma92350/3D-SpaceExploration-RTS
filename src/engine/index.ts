@@ -74,7 +74,8 @@ export {
 } from "@engine/engine/entities.js";
 
 export {
-  TRADE_LOT, createMarket, unitPrice, quoteSell, buy, sell, tradeables, commodityAvailable,
+  TRADE_LOT, PRESSURE_FLOOR, PRESSURE_CEIL, GLUT_CEIL, createMarket, unitPrice, quoteSell, buy,
+  sell, tradeables, commodityAvailable,
 } from "@engine/engine/market.js";
 
 export { TECHS, researchTech, cancelResearch, techMult } from "@engine/engine/techtree.js";

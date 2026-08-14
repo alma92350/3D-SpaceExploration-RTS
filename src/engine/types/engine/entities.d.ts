@@ -2,7 +2,15 @@ export declare const UNITS: Record<string, UnitDef>;
 export declare const BUILDINGS: Record<string, BuildingDef>;
 export declare const VETERANCY_RANKS: Array<{ kills: number; name: string; damage: number; taken: number }>;
 export declare function canAfford(resources: Resources, cost: Resources): boolean;
-export declare function prereqsMet(state: State, owner: OwnerId, def: BuildingDef | UnitDef): boolean;
+/**
+ * Are `def.requires`' prerequisites met for `owner`?
+ *
+ * Takes anything with a `requires` list, not only a full entity def — `researchTech` calls it with
+ * a bare `{ requires }` to check a tech's prerequisites minus the ones already queued ahead. The
+ * declaration said `BuildingDef | UnitDef`, which was narrower than the function, and the narrower
+ * type made the engine's own idiom a type error above the bridge.
+ */
+export declare function prereqsMet(state: State, owner: OwnerId, def: { requires?: string[] }): boolean;
 export declare function hasCompletedBuilding(state: State, owner: OwnerId, type: string): boolean;
 export declare function canBuildType(unitType: string, buildingType: string): boolean;
 
