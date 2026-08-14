@@ -15,7 +15,11 @@
 // had already crossed the boundary, and "the renderer knows but does not draw" is how information
 // leaks — through a selection box, a minimap dot, or a stray sort order.
 
-import { BUILDINGS, FOG_CELL_SIZE, UNITS, isNodeDiscovered, isVisibleAt } from "../engine/index.js";
+import {
+  BUILDINGS, COM, FOG_CELL_SIZE, POWER_TIERS, UNITS, buildingConcern, inputCapOf, inputTotal,
+  isNodeDiscovered, isVisibleAt, onPowerGrid, powerEfficiency, recipeOf, storeCapOf, storeTotal,
+  type Recipe,
+} from "../engine/index.js";
 
 /** Owner encoded as a small integer — it indexes palettes and batch keys every frame. */
 export const SNAP_PLAYER = 0;
@@ -32,6 +36,39 @@ export const FLAG_BUILDING_KIND = 1 << 4;
 export const FOG_UNEXPLORED = 0;
 export const FOG_EXPLORED = 1;
 export const FOG_VISIBLE = 2;
+
+/**
+ * Why a producer is not producing, as a small integer.
+ *
+ * These are the engine's `buildingConcern` codes and nothing else — the bridge maps its strings to
+ * numbers and does not decide anything (ADR-0012 §5). The priority order is the engine's too, so
+ * the badge on a building can never disagree with what the simulation is doing to it.
+ */
+export const CONCERN_NONE = 0;
+export const CONCERN_PAUSED = 1;
+export const CONCERN_NO_POWER = 2;
+export const CONCERN_NO_FUEL = 3;
+export const CONCERN_STARVED = 4;
+export const CONCERN_BUFFER_FULL = 5;
+export const CONCERN_THROTTLED = 6;
+
+/**
+ * Power bands, as stored per cell of the power field.
+ *
+ * `POWER_NONE` means "no grid reaches here" — either the owner has no active source at all, or
+ * this cell is past the outermost band the engine counts as on-grid. The other four are
+ * `POWER_TIERS` index + 1, so the view maps a band to a colour without ever seeing the engine's
+ * cost multipliers (Q-08).
+ */
+export const POWER_NONE = 0;
+
+const CONCERN_CODES: Record<string, number> = {
+  noPower: CONCERN_NO_POWER,
+  noFuel: CONCERN_NO_FUEL,
+  starved: CONCERN_STARVED,
+  bufferFull: CONCERN_BUFFER_FULL,
+  throttled: CONCERN_THROTTLED,
+};
 
 /**
  * A parallel-array table of drawable entities.
@@ -155,6 +192,56 @@ export interface SnapshotResources {
 }
 
 /**
+ * The four numbers every building carries, parallel to `EntityTable` (ADR-0012 §1).
+ *
+ * Four, not twenty-three: a commodity buffer is only ever *displayed*, and the only building whose
+ * buffers are on screen is the one the player clicked. What the *world* needs is enough to make a
+ * stalled smelter look stalled from across the map, and that is this.
+ */
+export class ProductionTable {
+  capacity: number;
+
+  /** Index into `Snapshot.recipeNames`, or -1 for anything without a recipe. */
+  recipe: Int8Array;
+  /** Input-larder fullness, 0..1. How well fed it is. */
+  fed: Float32Array;
+  /** Output-buffer fullness, 0..1. At 1 the factory stalls until something hauls it away. */
+  output: Float32Array;
+  /** One of the `CONCERN_*` codes. */
+  concern: Uint8Array;
+
+  constructor(capacity: number) {
+    this.capacity = capacity;
+    this.recipe = new Int8Array(capacity).fill(-1);
+    this.fed = new Float32Array(capacity);
+    this.output = new Float32Array(capacity);
+    this.concern = new Uint8Array(capacity);
+  }
+
+  ensure(needed: number): void {
+    if (needed <= this.capacity) return;
+    let next = this.capacity || 64;
+    while (next < needed) next *= 2;
+    const grown = new ProductionTable(next);
+    this.capacity = next;
+    this.recipe = grown.recipe;
+    this.fed = grown.fed;
+    this.output = grown.output;
+    this.concern = grown.concern;
+  }
+}
+
+/** The full commodity buffers of one selected building. Only the selection gets these (Q-07). */
+export interface BuildingBuffers {
+  input: Record<string, number>;
+  output: Record<string, number>;
+  recipe: Recipe | null;
+  /** Per-commodity larder capacity, so a panel can draw a bar rather than a bare number. */
+  inputCap: number;
+  outputCap: number;
+}
+
+/**
  * Everything a frame may read. Versions let the view cache derived work (meshes, fog textures,
  * HUD strings) without diffing: a counter that has not moved means nothing changed.
  */
@@ -183,6 +270,30 @@ export interface Snapshot {
     baseY: number;
   };
   resources: SnapshotResources;
+  /**
+   * The viewer's whole stockpile, every commodity the engine knows, absent meaning 0.
+   *
+   * `resources` above stays as the MVP's hot four because the resource bar reads them every frame
+   * and they are the ones with dedicated slots in it. This is the rest, for the panels.
+   */
+  stockpile: Record<string, number>;
+  /** Parallel to `entities`. */
+  production: ProductionTable;
+  /** Stable index → recipe id, the same trick `typeNames` plays. */
+  recipeNames: string[];
+  /** Full buffers, for the selection only. Keyed by engine id. */
+  buffers: Map<string, BuildingBuffers>;
+  /**
+   * The power grid as a field of bands at fog resolution, updated only when the set of active
+   * sources changes — the same version-counter contract fog has, for the same reason (Q-08).
+   */
+  power: {
+    cols: number;
+    rows: number;
+    cell: number;
+    state: Uint8Array;
+    version: number;
+  };
   /** Selected entity ids, as engine strings — the HUD needs identity, not just a flag. */
   selection: string[];
   /** Numeric ids that existed last tick and do not exist now. Interpolation reads it. */
@@ -225,7 +336,11 @@ export class SnapshotExtractor {
 
   private readonly typeIndexByName = new Map<string, number>();
   private readonly comIndexByName = new Map<string, number>();
+  private readonly recipeIndexById = new Map<string, number>();
   private readonly facingById = new Map<number, number>();
+  /** Reused buffer records, so selecting and deselecting all day allocates nothing. */
+  private readonly bufferPool: BuildingBuffers[] = [];
+  private powerHash = -1;
   /** numeric id → offset into `prevBuf`, rebuilt from the previous extraction each tick. */
   private readonly prevPos = new Map<number, number>();
   private prevBuf: Float32Array;
@@ -246,6 +361,13 @@ export class SnapshotExtractor {
       fog: { cols, rows, cell: FOG_CELL_SIZE, state: new Uint8Array(cols * rows), version: 0 },
       map: { width: map.width, height: map.height, baseX: map.bases.player.x, baseY: map.bases.player.y },
       resources: { ore: 0, crystals: 0, radioactives: 0, supplyUsed: 0, supplyCap: 0, credits: 0 },
+      // Every commodity gets its slot up front. A panel reading `undefined ore` looks like a crash,
+      // and pre-seeding costs 23 numbers once rather than a branch per read forever.
+      stockpile: Object.fromEntries(Object.keys(COM).map((c) => [c, 0])),
+      production: new ProductionTable(initialCapacity),
+      recipeNames: [],
+      buffers: new Map(),
+      power: { cols, rows, cell: FOG_CELL_SIZE, state: new Uint8Array(cols * rows), version: 0 },
       selection: [],
       removed: new Set(),
       spawned: new Set(),
@@ -256,6 +378,7 @@ export class SnapshotExtractor {
     const snap = this.snapshot;
     const fog = state.fogs[opts.viewer];
     snap.entities.ensure(state.units.size + state.buildings.size);
+    snap.production.ensure(snap.entities.capacity);
     this.rememberPreviousPositions();
 
     const e = snap.entities;
@@ -284,6 +407,7 @@ export class SnapshotExtractor {
         | (selected.includes(b.id) ? FLAG_SELECTED : 0);
       e.rank[n] = Math.min(3, b.tier ?? 0);
       e.progress[n] = b.constructing ? b.buildProgress : 1;
+      this.extractProduction(state, b, n);
       n++;
     }
 
@@ -321,6 +445,11 @@ export class SnapshotExtractor {
         | (selected.includes(u.id) ? FLAG_SELECTED : 0);
       e.rank[n] = rankOf(u.kills ?? 0);
       e.progress[n] = u.cargo ? Math.min(1, u.cargo.qty / 10) : 0;
+      const p = snap.production;
+      p.recipe[n] = -1;
+      p.fed[n] = 0;
+      p.output[n] = 0;
+      p.concern[n] = CONCERN_NONE;
       n++;
     }
 
@@ -328,6 +457,7 @@ export class SnapshotExtractor {
     this.diffLifetimes();
     this.extractNodes(state, fog);
     this.extractFog(fog);
+    this.extractPower(state, opts.viewer);
 
     const res = state.players.player.resources;
     const r = snap.resources;
@@ -337,6 +467,12 @@ export class SnapshotExtractor {
     r.supplyUsed = opts.supplyUsed;
     r.supplyCap = opts.supplyCap;
     r.credits = opts.credits;
+
+    // The whole stockpile, over the same object every tick.
+    const stock = snap.stockpile;
+    for (const com in stock) stock[com] = res[com] ?? 0;
+
+    this.extractBuffers(state);
 
     snap.selection.length = 0;
     for (const id of selected) snap.selection.push(id);
@@ -353,6 +489,117 @@ export class SnapshotExtractor {
       i = this.snapshot.typeNames.length;
       this.snapshot.typeNames.push(name);
       this.typeIndexByName.set(name, i);
+    }
+    return i;
+  }
+
+  /**
+   * The four-number production summary for one building.
+   *
+   * The stop reason is `buildingConcern`'s, mapped to an integer and not otherwise touched. It is
+   * tempting to derive it here — the buffers are right there — and it would be wrong within one
+   * upstream change to `updateProduction`'s gating order, which is the exact disagreement
+   * ADR-0012 §5 exists to prevent.
+   */
+  private extractProduction(state: State, b: Building, n: number): void {
+    const p = this.snapshot.production;
+    const recipe = recipeOf(b);
+    p.recipe[n] = recipe ? this.recipeIdx(recipe.id) : -1;
+
+    const inputCap = inputCapOf(b.type);
+    const outputCap = storeCapOf(b.type);
+    // Fullness of the scarcest input, not the total: a larder holding 40 ore and no crystals is
+    // starved, and an average would report it comfortably half full.
+    p.fed[n] = inputCap > 0 ? clamp01(scarcestInput(b, recipe, inputCap)) : 0;
+    p.output[n] = outputCap > 0 ? clamp01(storeTotal(b) / outputCap) : 0;
+
+    const concern = buildingConcern(state, b);
+    p.concern[n] = concern === null
+      ? CONCERN_NONE
+      : concern.level === "paused"
+        ? CONCERN_PAUSED
+        : (CONCERN_CODES[concern.code ?? ""] ?? CONCERN_NONE);
+  }
+
+  /**
+   * Full commodity buffers, for the selection only (Q-07).
+   *
+   * The map is cleared and refilled from a pool each tick rather than rebuilt, so a player who
+   * drags a selection box around for ten minutes allocates the same handful of objects.
+   */
+  private extractBuffers(state: State): void {
+    const buffers = this.snapshot.buffers;
+    let pooled = 0;
+    for (const entry of buffers.values()) this.bufferPool[pooled++] = entry;
+    buffers.clear();
+
+    let taken = 0;
+    for (const id of state.selection) {
+      const b = state.buildings.get(id);
+      if (!b) continue;
+      const recipe = recipeOf(b) ?? null;
+      const entry = this.bufferPool[taken++] ?? { input: {}, output: {}, recipe: null, inputCap: 0, outputCap: 0 };
+      // Clearing rather than replacing keeps the objects' shape stable for the JIT and keeps this
+      // allocation-free; a fresh `{...b.input}` per tick is exactly what ADR-0006 forbids.
+      for (const com in entry.input) delete entry.input[com];
+      for (const com in entry.output) delete entry.output[com];
+      for (const com in b.input) entry.input[com] = b.input[com]!;
+      for (const com in b.store) entry.output[com] = b.store[com]!;
+      entry.recipe = recipe;
+      entry.inputCap = inputCapOf(b.type);
+      entry.outputCap = storeCapOf(b.type);
+      buffers.set(id, entry);
+    }
+    for (let i = taken; i < pooled; i++) this.bufferPool.length = taken;
+  }
+
+  /**
+   * The power grid as a band per fog cell.
+   *
+   * Recomputed only when the set of active sources changes — which is what makes asking the engine
+   * per cell affordable. The cost is `cells × buildings` inside `powerEfficiency`, about 300k
+   * iterations on this map at 300 buildings, paid on a tick where a reactor was built, paused,
+   * destroyed or ran dry. Every other tick is one pass over the source list to hash it.
+   */
+  private extractPower(state: State, viewer: OwnerId): void {
+    const field = this.snapshot.power;
+    let hash = 0;
+    for (const b of state.buildings.values()) {
+      if (b.owner !== viewer) continue;
+      const def = BUILDINGS[b.type];
+      if (!def) continue;
+      if (!((def.energyGrants ?? 0) > 0 || def.powerRelay)) continue;
+      // Position never changes, but every input to the field's shape does: whether it is finished,
+      // switched off by hand, or (for a fuel burner) actually fed.
+      hash = (hash * 31 + numericId(b.id)
+        + (b.constructing ? 1 : 0) * 3
+        + (b.paused ? 1 : 0) * 7
+        + (b.powered ? 1 : 0) * 13) | 0;
+    }
+    if (hash === this.powerHash) return;
+    this.powerHash = hash;
+
+    for (let row = 0; row < field.rows; row++) {
+      for (let col = 0; col < field.cols; col++) {
+        const x = (col + 0.5) * field.cell;
+        const y = (row + 0.5) * field.cell;
+        // Off the grid entirely reads as POWER_NONE rather than as the neutral "linked" tier the
+        // engine returns when there is no source to be far from — painting an ungridded map as
+        // fully on-grid would be a confident lie.
+        field.state[row * field.cols + col] = onPowerGrid(state, viewer, x, y)
+          ? POWER_TIERS.indexOf(powerEfficiency(state, viewer, x, y)) + 1
+          : POWER_NONE;
+      }
+    }
+    field.version++;
+  }
+
+  private recipeIdx(id: string): number {
+    let i = this.recipeIndexById.get(id);
+    if (i === undefined) {
+      i = this.snapshot.recipeNames.length;
+      this.snapshot.recipeNames.push(id);
+      this.recipeIndexById.set(id, i);
     }
     return i;
   }
@@ -451,4 +698,26 @@ function exploredAt(fog: Fog, x: number, y: number): boolean {
 /** Veterancy rank from kill count — upstream's 3/8/18 thresholds (universe digest §5). */
 function rankOf(kills: number): number {
   return kills >= 18 ? 3 : kills >= 8 ? 2 : kills >= 3 ? 1 : 0;
+}
+
+function clamp01(v: number): number {
+  return v < 0 ? 0 : v > 1 ? 1 : v;
+}
+
+/**
+ * How fed a factory is: the fullness of its *scarcest* required input.
+ *
+ * Averaging would report a larder holding a recipe's ore but none of its crystals as half full,
+ * when the factory is stopped dead. Energy is skipped because it is a power flow rather than a
+ * hauled good (`updateProduction` skips it for the same reason).
+ */
+function scarcestInput(b: Building, recipe: Recipe | null | undefined, cap: number): number {
+  if (!recipe) return cap > 0 ? inputTotal(b) / cap : 0;
+  let worst = 1;
+  const input = b.input ?? {};
+  for (const com in recipe.in) {
+    if (com === "energy") continue;
+    worst = Math.min(worst, (input[com] ?? 0) / cap);
+  }
+  return worst;
 }

@@ -52,4 +52,39 @@ export {
   SAVE_VERSION, GALAXY_SAVE_VERSION, serializeGalaxy, serializeGalaxyString, deserializeGalaxy,
 } from "@engine/engine/persist.js";
 
+// ---------------------------------------------------------------------------------------------
+// Phase 2 — the economy (ADR-0012).
+//
+// Every one of these is a *query* or a *command the engine validates*. None of them is a rule this
+// project reimplements: a market price recomputed above the bridge disagrees with the engine
+// within one trade, and a stop reason derived from buffer levels disagrees with it the first time
+// `updateProduction`'s gating order changes. `buildingConcern` in particular exists upstream for
+// exactly the job the view wants it for.
+// ---------------------------------------------------------------------------------------------
+
+export {
+  POWER_TIERS, ELECTRIFY_POWER, recipeOf, powerEfficiency, onPowerGrid, powerCap, powerDraw,
+  powerThrottle, buildingConcern,
+} from "@engine/engine/industry.js";
+export type { PowerTier, Recipe, BuildingConcern } from "@engine/engine/industry.js";
+
+export {
+  storeCapOf, storeTotal, storeRoom, inputTotal, inputCapOf,
+} from "@engine/engine/entities.js";
+
+export {
+  TRADE_LOT, createMarket, unitPrice, quoteSell, buy, sell, tradeables, commodityAvailable,
+} from "@engine/engine/market.js";
+
+export { TECHS, researchTech, cancelResearch, techMult } from "@engine/engine/techtree.js";
+export type { TechDef } from "@engine/engine/techtree.js";
+
+export { canRecycle, beginRecycle, cancelRecycle, recycleValue } from "@engine/engine/recycle.js";
+
+export { NEEDS_REPAIR, HEALED, pickRepairTarget, countRepairJobs } from "@engine/engine/repair.js";
+
+export { LOGI_PRIORITIES, countLogistics, aiUpkeepRate } from "@engine/engine/haul.js";
+
+export { PLASMA_VEINS, SURVEY_RADIUS, YIELD_TIERS, locationRichness, rigInfo } from "@engine/engine/rig.js";
+
 export { PLANETS, COM } from "@engine/data.js";
