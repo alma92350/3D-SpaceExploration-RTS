@@ -11,7 +11,7 @@
 import { WorldBridge, MVP_WORLD } from "../src/bridge/world.js";
 import { STEP_SECONDS } from "../src/app/loop.js";
 import { SnapshotExtractor } from "../src/bridge/snapshot.js";
-import { makeBuilding, makeUnit } from "../src/engine/index.js";
+import { BUILDINGS, makeBuilding, makeUnit } from "../src/engine/index.js";
 import { CameraRig } from "../src/input/camera.js";
 import { SceneComposer } from "../src/view/scene.js";
 import { elevationFieldFrom, type ElevationField } from "../src/view/terrain/elevation.js";
@@ -28,12 +28,25 @@ export interface SceneSpec {
   readonly buildings: number;
   readonly width: number;
   readonly height: number;
+  /**
+   * Which building types to populate with. Omitted means the MVP's four.
+   *
+   * `"all"` uses every type the engine defines, which is what makes the Phase 2 scene a real test
+   * of ADR-0013: 300 barracks would sail through a budget that 29 distinct types must actually be
+   * collapsed to meet.
+   */
+  readonly buildingTypes?: "mvp" | "all";
 }
 
-/** The two gated scenes. PRD §6.2's own numbers; changing one is a PRD change, not a tuning knob. */
+/** The gated scenes. PRD §6.2's own numbers; changing one is a PRD change, not a tuning knob. */
 export const SCENES: Readonly<Record<string, SceneSpec>> = {
   T0: { tier: "T0", units: 200, buildings: 80, width: 1280, height: 720 },
   T2: { tier: "T2", units: 400, buildings: 200, width: 1600, height: 900 },
+  // PRD §5's Phase 2 exit criterion — "perf budgets hold with 300 buildings on screen" — at the T0
+  // tier, because CPU-only is the whole target (ADR-0011). Every one of the 29 building types is
+  // present: the point is to measure what the six silhouette families actually cost, not to
+  // measure 300 copies of one mesh.
+  P2: { tier: "T0", units: 200, buildings: 300, width: 1280, height: 720, buildingTypes: "all" },
 };
 
 const UNIT_MIX = ["skiff", "bastion", "lancer", "worker"] as const;
@@ -118,8 +131,11 @@ function populate(state: State, spec: SceneSpec): void {
     const u = makeUnit(type, owner, 80 + ((i * 137) % (width - 160)), 80 + ((i * 89) % (height - 160)));
     state.units.set(u.id, u);
   }
+  const buildingTypes: readonly string[] = spec.buildingTypes === "all"
+    ? Object.keys(BUILDINGS)
+    : BUILDING_MIX;
   for (let i = 0; i < spec.buildings; i++) {
-    const type = BUILDING_MIX[i % BUILDING_MIX.length]!;
+    const type = buildingTypes[i % buildingTypes.length]!;
     const owner: OwnerId = i % 2 === 0 ? "player" : "ai";
     const b = makeBuilding(type, owner, 120 + ((i * 211) % (width - 240)), 120 + ((i * 157) % (height - 240)));
     state.buildings.set(b.id, b);
