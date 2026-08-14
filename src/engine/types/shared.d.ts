@@ -113,8 +113,8 @@ declare global {
     recycling?: { progress: number; time: number };
     /** Electrified for the +30% boost, at the cost of ELECTRIFY_POWER of grid draw. */
     electrified?: boolean;
-    /** Research in progress at a Datacenter. */
-    research?: Array<{ techId: string; progress: number }>;
+    /** Research queued at a Datacenter, in order. The head of it is the job in progress. */
+    researchQueue?: Array<{ techId: string; progress: number }>;
     /** Which end of the logistics queue this building sits at (`LOGI_PRIORITIES`). */
     logiPriority?: "high" | "normal" | "low";
   }
