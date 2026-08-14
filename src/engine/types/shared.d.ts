@@ -1,0 +1,229 @@
+// The vendored simulation's data shapes, as TypeScript sees them (ADR-0003, ADR-0007, P0-T05).
+//
+// The engine is JavaScript with JSDoc types and is never edited here, so these declarations are
+// the one thing in the pair that CAN silently drift: upstream could rename a field and nothing
+// would complain at compile time. `test/engine/declarations.test.ts` is the counterweight — it
+// builds a real world through this surface and asserts each declared field is actually there, so
+// drift surfaces as a red test rather than as `undefined` in a frame.
+//
+// Only what this project reads is declared. Deliberately: transcribing 15.6k lines would create a
+// second source of truth for the rules, which is the thing ADR-0003 exists to prevent. Need
+// another field? Declare it and extend the conformance test in the same commit.
+
+declare global {
+  type OwnerId = "player" | "ai";
+
+  interface Resources { [commodity: string]: number }
+
+  interface TerrainDef {
+    name: "open" | "rough" | "high";
+    speedMult: number;
+    sightMult: number;
+    buildable: boolean;
+    combatMult: number;
+  }
+
+  /** The coarse per-cell terrain field. This grid IS the 3D heightmap (ADR-0004). */
+  interface TerrainGrid {
+    cols: number;
+    rows: number;
+    cell: number;
+    type: Uint8Array;
+  }
+
+  interface ResourceNode {
+    id: string;
+    com: string;
+    amount: number;
+    max: number;
+    x: number;
+    y: number;
+    home?: boolean;
+    hidden?: boolean;
+  }
+
+  interface GameMap {
+    width: number;
+    height: number;
+    nodes: ResourceNode[];
+    terrain: TerrainGrid;
+    bases: Record<OwnerId, { x: number; y: number }>;
+    modifiers?: Record<string, unknown>;
+  }
+
+  interface Fog {
+    cols: number;
+    rows: number;
+    explored: Uint8Array;
+    visible: Uint8Array;
+  }
+
+  interface UnitOrder {
+    type: string;
+    x?: number;
+    y?: number;
+    targetId?: string;
+    nodeId?: string;
+  }
+
+  interface Unit {
+    kind: "unit";
+    id: string;
+    type: string;
+    owner: OwnerId;
+    x: number;
+    y: number;
+    hp: number;
+    maxHp: number;
+    order: UnitOrder | null;
+    orderQueue: UnitOrder[];
+    cargo: { com: string | null; qty: number } | null;
+    kills?: number;
+    hold?: boolean;
+    dead?: boolean;
+  }
+
+  interface Building {
+    kind: "building";
+    id: string;
+    type: string;
+    owner: OwnerId;
+    x: number;
+    y: number;
+    radius: number;
+    hp: number;
+    maxHp: number;
+    constructing: boolean;
+    buildProgress: number;
+    queue: Array<{ unitType: string; progress: number }>;
+    targetId: string | null;
+    rally: { x: number; y: number };
+    tier?: number;
+    dead?: boolean;
+  }
+
+  type Entity = Unit | Building;
+
+  interface UnitDef {
+    id: string;
+    name: string;
+    hp: number;
+    radius: number;
+    speed?: number;
+    sight?: number;
+    range?: number;
+    attack?: number;
+    cooldown?: number;
+    cost?: Resources;
+    altCost?: Resources;
+    buildTime?: number;
+    supplyCost?: number;
+    role?: string;
+    canGather?: boolean;
+    buildCategories?: string[];
+    odysseyOnly?: boolean;
+    requires?: string[];
+  }
+
+  interface BuildingDef {
+    id: string;
+    name: string;
+    hp: number;
+    radius: number;
+    cost?: Resources;
+    buildTime?: number;
+    sight?: number;
+    produces?: string[];
+    requires?: string[];
+    category?: string;
+    supplyGrants?: number;
+    isCommandCenter?: boolean;
+    attack?: number;
+    range?: number;
+    odysseyOnly?: boolean;
+  }
+
+  interface PlayerSide {
+    id: OwnerId;
+    faction: string;
+    isAI: boolean;
+    resources: Resources;
+    color: string;
+    upgrades: Record<string, unknown>;
+  }
+
+  interface SimEvent { type: string; [k: string]: unknown }
+
+  interface State {
+    time: number;
+    tick: number;
+    over: boolean;
+    seed: number | null;
+    planetId: string;
+    endless: boolean;
+    map: GameMap;
+    owners: OwnerId[];
+    players: Record<OwnerId, PlayerSide>;
+    units: Map<string, Unit>;
+    buildings: Map<string, Building>;
+    selection: string[];
+    fogs: Record<OwnerId, Fog>;
+    fog: Fog;
+    fogAI: Fog;
+    events: SimEvent[];
+  }
+
+  interface Galaxy {
+    seed: number;
+    credits: number;
+    activeId: string;
+    worlds: string[];
+    planets: Map<string, State>;
+    settings: Record<string, unknown>;
+    tick: number;
+    time: number;
+    discovered: Set<string>;
+    milestones: unknown[];
+  }
+
+  interface GameStateOpts {
+    planetId?: string;
+    rng?: () => number;
+    seed?: number;
+    sizeMult?: number;
+    resourceMult?: number;
+    endless?: boolean;
+    playerFaction?: string;
+    aiFaction?: string;
+    difficulty?: string;
+    popCap?: number | null;
+  }
+
+  interface GalaxyOpts {
+    seed?: number;
+    difficulty?: string;
+    sizeMult?: number;
+    resourceMult?: number;
+    playerFaction?: string;
+    aiApm?: number | null;
+    aiMicro?: boolean;
+    aiStrategy?: string;
+    startId?: string;
+    popCap?: number | null;
+  }
+
+  interface PlanetDef {
+    id: string;
+    name: string;
+    tag?: string;
+    x: number;
+    industry?: number;
+    tech?: number;
+    faction?: string;
+    deposits: Record<string, number>;
+  }
+
+  interface CommodityDef { name: string; [k: string]: unknown }
+}
+
+export {};

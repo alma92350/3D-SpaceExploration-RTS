@@ -1,0 +1,14 @@
+{
+  "T0": {
+    "p95": 2.77,
+    "maxDrawCalls": 15,
+    "recorded": "2026-08-14",
+    "reason": "Phase 1 MVP baseline: the full MVP scene (200 units / 80 buildings at T0, 400 / 200 at T2) measured against the recording renderer over the gate's fixed 10-second run."
+  },
+  "T2": {
+    "p95": 5.16,
+    "maxDrawCalls": 17,
+    "recorded": "2026-08-14",
+    "reason": "Phase 1 MVP baseline: the full MVP scene (200 units / 80 buildings at T0, 400 / 200 at T2) measured against the recording renderer over the gate's fixed 10-second run."
+  }
+}

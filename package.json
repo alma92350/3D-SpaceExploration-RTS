@@ -1,0 +1,37 @@
+{
+  "name": "stellar-frontier-odyssey-3d",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A 3D-rendered presentation of the Odyssey open-world mode from alma92350/SpaceExploration-RTS.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview --port 4173",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:sim": "node --test src/engine/test/*.test.js",
+    "sync:engine": "node scripts/sync-engine.mjs",
+    "check:vendor": "node scripts/check-vendor.mjs",
+    "check:adr": "node scripts/check-adr-index.mjs",
+    "check:size": "node scripts/check-bundle-size.mjs",
+    "perf": "node perf/run.mjs",
+    "smoke": "playwright test"
+  },
+  "dependencies": {
+    "three": "0.185.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.56.0",
+    "@types/node": "22.19.2",
+    "@types/three": "0.185.4",
+    "jsdom": "25.0.1",
+    "typescript": "5.9.3",
+    "vite": "8.2.1",
+    "vitest": "4.1.10"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

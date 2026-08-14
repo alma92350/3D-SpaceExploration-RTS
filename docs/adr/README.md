@@ -55,3 +55,4 @@ Template: [`0000-template.md`](0000-template.md). Keep it to a page. Sections:
 | [0007](0007-toolchain-and-dependency-policy.md) | Toolchain and dependency policy | Accepted |
 | [0008](0008-sim-render-boundary.md) | The sim/render boundary: fixed step, snapshots, worker-ready | Accepted |
 | [0009](0009-test-strategy.md) | Test strategy: TDD, three layers, and what may be faked | Accepted |
+| [0010](0010-phase-1-view-contract.md) | The Phase 1 view contract: camera, start world, and the shape of the port | Accepted |

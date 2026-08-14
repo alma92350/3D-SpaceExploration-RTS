@@ -1,0 +1,606 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { canAfford, payCost, prereqsMet, committedDoctrine, isDropOff, UNITS, BUILDINGS, UPGRADES,
+  canBuildCategory, canBuildType, canGatherType, canLogisticsType, structureMult, isElectrifiable } from "../engine/entities.js";
+
+// Minimal state stub for prereqsMet: it only reads state.buildings and
+// state.players[owner].upgrades.
+function stubState(buildings = [], upgrades = {}) {
+  return {
+    buildings: new Map(buildings.map((b, i) => [b.id || `b${i}`, { id: b.id || `b${i}`, ...b }])),
+    players: { player: { upgrades } },
+  };
+}
+
+test("the Tier-2 units are gated behind the Foundry; the Foundry behind the Barracks", () => {
+  assert.deepEqual(UNITS.lancer.requires, ["foundry"]);
+  assert.deepEqual(UNITS.breacher.requires, ["foundry"]);
+  assert.deepEqual(BUILDINGS.foundry.requires, ["barracks"]);
+  assert.equal(UNITS.skiff.requires, undefined, "Skiff is the ungated fallback");
+  assert.equal(UNITS.bastion.requires, undefined, "Bastion is ungated");
+  assert.deepEqual(Object.keys(BUILDINGS.foundry.cost), ["ore"], "Foundry is ore-only so Tier-2 stays reachable everywhere");
+});
+
+test("upgrades form three mutually-exclusive doctrines, all three tiers deep now (docs/improvement-proposals.md doctrine-depth redesign: Assault/Bulwark capstones match Logistics' existing Field Recycling depth)", () => {
+  assert.equal(UPGRADES.overchargedWeapons.doctrine, "assault");
+  assert.equal(UPGRADES.overchargedCore.doctrine, "assault");
+  assert.equal(UPGRADES.overdriveActuators.doctrine, "assault");
+  assert.equal(UPGRADES.reinforcedPlating.doctrine, "bulwark");
+  assert.equal(UPGRADES.reinforcedBulwark.doctrine, "bulwark");
+  assert.equal(UPGRADES.selfSealingPlating.doctrine, "bulwark");
+  assert.equal(UPGRADES.logisticsNetwork.doctrine, "logistics");
+  assert.equal(UPGRADES.rapidFabrication.doctrine, "logistics");
+  assert.equal(UPGRADES.recycling.doctrine, "logistics");
+  assert.equal(UPGRADES.overchargedWeapons.tier, 1);
+  assert.equal(UPGRADES.overchargedCore.tier, 2);
+  assert.equal(UPGRADES.overdriveActuators.tier, 3);
+  assert.equal(UPGRADES.reinforcedPlating.tier, 1);
+  assert.equal(UPGRADES.reinforcedBulwark.tier, 2);
+  assert.equal(UPGRADES.selfSealingPlating.tier, 3);
+  assert.equal(UPGRADES.logisticsNetwork.tier, 1);
+  assert.equal(UPGRADES.rapidFabrication.tier, 2);
+  assert.equal(UPGRADES.recycling.tier, 3);
+  assert.deepEqual(UPGRADES.overchargedCore.requires, ["overchargedWeapons"], "T2 requires T1");
+  assert.deepEqual(UPGRADES.reinforcedBulwark.requires, ["reinforcedPlating"]);
+  assert.deepEqual(UPGRADES.rapidFabrication.requires, ["logisticsNetwork"]);
+  assert.deepEqual(UPGRADES.recycling.requires, ["rapidFabrication"], "T3 requires T2");
+  // The two new capstones are Arsenal-gated ON TOP of their own doctrine's Tier-2 — a mixed
+  // building+upgrade requires token, the exact same machinery prereqsMet already resolves for
+  // units/buildings (see the dedicated prereqsMet test below).
+  assert.deepEqual(UPGRADES.overdriveActuators.requires, ["overchargedCore", "arsenal"]);
+  assert.deepEqual(UPGRADES.selfSealingPlating.requires, ["reinforcedBulwark", "arsenal"]);
+
+  // All three doctrines now run exactly three tiers deep — the doctrine-depth redesign brings
+  // Assault and Bulwark up to Logistics' existing depth instead of stopping at "the same number
+  // again". Filtered to doctrine-bearing entries only — a difficulty-only entry like hardEdge
+  // (Hard's seeded economic edge, engine/aiDifficulty.js) has no doctrine on purpose (see
+  // committedDoctrine) and isn't part of this grouping.
+  const byDoctrine = {};
+  for (const u of Object.values(UPGRADES).filter(u => u.doctrine)) (byDoctrine[u.doctrine] ??= []).push(u);
+  assert.deepEqual(Object.keys(byDoctrine).sort(), ["assault", "bulwark", "logistics"]);
+  assert.equal(byDoctrine.assault.length, 3);
+  assert.equal(byDoctrine.bulwark.length, 3);
+  assert.equal(byDoctrine.logistics.length, 3);
+});
+
+// docs/improvement-proposals.md "Give the doctrine Tier-2s a verb" (lines 217-225): each combat
+// Tier-2 keeps its damage-mult multiplier but ALSO grants a tactical verb the flat stack alone
+// never gave. Assault's is unambiguous — chase speed at T2, attack tempo at T3 — no reconciliation
+// needed (unlike Bulwark's regen, tested separately below).
+test("Assault's Tier-2 verb (chase speed) and Tier-3 capstone (attack tempo) are mechanically distinct fields, not a restatement", () => {
+  assert.equal(UPGRADES.overchargedCore.chaseSpeedMult, 1.1, "T2: closes distance on an acquired target ~10% faster");
+  assert.equal(UPGRADES.overdriveActuators.attackCooldownMult, 0.9, "T3: a different identity — 10% faster attack tempo once engaged");
+  assert.equal(UPGRADES.overdriveActuators.chaseSpeedMult, undefined, "the capstone doesn't also re-grant T2's verb");
+  assert.equal(UPGRADES.overchargedCore.attackCooldownMult, undefined, "...nor does T2 preempt T3's");
+});
+
+// THE RECONCILIATION: proposal 1's Bulwark Tier-2 ("Give the doctrine Tier-2s a verb") and
+// proposal 2's Bulwark Tier-3 capstone ("Tier-3 doctrine capstones") both independently described
+// "out-of-combat hp regen" as Bulwark's identity. This is ONE mechanic, not two — the capstone
+// deepens Tier-2's numbers (faster rate, shorter delay) rather than restating them. See
+// test/repair.test.js for the actual in-game behavioral proof (both tiers differ measurably).
+test("Bulwark's Tier-2 grant and Tier-3 capstone are ONE regen mechanic, not two separately-tracked fields", () => {
+  assert.equal(UPGRADES.reinforcedBulwark.regenRate, 0.5);
+  assert.equal(UPGRADES.reinforcedBulwark.regenDelay, 8);
+  assert.ok(UPGRADES.selfSealingPlating.regenRate > UPGRADES.reinforcedBulwark.regenRate,
+    "the capstone heals strictly faster once it kicks in — a genuine deepening");
+  assert.ok(UPGRADES.selfSealingPlating.regenDelay < UPGRADES.reinforcedBulwark.regenDelay,
+    "...and kicks in strictly sooner after the last hit");
+  // Exactly one {regenRate, regenDelay} pair per upgrade — no duplicate/legacy field name left
+  // over from treating the two proposals' overlapping ask as two independent systems.
+  assert.equal(Object.keys(UPGRADES.reinforcedBulwark).filter(k => /regen/i.test(k)).length, 2);
+  assert.equal(Object.keys(UPGRADES.selfSealingPlating).filter(k => /regen/i.test(k)).length, 2);
+});
+
+test("prereqsMet: the doctrine capstones need BOTH their own doctrine's Tier-2 upgrade AND a completed Arsenal", () => {
+  const neither = stubState([], {});
+  assert.equal(prereqsMet(neither, "player", UPGRADES.overdriveActuators), false, "neither T2 nor Arsenal -> locked");
+
+  const onlyT2 = stubState([], { overchargedCore: true });
+  assert.equal(prereqsMet(onlyT2, "player", UPGRADES.overdriveActuators), false, "T2 alone, no Arsenal -> still locked");
+
+  const onlyArsenal = stubState([{ owner: "player", type: "arsenal", constructing: false }], {});
+  assert.equal(prereqsMet(onlyArsenal, "player", UPGRADES.overdriveActuators), false, "Arsenal alone, no T2 -> still locked");
+
+  const both = stubState([{ owner: "player", type: "arsenal", constructing: false }], { overchargedCore: true });
+  assert.equal(prereqsMet(both, "player", UPGRADES.overdriveActuators), true, "both prereqs met -> unlocked");
+
+  assert.equal(prereqsMet(
+    stubState([{ owner: "player", type: "arsenal", constructing: false }], { reinforcedBulwark: true }),
+    "player", UPGRADES.selfSealingPlating), true, "the Bulwark capstone resolves the same mixed-token way");
+  assert.equal(prereqsMet(
+    stubState([{ owner: "player", type: "arsenal", constructing: true }], { reinforcedBulwark: true }),
+    "player", UPGRADES.selfSealingPlating), false, "a still-constructing Arsenal doesn't unlock it either");
+});
+
+test("the Logistics doctrine is a macro path, not a combat one: economy + tempo, no damage mults", () => {
+  assert.equal(UPGRADES.logisticsNetwork.gatherYieldMult, 1.25, "T1 boosts haul yield");
+  assert.equal(UPGRADES.rapidFabrication.produceTimeMult, 0.8, "T2 cuts production time");
+  for (const id of ["logisticsNetwork", "rapidFabrication"]) {
+    assert.ok(!UPGRADES[id].damageDealtMult && !UPGRADES[id].damageTakenMult,
+      `${id} touches the economy, not the fight`);
+  }
+});
+
+test("committing to Logistics locks the combat doctrines, and vice-versa", () => {
+  assert.equal(committedDoctrine({ players: { player: { upgrades: {} } } }, "player"), null);
+  const s = { players: { player: { upgrades: { logisticsNetwork: true } } } };
+  assert.equal(committedDoctrine(s, "player"), "logistics", "a Logistics research commits the Logistics doctrine");
+});
+
+test("committedDoctrine reports the chosen path, and is null before any research", () => {
+  const s = { players: { player: { upgrades: {} } } };
+  assert.equal(committedDoctrine(s, "player"), null, "nothing researched -> no doctrine");
+  s.players.player.upgrades.reinforcedPlating = true;
+  assert.equal(committedDoctrine(s, "player"), "bulwark", "a Bulwark upgrade commits the Bulwark doctrine");
+});
+
+test("committedDoctrine ignores a non-doctrine UPGRADES entry (hardEdge, Hard difficulty's seeded economic edge)", () => {
+  assert.equal(UPGRADES.hardEdge.doctrine, undefined, "hardEdge must stay doctrine-less by design");
+  // Seeded alone (as it would be at game creation, before any real doctrine research), it must
+  // NOT read as "committed to the undefined doctrine" — that would silently disable the
+  // doctrine lock in researchUpgrade for the rest of the match.
+  const s = { players: { player: { upgrades: { hardEdge: true } } } };
+  assert.equal(committedDoctrine(s, "player"), null, "hardEdge alone commits to nothing");
+  // And it must not mask a REAL commitment sitting alongside it, regardless of key order.
+  s.players.player.upgrades.logisticsNetwork = true;
+  assert.equal(committedDoctrine(s, "player"), "logistics", "the real doctrine pick still resolves with hardEdge present");
+});
+
+// Doctrine research now DEVELOPS OVER TIME (queued at a Refinery, engine/techtree.js
+// updateResearch) instead of landing instantly — see docs/improvement-proposals.md's
+// "Doctrine research develops over time" proposal.
+test("committedDoctrine also commits from a doctrine upgrade that's queued but not finished developing yet", () => {
+  const s = { players: { player: { upgrades: {} }, ai: { upgrades: {} } }, buildings: new Map() };
+  assert.equal(committedDoctrine(s, "player"), null, "nothing queued or researched yet");
+
+  // Paid for on enqueue (production.js researchUpgrade) but still developing: the resources are
+  // already spent and irreversible, so the doctrine lock has to bite the instant it's queued, not
+  // only once the timer finishes — otherwise both doctrines could be queued side-by-side during
+  // the development window, defeating the whole "real commitment" point (entities.js's own header
+  // comment on UPGRADES).
+  s.buildings.set("b1", { owner: "player", type: "refinery", researchQueue: [{ techId: "overchargedWeapons", progress: 0.1 }] });
+  assert.equal(committedDoctrine(s, "player"), "assault",
+    "a queued-but-developing upgrade commits its doctrine exactly like a completed one");
+  assert.equal(committedDoctrine(s, "ai"), null, "a different owner's Refinery queue never leaks across sides");
+});
+
+// Foundry and Arsenal keep working after the unlock (docs/improvement-proposals.md): a standing
+// bonus, live-scanned the same way committedDoctrine scans for a doctrine commitment — the bonus
+// is gone the instant the building is, with nothing further to track.
+test("structureMult multiplies a live-scanned field across an owner's own COMPLETED buildings that carry it", () => {
+  const s = { buildings: new Map() };
+  assert.equal(structureMult(s, "player", "produceTimeMult"), 1, "nothing standing → no-op (identity)");
+
+  s.buildings.set("f1", { id: "f1", owner: "player", type: "foundry", constructing: false });
+  assert.equal(structureMult(s, "player", "produceTimeMult"), BUILDINGS.foundry.produceTimeMult,
+    "a single standing Foundry applies its own field");
+
+  s.buildings.set("a1", { id: "a1", owner: "player", type: "arsenal", constructing: false });
+  assert.equal(structureMult(s, "player", "produceTimeMult"), BUILDINGS.foundry.produceTimeMult * BUILDINGS.arsenal.produceTimeMult,
+    "a standing Arsenal stacks a second step atop the Foundry's, same multiplicative rule as upgradeMult/techMult");
+});
+
+test("structureMult ignores a still-constructing building, an enemy's building, and a building with no such field", () => {
+  const s = { buildings: new Map() };
+  s.buildings.set("f1", { id: "f1", owner: "player", type: "foundry", constructing: true });
+  assert.equal(structureMult(s, "player", "produceTimeMult"), 1, "still going up → no bonus yet");
+
+  s.buildings.set("f2", { id: "f2", owner: "ai", type: "foundry", constructing: false });
+  assert.equal(structureMult(s, "player", "produceTimeMult"), 1, "the enemy's Foundry never bonuses the player");
+
+  s.buildings.set("b1", { id: "b1", owner: "player", type: "barracks", constructing: false });
+  assert.equal(structureMult(s, "player", "produceTimeMult"), 1, "a building whose def carries no such field is a no-op");
+});
+
+test("razing the Foundry drops its bonus on the very next read (live-scanned, not a one-time flag)", () => {
+  const s = { buildings: new Map() };
+  s.buildings.set("f1", { id: "f1", owner: "player", type: "foundry", constructing: false });
+  assert.equal(structureMult(s, "player", "produceTimeMult"), BUILDINGS.foundry.produceTimeMult);
+  s.buildings.delete("f1");
+  assert.equal(structureMult(s, "player", "produceTimeMult"), 1, "razed → the bonus is gone immediately");
+});
+
+test("committedDoctrine's queue scan never crosses a Datacenter's TECHS queue into the doctrine system", () => {
+  // "recycling" is a DELIBERATELY shared id between TECHS (engine/techtree.js) and UPGRADES
+  // (entities.js) — only one of the two trees is ever active in a given match, so sharing the id
+  // is safe everywhere EXCEPT here: a Datacenter's own queued TECHS.recycling job must never read
+  // as a Logistics doctrine commitment just because UPGRADES.recycling happens to share its id.
+  const s = { players: { player: { upgrades: {} } }, buildings: new Map() };
+  s.buildings.set("b2", { owner: "player", type: "datacenter", researchQueue: [{ techId: "recycling", progress: 0.1 }] });
+  assert.equal(committedDoctrine(s, "player"), null,
+    "a Datacenter's queue never counts toward a doctrine commitment, even for a shared id like recycling");
+});
+
+test("every real (non-aiOnly) UPGRADES entry takes time to develop, in the proposal's ~25-40s band", () => {
+  for (const u of Object.values(UPGRADES)) {
+    if (u.aiOnly) continue;   // hardEdge is seeded directly onto the AI's upgrades, never queued/developed — no time needed
+    assert.ok(u.time > 0, `${u.id} takes time to develop`);
+    assert.ok(u.time >= 25 && u.time <= 40, `${u.id}'s development time (${u.time}s) should land in the proposal's ~25-40s band`);
+  }
+});
+
+test("the tech tree extends past the Foundry: Arsenal (needs Foundry) -> Dreadnought", () => {
+  assert.deepEqual(BUILDINGS.arsenal.requires, ["foundry"], "Arsenal is gated behind the Foundry");
+  assert.deepEqual(UNITS.dreadnought.requires, ["arsenal"], "the Dreadnought is gated behind the Arsenal");
+  assert.deepEqual(Object.keys(BUILDINGS.arsenal.cost), ["ore"], "Arsenal is ore-only so the path stays reachable everywhere");
+  assert.ok(!UNITS.dreadnought.bonusVs, "the Dreadnought sits OUTSIDE the rock-paper-scissors triangle");
+  assert.ok(BUILDINGS.barracks.produces.includes("dreadnought"), "the Barracks trains it once unlocked");
+});
+
+test("prereqsMet: no requires is always met; a building token needs a COMPLETED building", () => {
+  assert.equal(prereqsMet(stubState(), "player", UNITS.skiff), true, "no requires -> available");
+  // Lancer needs a foundry.
+  assert.equal(prereqsMet(stubState([]), "player", UNITS.lancer), false, "no foundry -> locked");
+  assert.equal(prereqsMet(stubState([{ owner: "player", type: "foundry", constructing: true }]), "player", UNITS.lancer),
+    false, "a still-constructing foundry doesn't unlock it");
+  assert.equal(prereqsMet(stubState([{ owner: "player", type: "foundry", constructing: false }]), "player", UNITS.lancer),
+    true, "a completed foundry unlocks it");
+  assert.equal(prereqsMet(stubState([{ owner: "ai", type: "foundry", constructing: false }]), "player", UNITS.lancer),
+    false, "the enemy's foundry doesn't unlock yours");
+});
+
+test("canAfford is true only when every cost commodity is covered", () => {
+  assert.equal(canAfford({ ore: 50 }, { ore: 50 }), true);
+  assert.equal(canAfford({ ore: 49 }, { ore: 50 }), false);
+  assert.equal(canAfford({}, {}), true);
+});
+
+test("payCost deducts every listed commodity and leaves others untouched", () => {
+  const res = { ore: 200, crystals: 10 };
+  payCost(res, { ore: 150 });
+  assert.equal(res.ore, 50);
+  assert.equal(res.crystals, 10);
+});
+
+test("unit and building defs carry the fields the sim depends on", () => {
+  assert.equal(UNITS.worker.role, "worker");
+  assert.equal(UNITS.skiff.role, "combat");
+  assert.equal(UNITS.bastion.role, "combat");
+  assert.equal(BUILDINGS.command.isCommandCenter, true);
+  assert.ok(BUILDINGS.barracks.produces.includes("skiff"));
+  assert.ok(BUILDINGS.barracks.produces.includes("bastion"));
+});
+
+test("Bastion is the deliberate Skiff counter: out-ranges the Skiff, but slower and costlier", () => {
+  assert.equal(UNITS.bastion.bonusVs.skiff, 10);
+  assert.ok(UNITS.bastion.range > UNITS.skiff.range, "the Skiff's counter out-reaches it, so it can't be kited forever");
+  assert.ok(UNITS.bastion.range < 50, "…but still under the AI's kite threshold, so it stands and trades");
+  assert.ok(UNITS.bastion.speed < UNITS.skiff.speed, "Bastion should be slower, not a strict upgrade");
+  assert.ok(UNITS.bastion.cost.ore > UNITS.skiff.cost.ore, "Bastion should cost more, not a strict upgrade");
+  assert.ok(UNITS.bastion.hp > UNITS.skiff.hp);
+});
+
+test("Lancer is the deliberate Bastion counter: bonus damage vs bastion, but squishier and not a strict upgrade", () => {
+  assert.equal(UNITS.lancer.bonusVs.bastion, 20);
+  assert.ok(UNITS.lancer.hp < UNITS.bastion.hp, "Lancer should be squishier than the Bastion it counters");
+  assert.ok(UNITS.lancer.range > UNITS.bastion.range, "Lancer's long range is its edge against Bastion's short melee range");
+});
+
+test("the rock-paper-scissors triangle closes: Skiff beats Lancer, Bastion beats Skiff, Lancer beats Bastion", () => {
+  assert.equal(UNITS.skiff.bonusVs.lancer, 10);
+  assert.equal(UNITS.bastion.bonusVs.skiff, 10);
+  assert.equal(UNITS.lancer.bonusVs.bastion, 20);
+  assert.equal(UNITS.lancer.role, "combat");
+  assert.ok(BUILDINGS.barracks.produces.includes("lancer"));
+});
+
+test("the Command Center is buildable but steep: the priciest, slowest structure on the roster", () => {
+  assert.equal(BUILDINGS.command.cost.ore, 400);
+  assert.equal(BUILDINGS.command.buildTime, 30);
+  assert.ok(BUILDINGS.command.buildTime > BUILDINGS.barracks.buildTime, "an expansion should take longer than a Barracks");
+  assert.ok(BUILDINGS.command.cost.ore > BUILDINGS.refinery.cost.ore, "an expansion should out-price every other building");
+});
+
+test("the Command Center is the only resource drop-off in the skirmish roster", () => {
+  // No forward/decentralized collection point: every haul goes all the way back to a CC.
+  assert.equal(isDropOff("command"), true, "the CC is always a drop-off");
+  assert.equal(isDropOff("refinery"), false, "the Refinery is a research building only, not a collection point");
+  assert.equal(isDropOff("foundry"), false, "the Foundry is a tech gate only, not a collection point");
+  assert.equal(isDropOff("arsenal"), false, "the Arsenal is a tech gate only, not a collection point");
+  // Troop, defense, and housing buildings are not collection points either.
+  assert.equal(isDropOff("barracks"), false, "the Barracks trains troops, it doesn't collect");
+  assert.equal(isDropOff("turret"), false);
+  assert.equal(isDropOff("habitat"), false);
+  assert.equal(isDropOff("not-a-building"), false, "an unknown type is never a drop-off");
+  // The flag is what the routing reads — keep def and predicate in sync.
+  for (const t of ["refinery", "foundry", "arsenal"]) assert.equal(BUILDINGS[t].dropOff, undefined, `${t} no longer carries the dropOff flag`);
+});
+
+test("the Ranger is a Command-Center recon unit: cheap, fragile, all-terrain, far-sighted", () => {
+  assert.ok(BUILDINGS.command.produces.includes("ranger"), "trained at the Command Center, like a Worker");
+  assert.equal(UNITS.ranger.role, "scout", "its own role — never auto-acquires, never counted in the combat army");
+  assert.equal(UNITS.ranger.allTerrain, true, "ice fields and rough ground never slow it");
+  // The skirmish roster only — the Odyssey-only Leviathan is a capital ship deliberately
+  // beyond these balance invariants (it never appears in a skirmish).
+  const combat = Object.values(UNITS).filter(u => u.role === "combat" && !u.odysseyOnly);
+  assert.ok(combat.every(u => UNITS.ranger.sight > u.sight), "it out-sees every combat unit — vision is its edge");
+  assert.ok(UNITS.ranger.cost.ore < UNITS.skiff.cost.ore, "cheaper than the cheapest combat unit");
+  assert.ok(UNITS.ranger.hp <= UNITS.skiff.hp, "fragile — it scouts, it doesn't trade blows");
+  assert.ok(UNITS.ranger.attack > 0 && UNITS.ranger.attack < UNITS.skiff.attack, "a token bite for self-defence, no more");
+  assert.equal(UNITS.ranger.supplyCost, 1);
+});
+
+test("the Tier-3 specialty units spend the once-dead commodities and sit outside the triangle", () => {
+  const specialty = { wraith: "gas", aegis: "ice", colossus: "relics" };
+  for (const [id, com] of Object.entries(specialty)) {
+    const def = UNITS[id];
+    assert.ok(def, `${id} exists`);
+    assert.equal(def.role, "combat", `${id} is a combat unit`);
+    assert.deepEqual(def.requires, ["arsenal"], `${id} is Arsenal-gated`);
+    assert.ok(BUILDINGS.barracks.produces.includes(id), `${id} is trained at the Barracks`);
+    assert.ok(def.cost[com] > 0, `${id} costs ${com} — the commodity that was otherwise never spent`);
+    assert.ok(!def.bonusVs, `${id} carries no bonusVs — it's outside the rock-paper-scissors triangle`);
+    for (const t of ["skiff", "bastion", "lancer"]) {
+      assert.ok(!(UNITS[t].bonusVs && UNITS[t].bonusVs[id]), `${t} must not hard-counter ${id} (would put it in the triangle)`);
+    }
+  }
+});
+
+test("each specialty unit has a distinct identity: Wraith glass cannon, Aegis wall, Colossus artillery", () => {
+  const dps = def => def.attack / def.cooldown;
+  // Skirmish roster only — the Odyssey-only Leviathan out-tanks/out-guns these on purpose.
+  const combat = Object.values(UNITS).filter(u => u.role === "combat" && !u.odysseyOnly);
+
+  // Wraith — fastest combatant, highest raw DPS, but soft.
+  assert.ok(combat.every(u => u.id === "wraith" || UNITS.wraith.speed >= u.speed), "Wraith is the fastest combat unit");
+  assert.ok(combat.every(u => u.id === "wraith" || dps(UNITS.wraith) > dps(u)), "Wraith has the highest DPS");
+  assert.ok(UNITS.wraith.hp < UNITS.bastion.hp, "...paid for with a fragile hull");
+
+  // Aegis — the tankiest hull, with a token gun (it soaks, it doesn't kill).
+  assert.ok(combat.every(u => u.id === "aegis" || UNITS.aegis.hp >= u.hp), "Aegis is the tankiest combat unit");
+  assert.ok(dps(UNITS.aegis) < dps(UNITS.dreadnought), "Aegis deals far less than the same-tier Dreadnought — it's a wall, not a bruiser");
+
+  // Colossus — out-ranges everything and cracks buildings.
+  assert.ok(combat.every(u => u.id === "colossus" || UNITS.colossus.range > u.range), "Colossus out-ranges every other unit");
+  assert.ok(UNITS.colossus.range > BUILDINGS.turret.range, "...and out-ranges the Sentinel Turret");
+  assert.ok(UNITS.colossus.bonusVsBuildings > 0, "Colossus is a base-cracker (structure bonus)");
+  assert.ok(UNITS.colossus.speed < UNITS.wraith.speed, "the artillery is slow — the price of its reach");
+});
+
+test("the Mender is a Foundry-gated support drone: heals, but carries no weapon", () => {
+  assert.equal(UNITS.mender.role, "support", "its own role — never auto-acquires, never counted in the combat army");
+  assert.deepEqual(UNITS.mender.requires, ["foundry"], "gated behind the Foundry, like the Tier-2 units");
+  assert.ok(BUILDINGS.barracks.produces.includes("mender"), "trained at the Barracks");
+  assert.ok(UNITS.mender.repairRate > 0, "it heals");
+  assert.ok(UNITS.mender.repairRange > 0, "...over an area");
+  assert.ok(!UNITS.mender.attack, "a support unit carries no attack stat — combat.js must never arm it");
+  assert.ok(!UNITS.mender.bonusVs && !UNITS.mender.bonusVsBuildings, "it sits entirely outside the combat triangle");
+  assert.ok(UNITS.mender.hp < UNITS.skiff.hp, "fragile — a priority kill that must be escorted");
+  assert.ok(UNITS.mender.cost.crystals > 0, "crystal-costed, so it's a real economic commitment gated by that income");
+  const combat = Object.values(UNITS).filter(u => u.role === "combat");
+  assert.ok(combat.every(u => u.role !== "support"), "the combat army filter excludes the support role");
+});
+
+test("every unit and building carries a sight radius for fog of war", () => {
+  for (const def of Object.values(UNITS)) assert.ok(def.sight > 0, `${def.id} needs a sight radius`);
+  for (const def of Object.values(BUILDINGS)) assert.ok(def.sight > 0, `${def.id} needs a sight radius`);
+});
+
+test("the Sentinel Turret is a crystal sink with real combat stats", () => {
+  const turret = BUILDINGS.turret;
+  assert.ok(turret.cost.crystals > 0, "the turret should cost crystals — it's the first repeatable crystal sink");
+  assert.ok(turret.attack > 0, "a static defense with no attack is pointless");
+  assert.equal(turret.range, turret.aggroRange, "a turret can't chase, so acquiring beyond its own range is useless");
+  assert.ok(turret.sight >= turret.range, "sight must cover its own range or it fires blind");
+});
+
+test("the Breacher is a radioactives sink, produced by the Barracks", () => {
+  assert.ok(UNITS.breacher.cost.radioactives > 0, "the Breacher should cost radioactives — the first repeatable radioactive sink");
+  assert.ok(BUILDINGS.barracks.produces.includes("breacher"));
+  assert.equal(UNITS.breacher.role, "combat");
+});
+
+test("the Breacher sits outside the triangle and outranges the turret", () => {
+  assert.ok(!UNITS.breacher.bonusVs, "the Breacher must carry no bonusVs — it's outside the rock-paper-scissors triangle");
+  for (const type of ["skiff", "bastion", "lancer"]) {
+    assert.ok(!UNITS[type].bonusVs.breacher, `${type} must not counter the Breacher, or it would be inside the triangle`);
+  }
+  assert.ok(UNITS.breacher.range > BUILDINGS.turret.range, "the Breacher's whole edge is out-ranging the turret's acquisition");
+  assert.ok(UNITS.breacher.bonusVsBuildings > 0, "its identity is the structure bonus, not anti-unit power");
+
+  const dps = def => def.attack / def.cooldown;
+  const combatUnits = Object.values(UNITS).filter(u => u.role === "combat");
+  const worst = Math.min(...combatUnits.map(dps));
+  assert.equal(dps(UNITS.breacher), worst, "the Breacher should deal the worst raw DPS of any combat unit");
+});
+
+// ---- The static-defense ladder (docs/improvement-proposals.md): the Bastille (a second,
+// Foundry-gated tier), the Aegis Bastion (an Arsenal-gated guard-aura projector), and the Plasma
+// Torpedo Battery (ammo-fed, Strategic-tier). All three are rationalized against ONE invariant —
+// every siege unit (Breacher 150, Colossus 185, Leviathan 200) must still strictly outrange every
+// static-defense structure — except the Torpedo Battery's own deliberate, narrower carve-out
+// (see its own test below).
+
+test("the Bastille is a second Foundry-gated static-defense tier: tankier AND shorter-ranged than the plain turret, on purpose", () => {
+  const b = BUILDINGS.bastille;
+  assert.equal(b.hp, 600);
+  assert.equal(b.attack, 32);
+  assert.equal(b.cooldown, 1.4);
+  assert.equal(b.range, 115);
+  assert.deepEqual(b.cost, { ore: 200, crystals: 150, radioactives: 60 });
+  assert.deepEqual(b.requires, ["foundry"], "a second Foundry-gated tier, not available from turn one");
+  assert.equal(b.category, "military");
+  // Same combat stat field NAMES the turret uses, so combat.js's updateBuildingCombat (which
+  // only ever reads .attack/.range/.cooldown/.aggroRange) works on it verbatim.
+  assert.equal(b.range, b.aggroRange, "static defense can't chase, so acquiring beyond its own range is useless");
+  assert.ok(b.hp > BUILDINGS.turret.hp, "tankier than the plain turret");
+  assert.ok(b.attack > BUILDINGS.turret.attack, "hits harder than the plain turret");
+  // Deliberately UNDER the turret's own 130, not just the Breacher's 150 — a brawler, not a
+  // longer-ranged sniper. Do not "fix" this upward: the shortness is the point.
+  assert.ok(b.range < BUILDINGS.turret.range, "shorter-ranged than even the plain turret");
+  assert.ok(b.range < UNITS.breacher.range && b.range < UNITS.colossus.range && b.range < UNITS.leviathan.range,
+    "every siege unit still strictly outranges it, same as the plain turret");
+});
+
+test("the Aegis Bastion is an Arsenal-gated guard-aura projector with no attack of its own", () => {
+  const a = BUILDINGS.aegisbastion;
+  assert.ok(!a.attack, "it defends by attrition math (the aura), never by out-ranging siege — combat.js skips any building with no attack stat");
+  assert.equal(a.hp, 500);
+  assert.deepEqual(a.cost, { ore: 250, crystals: 180 });
+  assert.deepEqual(a.requires, ["arsenal"]);
+  assert.equal(a.category, "military");
+  assert.ok(a.guardAura, "carries the same guardAura shape the Aegis UNIT's own aura does (UNITS.aegis)");
+  assert.equal(a.guardAura.range, 130);
+  assert.ok(Math.abs(a.guardAura.damageTakenMult - 0.8) < 1e-9);
+  assert.ok(!a.produces && !a.supplyGrants, "no produces/supplyGrants of its own");
+  assert.equal(isElectrifiable("aegisbastion"), false, "isElectrifiable already excludes it via the no-produces/no-supplyGrants rule");
+});
+
+test("the Plasma Torpedo Battery is ammo-fed endgame static defense: Odyssey-only, and out-ranged only by the top siege tier", () => {
+  const t = BUILDINGS.torpedobattery;
+  assert.equal(t.odysseyOnly, true, "Strategic-tier defense — never appears in a skirmish build menu");
+  assert.deepEqual(t.requires, ["torpedoworks"]);
+  assert.equal(t.category, "military");
+  assert.equal(t.attack, 55);
+  assert.equal(t.range, 180);
+  assert.equal(t.cooldown, 2.5);
+  assert.equal(t.range, t.aggroRange, "static defense can't chase");
+  assert.deepEqual(t.cost, { ore: 250, alloys: 10 });
+  assert.deepEqual(t.ammo, { com: "plasmatorp", perShot: 0.25 });
+  // The narrowed invariant for the endgame tier (deliberate, per the proposal): the Breacher
+  // (150) no longer outranges it — the early siege tool stops being enough on its own — but the
+  // Colossus (185) and Leviathan (200) still do, so sieging a battery line stays the intended
+  // top-tier answer.
+  assert.ok(t.range < UNITS.colossus.range, "the Colossus still outranges it");
+  assert.ok(t.range < UNITS.leviathan.range, "the Leviathan still outranges it");
+  assert.ok(t.range > UNITS.breacher.range, "…but the Breacher no longer does");
+});
+
+test("the three new static-defense structures all carry a sight radius, a build time, and a real cost, like every other building", () => {
+  for (const type of ["bastille", "aegisbastion", "torpedobattery"]) {
+    const def = BUILDINGS[type];
+    assert.ok(def, `${type} exists in BUILDINGS`);
+    assert.ok(def.sight > 0, `${type} needs a sight radius`);
+    assert.ok(def.sight >= (def.range || 0), `${type}'s sight must cover its own range or it fires blind`);
+    assert.ok(def.buildTime > 0, `${type} needs a build time`);
+    assert.ok(Object.keys(def.cost).length > 0, `${type} costs something`);
+    assert.equal(def.radius > 0, true, `${type} needs a footprint radius`);
+  }
+});
+
+test("a Worker can defend itself, but only weakly and without leaving its job behind", () => {
+  assert.ok(UNITS.worker.attack > 0, "workers can fight back when ordered to");
+  assert.equal(UNITS.worker.role, "worker", "it stays a worker — it still gathers and builds, and never auto-acquires");
+  assert.ok(!("aggroRange" in UNITS.worker), "no aggroRange: a worker never picks a fight on its own");
+  const dps = def => def.attack / def.cooldown;
+  for (const type of ["skiff", "bastion", "lancer", "breacher"]) {
+    assert.ok(dps(UNITS.worker) < dps(UNITS[type]), `a worker should out-damage no combat unit (${type})`);
+  }
+});
+
+test("every BUILDINGS entry carries a valid build category", () => {
+  const valid = new Set(["infrastructure", "military", "industrial"]);
+  for (const def of Object.values(BUILDINGS)) {
+    assert.ok(valid.has(def.category), `${def.id} needs a valid category, got ${def.category}`);
+  }
+});
+
+test("Worker carries every build/gather/logistics capability — the sole generalist worker unit", () => {
+  assert.deepEqual(UNITS.worker.buildCategories, ["infrastructure", "military", "industrial"]);
+  assert.equal(UNITS.worker.canGather, true);
+  assert.equal(UNITS.worker.canLogistics, true);
+  assert.ok(BUILDINGS.command.produces.includes("worker"));
+});
+
+test("canBuildCategory/canBuildType: Worker builds everything, a non-worker builds nothing", () => {
+  for (const cat of ["infrastructure", "military", "industrial"]) assert.equal(canBuildCategory("worker", cat), true);
+  assert.equal(canBuildCategory("mender", "military"), false, "Mender is repair-only, untouched by any of this");
+  assert.equal(canBuildCategory("skiff", "military"), false, "a combat unit has no build capability");
+
+  assert.equal(canBuildType("worker", "refinery"), true, "Refinery is Industrial");
+  assert.equal(canBuildType("worker", "barracks"), true, "Barracks is Military");
+  assert.equal(canBuildType("worker", "habitat"), true, "Habitat is Infrastructure");
+  assert.equal(canBuildType("mender", "habitat"), false);
+});
+
+test("Foundry and Arsenal are Industrial, not Military, despite gating combat tech", () => {
+  // They group with the Refinery in the build menu as production-tech buildings —
+  // neither trains nor fights, unlike the Barracks/Turret/Star Dock roster below.
+  assert.equal(BUILDINGS.foundry.category, "industrial");
+  assert.equal(BUILDINGS.arsenal.category, "industrial");
+  assert.equal(BUILDINGS.refinery.category, "industrial");
+  assert.equal(BUILDINGS.barracks.category, "military");
+  assert.equal(BUILDINGS.turret.category, "military");
+  assert.equal(BUILDINGS.stardock.category, "military");
+});
+
+test("Foundry and Arsenal each carry a standing produceTimeMult — they keep working after the unlock", () => {
+  assert.ok(BUILDINGS.foundry.produceTimeMult > 0 && BUILDINGS.foundry.produceTimeMult < 1, "a speed-up, not a slow-down");
+  assert.ok(BUILDINGS.arsenal.produceTimeMult > 0 && BUILDINGS.arsenal.produceTimeMult < 1);
+  // ~8% each, per the proposal — close to 0.92, not some other unrelated tuning.
+  assert.ok(Math.abs(BUILDINGS.foundry.produceTimeMult - 0.92) < 0.001);
+  assert.ok(Math.abs(BUILDINGS.arsenal.produceTimeMult - 0.92) < 0.001);
+});
+
+test("the Market is the cheap, ungated first Odyssey building — buildable by the Worker, not the CC", () => {
+  assert.deepEqual(BUILDINGS.market.cost, { ore: 40 });
+  assert.equal(BUILDINGS.market.category, "infrastructure");
+  assert.equal(BUILDINGS.market.odysseyOnly, true, "trading (state.market) is an Odyssey-only system");
+  assert.equal(BUILDINGS.market.requires, undefined, "no prereqs — buildable immediately, meant to be first");
+  assert.ok(!BUILDINGS.market.produces, "it trains no units — stays out of the rally-point UI");
+  assert.equal(canBuildType("worker", "market"), true, "the generalist Worker can found it");
+  assert.equal(canBuildType("mender", "market"), false);
+});
+
+test("canGatherType/canLogisticsType: only Worker gathers, only Worker runs haul/service/ferry", () => {
+  assert.equal(canGatherType("worker"), true);
+  assert.equal(canGatherType("mender"), false);
+  assert.equal(canGatherType("skiff"), false);
+  assert.equal(canLogisticsType("worker"), true);
+  assert.equal(canLogisticsType("mender"), false);
+  assert.equal(canLogisticsType("skiff"), false);
+});
+
+// ---- Promote the legacy consumer-goods recipes into a trade-industry branch (docs/improvement-
+// proposals.md lines 443-451): data.js RECIPES carries 'chem' (biomass+power -> chemicals) and
+// 'consumer' (alloys+chemicals+power -> goods) as documented legacy. These two odysseyOnly
+// buildings wire them up, following the Smelter/Assembly Plant recipe/dropOff/prodRate idiom
+// exactly — see test/techtree.test.js for the tech-gating/branching semantics.
+
+test("the Chemical Plant follows the Smelter/Assembly Plant idiom: ore-costed, a drop-off, runs data.js's 'chem' recipe, Odyssey-only", () => {
+  const cp = BUILDINGS.chemplant;
+  assert.ok(cp, "chemplant exists in BUILDINGS");
+  assert.equal(cp.recipe, "chem", "runs the legacy 'chem' recipe data.js already carries (biomass+power -> chemicals)");
+  assert.ok(cp.prodRate > 0, "produces at a real rate");
+  assert.equal(cp.dropOff, true, "an industrial building doubles as a resource drop-off, same as every other factory");
+  assert.equal(cp.odysseyOnly, true, "never appears in a skirmish build menu, like the rest of the industry chain");
+  assert.equal(cp.category, "industrial");
+  assert.deepEqual(Object.keys(cp.cost), ["ore"], "ore-costed per the reachability convention — the branch stays reachable on any world");
+  assert.deepEqual(cp.requires, ["chemistry"], "tech-gated only — no Smelter, no metallurgy: a true off-spine root");
+});
+
+test("the Fabricator follows the same idiom: ore-costed, a drop-off, runs data.js's 'consumer' recipe, Odyssey-only", () => {
+  const fab = BUILDINGS.fabricator;
+  assert.ok(fab, "fabricator exists in BUILDINGS");
+  assert.equal(fab.recipe, "consumer", "runs the legacy 'consumer' recipe data.js already carries (alloys+chemicals+power -> goods)");
+  assert.ok(fab.prodRate > 0, "produces at a real rate");
+  assert.equal(fab.dropOff, true);
+  assert.equal(fab.odysseyOnly, true);
+  assert.equal(fab.category, "industrial");
+  assert.deepEqual(Object.keys(fab.cost), ["ore"], "ore-costed per the reachability convention");
+  // The merge point: needs the METALLURGY branch's alloys (Assembly Plant) AND this branch's own
+  // chemicals (Chemical Plant), plus its own tech — the same two-supplying-buildings-plus-tech
+  // shape Machine Works uses for its own alloys+electronics merge.
+  assert.ok(fab.requires.includes("assembler"), "needs the Assembly Plant for alloys");
+  assert.ok(fab.requires.includes("chemplant"), "needs the Chemical Plant for chemicals");
+  assert.ok(fab.requires.includes("consumerfab"), "needs its own unlock tech");
+  assert.equal(fab.requires.length, 3, "exactly these three — nothing from the antimatter/military spine");
+});
+
+test("the two new trade-industry buildings carry a sight radius, a build time, and a footprint radius, like every other building", () => {
+  for (const type of ["chemplant", "fabricator"]) {
+    const def = BUILDINGS[type];
+    assert.ok(def.sight > 0, `${type} needs a sight radius`);
+    assert.ok(def.buildTime > 0, `${type} needs a build time`);
+    assert.ok(def.hp > 0, `${type} needs hp`);
+    assert.equal(def.radius > 0, true, `${type} needs a footprint radius`);
+  }
+});
+
+test("every unit carries a supply cost, and the Command Center and Habitat are the supply grantors", () => {
+  for (const def of Object.values(UNITS)) assert.ok(def.supplyCost >= 1, `${def.id} needs a supply cost`);
+  assert.equal(BUILDINGS.command.supplyGrants, 10, "the seeded CC houses the starting workers with room to grow");
+  assert.equal(BUILDINGS.habitat.supplyGrants, 8);
+  assert.ok(!BUILDINGS.habitat.produces, "the Habitat has no `produces` — keeps it out of the rally UI/render");
+});

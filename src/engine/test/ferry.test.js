@@ -1,0 +1,570 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { createGameState, makeBuilding, makeUnit } from "../engine/state.js";
+import { tick } from "../engine/sim.js";
+import { updateFerry, updateHaul, countLogistics, assignHaul, assignFerry, assignShuttle, updateFreighterShuttle, FREIGHTER_AI_TECH, aiUpkeepRate, payAIUpkeep } from "../engine/haul.js";
+import { issueFerryFreighter, issueSetAILogistics, issueSetCollectPoint } from "../engine/commands.js";
+import { storeTotal, freightUsed, freightRoom } from "../engine/entities.js";
+import { TECHS } from "../engine/techtree.js";
+import { serializeGame, deserializeGame } from "../engine/persist.js";
+import { mulberry32 } from "./_helpers.js";
+
+const near = (a, b, eps = 1e-3) => Math.abs(a - b) < eps;
+
+// A skirmish world seeds a finished Command Center + 3 workers, same fixture as test/haul.test.js.
+function base(seed = 1) {
+  const s = createGameState({ planetId: "ferros", rng: mulberry32(seed) });
+  const cc = [...s.buildings.values()].find(b => b.owner === "player" && b.type === "command");
+  const workers = [...s.units.values()].filter(u => u.owner === "player" && u.type === "worker");
+  return { s, cc, workers };
+}
+// A player Plasma Rig, pre-loaded with `store` and paused (don't dig — isolate the ferry/haul logic).
+function plantRig(s, cc, store, dx = 50, dy = 0) {
+  const rig = makeBuilding("plasmarig", "player", cc.x + dx, cc.y + dy);
+  rig.store = { ...store };
+  rig.paused = true;
+  s.buildings.set(rig.id, rig);
+  return rig;
+}
+function plantFreighter(s, type, x, y) {
+  const f = makeUnit(type, "player", x, y);
+  s.units.set(f.id, f);
+  return f;
+}
+// Strip the seeded 3 idle workers so a freighter's own auto-logistics is the ONLY labour in
+// play — otherwise a worker (also idle, also eligible) can beat the freighter to a nearby backlog
+// and the test would stop proving what it claims to.
+function removeSeededWorkers(s, workers) {
+  for (const w of workers) s.units.delete(w.id);
+}
+
+// ---- FERRY: workers physically load/unload a landed freighter ------------------------------
+
+test("a ferry worker carries a producer's backlog straight onto the assigned freighter's hold", () => {
+  const { s, cc, workers } = base(1);
+  const rig = plantRig(s, cc, { ore: 60 });
+  const f = plantFreighter(s, "hauler", cc.x - 60, cc.y);
+  const w = workers[0];
+  w.x = f.x; w.y = f.y;
+  w.order = { type: "ferry", freighterId: f.id, phase: "plan", manual: true };
+  const oreBefore = s.players.player.resources.ore || 0;   // the skirmish seed starts with 300 ore
+
+  // countLogistics resets/re-tallies the per-producer hauler cap each tick in the real sim loop
+  // (engine/sim.js) — replicated here since this test drives updateFerry directly rather than
+  // through tick(), and the "claim a slot for the tick" bump in the "plan" phase relies on that
+  // periodic reset (otherwise repeat visits to the SAME producer across many calls would just keep
+  // incrementing a count nothing ever brings back down).
+  for (let i = 0; i < 8000 && (storeTotal(rig) > 0 || (w.cargo && w.cargo.qty > 0)); i++) { countLogistics(s); updateFerry(s, w, 0.05); }
+
+  assert.equal(storeTotal(rig), 0, "the rig's whole buffer was carried away");
+  assert.equal(freightUsed(f), 60, "…and all 60 landed on the freighter's hold");
+  assert.equal(s.players.player.resources.ore || 0, oreBefore, "the treasury's own ore never moved — it went straight into the ship");
+});
+
+test("issueFerryFreighter assigns the order (workers only), and freightRoom bounds what fits", () => {
+  const { s, workers } = base(2);
+  const f = plantFreighter(s, "hauler", 0, 0);
+  const ranger = makeUnit("ranger", "player", 0, 0);
+  s.units.set(ranger.id, ranger);
+
+  issueFerryFreighter([workers[0], ranger], f.id);
+
+  assert.equal(workers[0].order.type, "ferry", "the worker is assigned");
+  assert.equal(workers[0].order.freighterId, f.id);
+  assert.equal(ranger.order, null, "a non-worker is ignored — ferrying is worker labour, not any unit's");
+  assert.equal(freightRoom(f), 250, "an empty Hauler's room is its whole cargoHold");
+});
+
+test("with nothing left to load, a ferry worker instead drains the freighter's hold home", () => {
+  const { s, cc, workers } = base(3);
+  const f = plantFreighter(s, "hauler", cc.x + 60, cc.y);
+  f.freight = { alloys: 40 };
+  const w = workers[0];
+  w.x = f.x; w.y = f.y;
+  w.order = { type: "ferry", freighterId: f.id, phase: "plan", manual: true };
+
+  for (let i = 0; i < 8000 && (freightUsed(f) > 0 || (w.cargo && w.cargo.qty > 0)); i++) updateFerry(s, w, 0.05);
+
+  assert.equal(freightUsed(f), 0, "the hold was fully drawn down");
+  assert.ok((s.players.player.resources.alloys || 0) >= 40 - 1e-6, "…and banked into the treasury");
+});
+
+test("a ferry job releases a razed/jumped-away freighter gracefully, salvaging any cargo aboard", () => {
+  const { s, cc, workers } = base(4);
+  const f = plantFreighter(s, "hauler", cc.x + 40, cc.y);
+  const w = workers[0];
+  w.x = f.x; w.y = f.y;
+  w.cargo = { com: "ore", qty: 25 };
+  w.order = { type: "ferry", freighterId: f.id, phase: "toFreighter", manual: true };
+
+  s.units.delete(f.id);   // the freighter is gone (razed, or jumped to another world)
+  for (let i = 0; i < 8000 && w.order; i++) updateFerry(s, w, 0.05);
+
+  assert.equal(w.order, null, "the job ends once there's nothing left to carry");
+  assert.ok((s.players.player.resources.ore || 0) >= 25 - 1e-6, "…but the cargo it was carrying still made it to the treasury");
+});
+
+test("a FERRY worker's producer visit counts against the same per-producer hauler cap as a HAUL worker", () => {
+  const { s, cc } = base(5);
+  const rig = plantRig(s, cc, { ore: 120 });   // a full buffer → maximum pull
+  const f = plantFreighter(s, "hauler", cc.x - 80, cc.y);
+  // Pile candidates for BOTH job types right on the rig, so every one is a candidate this tick.
+  const haulers = [];
+  for (let i = 0; i < 4; i++) {
+    const w = makeUnit("worker", "player", rig.x, rig.y);
+    s.units.set(w.id, w);
+    haulers.push(w);
+  }
+  const ferriers = [];
+  for (let i = 0; i < 4; i++) {
+    const w = makeUnit("worker", "player", rig.x, rig.y);
+    s.units.set(w.id, w);
+    ferriers.push(w);
+  }
+  countLogistics(s);
+  for (const w of haulers) assignHaul(s, w);
+  for (const w of ferriers) { w.order = { type: "ferry", freighterId: f.id, phase: "plan", manual: true }; updateFerry(s, w, 0); }
+
+  const onRig = [...s.units.values()].filter(u =>
+    (u.order?.type === "haul" && u.order.buildingId === rig.id) ||
+    (u.order?.type === "ferry" && u.order.buildingId === rig.id)).length;
+  assert.ok(onRig <= 2, `at most 2 workers (of either job) draw from one producer at once (got ${onRig})`);
+});
+
+// ---- FREIGHTER AI-LOGISTICS: an autonomous freighter folded into the haul/service chain -----
+
+test("the freighterai tech id matches FREIGHTER_AI_TECH and requires AI Cores + the aicores tech", () => {
+  assert.ok(TECHS[FREIGHTER_AI_TECH], "the tech tree carries a node under the exact id haul.js references");
+  assert.ok(TECHS[FREIGHTER_AI_TECH].cost.ai > 0, "researching it costs AI Cores — automation is built FROM the good it burns");
+  assert.ok(TECHS[FREIGHTER_AI_TECH].requires.includes("aicores"), "gated behind having unlocked AI Cores production");
+});
+
+test("issueSetAILogistics won't switch a freighter on without the research, but always allows standing down", () => {
+  const { s } = base(6);
+  const f = plantFreighter(s, "hauler", 0, 0);
+
+  issueSetAILogistics([f], true, s);
+  assert.equal(!!f.aiLogistics, false, "no FREIGHTER_AI_TECH researched yet — the toggle is refused");
+
+  s.players.player.upgrades[FREIGHTER_AI_TECH] = true;
+  issueSetAILogistics([f], true, s);
+  assert.equal(f.aiLogistics, true, "researched — now it can be switched on");
+  assert.deepEqual(f.cargo, { com: null, qty: 0 }, "a single-slot cargo hold is created for the haul/service chain to use");
+
+  issueSetAILogistics([f], false, s);
+  assert.equal(f.aiLogistics, false, "standing down is never gated");
+});
+
+test("without aiLogistics toggled on, an idle freighter is never auto-assigned a haul/service job", () => {
+  const { s, cc, workers } = base(7);
+  removeSeededWorkers(s, workers);
+  plantRig(s, cc, { ore: 100 });
+  const f = plantFreighter(s, "hauler", cc.x + 45, cc.y);   // right next to the backed-up rig
+  s.players.player.upgrades[FREIGHTER_AI_TECH] = true;   // researched, but never switched on
+
+  for (let i = 0; i < 300; i++) tick(s, 0.1);
+
+  assert.equal(f.order, null, "a plain freighter stays fully player-controlled");
+});
+
+test("an AI-logistics freighter auto-hauls a producer's backlog at its OWN (far larger) capacity, burning AI Cores while it works", () => {
+  const { s, cc, workers } = base(8);
+  removeSeededWorkers(s, workers);
+  const rig = plantRig(s, cc, { ore: 100 });
+  const f = plantFreighter(s, "hauler", cc.x + 45, cc.y);
+  s.players.player.upgrades[FREIGHTER_AI_TECH] = true;
+  issueSetAILogistics([f], true, s);
+  s.players.player.resources.ai = 500;
+  const aiBefore = s.players.player.resources.ai;
+  const oreBefore = s.players.player.resources.ore || 0;   // the skirmish seed starts with 300 ore
+
+  for (let i = 0; i < 1500; i++) tick(s, 0.1);
+
+  assert.equal(storeTotal(rig), 0, "the freighter alone cleared the whole 100-ore buffer");
+  assert.ok(near((s.players.player.resources.ore || 0) - oreBefore, 100, 1e-3), "…and banked it to the treasury, just like a worker's haul");
+  assert.ok((s.players.player.resources.ai || 0) < aiBefore, "running autonomously burned AI Cores from the treasury");
+});
+
+test("a freighter's single-trip haul capacity is its own cargoHold — a 100-unit backlog moves in one load, not ten", () => {
+  const { s, cc } = base(9);
+  const rig = plantRig(s, cc, { ore: 100 });   // well under the Hauler's 250 hold
+  const f = plantFreighter(s, "hauler", rig.x, rig.y);
+  f.cargo = { com: null, qty: 0 };
+  f.order = { type: "haul", buildingId: rig.id, phase: "toSource" };
+
+  updateHaul(s, f, 0.05);   // "toSource": already reached → flips to "loading"
+  updateHaul(s, f, 0.05);   // "loading": one load, capped by tripCapacity (its own cargoHold)
+
+  assert.equal(f.cargo.qty, 100, "the WHOLE 100-ore backlog fit in a single load — a worker (cargoCap 10) would need ten trips");
+  assert.equal(storeTotal(rig), 0, "…draining the rig's buffer in one visit");
+});
+
+test("toggling AI logistics off mid-job stands the freighter down immediately, without losing its cargo", () => {
+  const { s, cc } = base(10);
+  const f = plantFreighter(s, "hauler", cc.x, cc.y);
+  s.players.player.upgrades[FREIGHTER_AI_TECH] = true;
+  f.aiLogistics = true;
+  f.cargo = { com: "ore", qty: 40 };
+  f.order = { type: "haul", buildingId: null, phase: "toDrop", aiJob: true };
+
+  f.aiLogistics = false;
+  tick(s, 0.1);
+
+  assert.equal(f.order, null, "the job is dropped the instant AI-logistics is switched off");
+  assert.deepEqual(f.cargo, { com: "ore", qty: 40 }, "…but whatever it was carrying just sits aboard, nothing lost");
+});
+
+test("an autonomous freighter pauses in place (job + cargo intact) when the treasury runs dry of AI Cores, and resumes once resupplied", () => {
+  const { s, cc, workers } = base(11);
+  removeSeededWorkers(s, workers);
+  const rig = plantRig(s, cc, { ore: 100 });
+  const f = plantFreighter(s, "hauler", cc.x + 200, cc.y);   // far from the rig — several ticks of walking ahead
+  s.players.player.upgrades[FREIGHTER_AI_TECH] = true;
+  issueSetAILogistics([f], true, s);
+  s.players.player.resources.ai = 0;   // dry from the start
+
+  const x0 = f.x, y0 = f.y;
+  for (let i = 0; i < 50; i++) tick(s, 0.1);
+  assert.equal(f.x, x0, "no AI Cores in stock → it never even starts moving");
+  assert.equal(f.y, y0);
+  assert.equal(f.order, null, "…and never claims a job it can't afford to run, so nothing is stuck mid-plan");
+
+  s.players.player.resources.ai = 500;   // resupplied
+  for (let i = 0; i < 1500; i++) tick(s, 0.1);
+  assert.equal(storeTotal(rig), 0, "now it goes to work and clears the backlog");
+});
+
+test("AI-logistics haulage is deterministic: two same-seed runs bank identical treasuries and spend identical AI Cores", () => {
+  const run = () => {
+    const { s, cc, workers } = base(12);
+    removeSeededWorkers(s, workers);
+    plantRig(s, cc, { ore: 90, crystals: 30 });
+    const f = plantFreighter(s, "hauler", cc.x + 45, cc.y);
+    s.players.player.upgrades[FREIGHTER_AI_TECH] = true;
+    issueSetAILogistics([f], true, s);
+    s.players.player.resources.ai = 500;
+    for (let i = 0; i < 1500; i++) tick(s, 0.1);
+    return {
+      ore: s.players.player.resources.ore || 0,
+      crystals: s.players.player.resources.crystals || 0,
+      ai: s.players.player.resources.ai || 0,
+    };
+  };
+  assert.deepEqual(run(), run());
+});
+
+test("a freighter's aiLogistics flag, an in-progress aiJob haul order, and a worker's ferry order all survive a save/load round-trip", () => {
+  const { s, cc, workers } = base(14);
+  const rig = plantRig(s, cc, { ore: 80 });
+  const f = plantFreighter(s, "hauler", cc.x + 45, cc.y);
+  s.players.player.upgrades[FREIGHTER_AI_TECH] = true;
+  issueSetAILogistics([f], true, s);
+  s.players.player.resources.ai = 500;
+
+  const ferryTarget = plantFreighter(s, "heavyhauler", cc.x - 80, cc.y);
+  const w = workers[1];
+  removeSeededWorkers(s, [workers[0], workers[2]]);   // isolate: only the freighter and w compete for the rig
+  issueFerryFreighter([w], ferryTarget.id);
+
+  // Just ONE tick: rig and CC both sit within the freighter's own REACH of its start position, and
+  // its 250-cargoHold trip capacity clears the whole 80-ore buffer in a single load — so it's
+  // already mid-job (and would FINISH within a handful more ticks) rather than needing to travel.
+  tick(s, 0.1);
+  assert.equal(f.order?.aiJob, true, "sanity: the freighter is mid-job before we save");
+
+  const b = deserializeGame(JSON.parse(JSON.stringify(serializeGame(s))));
+  const f2 = b.units.get(f.id), w2 = b.units.get(w.id);
+
+  assert.equal(f2.aiLogistics, true, "the AI-logistics toggle survives");
+  assert.equal(f2.order?.type, "haul", "…and its in-progress autonomous job survives");
+  assert.equal(f2.order?.aiJob, true);
+  assert.equal(w2.order?.type, "ferry", "the worker's ferry assignment survives too");
+  assert.equal(w2.order?.freighterId, ferryTarget.id);
+
+  // And the reloaded game keeps working exactly as before: the freighter finishes the haul it was
+  // mid-way through when the save was taken.
+  for (let i = 0; i < 1500; i++) tick(b, 0.1);
+  assert.equal(storeTotal(b.buildings.get(rig.id)), 0, "the reloaded freighter completes the haul");
+});
+
+test("payAIUpkeep is a no-op (always succeeds) for a non-freighter unit — cargoHold-scaled, zero for anything without one", () => {
+  const { s, workers } = base(13);
+  const before = s.players.player.resources.ai || 0;
+  assert.equal(payAIUpkeep(s, workers[0], 1), true, "a worker has no cargoHold, so its upkeep rate is zero");
+  assert.equal(s.players.player.resources.ai || 0, before, "…and nothing was charged");
+  assert.equal(aiUpkeepRate(workers[0]), 0);
+  assert.ok(aiUpkeepRate({ type: "hauler" }) > 0, "a freighter's rate scales with its own cargoHold");
+});
+
+// ---- COLLECTION POINT: a freighter shuttles itself to the CC and back when full ------------
+
+test("issueSetCollectPoint toggles the flag and stamps the anchor at the freighter's current spot", () => {
+  const { s } = base(20);
+  const f = plantFreighter(s, "hauler", 300, 450);
+
+  issueSetCollectPoint([f], true);
+  assert.equal(f.collectPoint, true);
+  assert.deepEqual(f.anchor, { x: 300, y: 450 }, "anchored where it was standing when switched on");
+
+  f.x = 999; f.y = 999;   // moved since
+  issueSetCollectPoint([f], false);
+  assert.equal(f.collectPoint, false);
+  assert.deepEqual(f.anchor, { x: 300, y: 450 }, "turning off doesn't touch the anchor");
+
+  issueSetCollectPoint([f], true);
+  assert.deepEqual(f.anchor, { x: 999, y: 999 }, "re-enabling re-anchors at the NEW current spot");
+});
+
+test("assignShuttle is a no-op unless the freighter is a full, idle, collection-point freighter", () => {
+  const { s } = base(21);
+  const f = plantFreighter(s, "hauler", 100, 100);
+
+  assignShuttle(s, f);
+  assert.equal(f.order, null, "not a collection point yet");
+
+  issueSetCollectPoint([f], true);
+  assignShuttle(s, f);
+  assert.equal(f.order, null, "collection point, but its hold isn't full");
+
+  f.freight = { ore: 250 };   // a Hauler's cargoHold is 250 — now full
+  assignShuttle(s, f);
+  assert.equal(f.order?.type, "shuttle");
+  assert.equal(f.order.phase, "toCC");
+});
+
+test("a full collection-point freighter shuttles to the nearest CC, banks its WHOLE hold, then returns to its anchor", () => {
+  const { s, cc } = base(22);
+  const f = plantFreighter(s, "hauler", cc.x + 300, cc.y + 200);
+  issueSetCollectPoint([f], true);
+  f.freight = { ore: 150, crystals: 100 };   // full (Hauler cargoHold 250)
+  const oreBefore = s.players.player.resources.ore || 0;
+  const crystalsBefore = s.players.player.resources.crystals || 0;
+
+  assignShuttle(s, f);
+  for (let i = 0; i < 8000 && f.order; i++) updateFreighterShuttle(s, f, 0.05);
+
+  assert.equal(f.order, null, "the run completes and it goes idle again");
+  assert.equal(freightUsed(f), 0, "the whole hold was unloaded — not just one commodity");
+  assert.ok(near((s.players.player.resources.ore || 0) - oreBefore, 150, 1e-3));
+  assert.ok(near((s.players.player.resources.crystals || 0) - crystalsBefore, 100, 1e-3));
+  assert.ok(Math.hypot(f.x - f.anchor.x, f.y - f.anchor.y) <= 30, "back at (near) its anchor");
+});
+
+test("without a Command Center to deliver to, a full collection-point freighter just waits — nothing lost", () => {
+  const s = createGameState({ planetId: "ferros" });
+  for (const b of [...s.buildings.values()]) if (b.type === "command") s.buildings.delete(b.id);
+  const f = plantFreighter(s, "hauler", 500, 500);
+  issueSetCollectPoint([f], true);
+  f.freight = { ore: 250 };
+  assignShuttle(s, f);
+  const x0 = f.x, y0 = f.y;
+
+  for (let i = 0; i < 100; i++) updateFreighterShuttle(s, f, 0.1);
+
+  assert.equal(f.x, x0); assert.equal(f.y, y0);
+  assert.equal(freightUsed(f), 250, "cargo is untouched — nowhere to deliver it");
+  assert.equal(f.order?.type, "shuttle", "still waiting, not stuck in a bad state");
+});
+
+test("toggling collection-point mode off mid-shuttle stands the freighter down immediately, cargo intact", () => {
+  const { s, cc } = base(23);
+  const f = plantFreighter(s, "hauler", cc.x + 300, cc.y);
+  f.collectPoint = true;
+  f.anchor = { x: f.x, y: f.y };
+  f.freight = { ore: 250 };
+  f.order = { type: "shuttle", phase: "toCC" };
+
+  f.collectPoint = false;
+  tick(s, 0.1);
+
+  assert.equal(f.order, null, "stood down instantly");
+  assert.deepEqual(f.freight, { ore: 250 }, "…but its cargo is untouched");
+});
+
+test("ferry-fed collection-point shuttling is deterministic: two same-seed runs bank identical treasuries", () => {
+  const run = () => {
+    const { s, cc, workers } = base(24);
+    const rig = plantRig(s, cc, { ore: 300 }, 300, 200);
+    const f = plantFreighter(s, "hauler", rig.x, rig.y);
+    issueSetCollectPoint([f], true);
+    issueFerryFreighter([workers[0]], f.id);
+    for (let i = 0; i < 4000; i++) tick(s, 0.1);
+    return { ore: s.players.player.resources.ore || 0, freight: freightUsed(f), pos: [f.x, f.y] };
+  };
+  assert.deepEqual(run(), run());
+});
+
+test("a full freighter fed by a ferry worker shuttles itself home and back, clearing a rig no worker alone could keep up with", () => {
+  const { s, cc, workers } = base(25);
+  removeSeededWorkers(s, workers.slice(1));   // keep exactly one ferry worker
+  const rig = plantRig(s, cc, { ore: 250 }, 300, 200);
+  const f = plantFreighter(s, "hauler", rig.x, rig.y);
+  issueSetCollectPoint([f], true);
+  issueFerryFreighter([workers[0]], f.id);
+  const oreBefore = s.players.player.resources.ore || 0;
+
+  for (let i = 0; i < 6000; i++) tick(s, 0.1);
+
+  assert.equal(storeTotal(rig), 0, "the rig's backlog was fully cleared");
+  assert.ok(near((s.players.player.resources.ore || 0) - oreBefore, 250, 1e-2),
+    "…and it all reached the treasury — through the ferry worker loading the ship and the ship shuttling itself home");
+});
+
+test("collectPoint, anchor, and an in-progress shuttle order all survive a save/load round-trip", () => {
+  const { s, cc } = base(26);
+  const f = plantFreighter(s, "hauler", cc.x + 220, cc.y + 150);
+  issueSetCollectPoint([f], true);
+  f.freight = { ore: 250 };
+  assignShuttle(s, f);
+
+  const loaded = deserializeGame(serializeGame(s));
+  const f2 = loaded.units.get(f.id);
+  assert.equal(f2.collectPoint, true);
+  assert.deepEqual(f2.anchor, f.anchor);
+  assert.equal(f2.order?.type, "shuttle");
+  assert.equal(f2.order?.phase, "toCC");
+  assert.deepEqual(f2.freight, { ore: 250 });
+
+  for (let i = 0; i < 8000 && loaded.units.get(f.id)?.order; i++) tick(loaded, 0.05);
+  assert.equal(loaded.units.get(f.id).order, null, "the reloaded shuttle run completes normally");
+});
+
+test("a corrupted anchor is clamped into the map (or dropped) on load, never NaN-poisoning the freighter", () => {
+  const { s, cc } = base(27);
+  const f1 = plantFreighter(s, "hauler", cc.x, cc.y);
+  f1.collectPoint = true;
+  f1.anchor = { x: NaN, y: 99999999 };   // NaN JSON-round-trips to null; huge stays huge
+  const f2 = plantFreighter(s, "hauler", cc.x + 40, cc.y);
+  f2.collectPoint = true;
+  f2.anchor = "not an object";
+
+  const loaded = deserializeGame(serializeGame(s));
+  const loaded1 = loaded.units.get(f1.id), loaded2 = loaded.units.get(f2.id);
+
+  assert.ok(Number.isFinite(loaded1.anchor.x) && Number.isFinite(loaded1.anchor.y), "NaN/huge clamped to finite, in-bounds");
+  assert.ok(loaded1.anchor.x >= 0 && loaded1.anchor.x <= loaded.map.width);
+  assert.ok(loaded1.anchor.y >= 0 && loaded1.anchor.y <= loaded.map.height);
+  assert.equal(loaded2.anchor, undefined, "a non-object anchor is dropped outright, not coerced");
+
+  // And the sim doesn't choke on either — a shuttle run just re-plans from wherever it ends up.
+  assert.doesNotThrow(() => { for (let i = 0; i < 5; i++) tick(loaded, 0.1); });
+});
+
+// ---- AUTO-FERRY: idle workers offer themselves to a collection-point freighter ---------------
+
+test("assignFerry ignores a plain freighter — only a COLLECTION-POINT one is ever auto-assigned", () => {
+  const { s, cc, workers } = base(28);
+  plantRig(s, cc, { ore: 100 }, 40, 0);
+  const f = plantFreighter(s, "hauler", cc.x + 40, cc.y);   // not toggled
+
+  assignFerry(s, workers[0]);
+  assert.equal(workers[0].order, null, "a plain freighter is never auto-assigned — ferry it by hand or not at all");
+});
+
+test("assignFerry offers an idle worker to a nearby collection-point freighter with a backlog to bring it, with room", () => {
+  const { s, cc, workers } = base(29);
+  const rig = plantRig(s, cc, { ore: 100 }, 40, 0);
+  const f = plantFreighter(s, "hauler", cc.x + 40, cc.y);
+  issueSetCollectPoint([f], true);
+
+  assignFerry(s, workers[0]);
+  assert.equal(workers[0].order?.type, "ferry");
+  assert.equal(workers[0].order.freighterId, f.id);
+  assert.equal(workers[0].order.manual, undefined, "auto-assigned — not sticky like a manual assignment");
+});
+
+test("assignFerry skips a collection-point freighter with a full hold", () => {
+  const { s, cc, workers } = base(30);
+  const full = plantFreighter(s, "hauler", cc.x + 40, cc.y);
+  issueSetCollectPoint([full], true);
+  full.freight = { ore: 250 };   // already full
+  plantRig(s, cc, { ore: 100 }, 40, 0);   // right next to it, and well worth fetching — just nowhere to put it
+
+  assignFerry(s, workers[0]);
+  assert.equal(workers[0].order, null, "no room aboard — nothing for a worker to do here");
+});
+
+test("assignFerry skips a collection-point freighter when no producer anywhere has a backlog worth fetching", () => {
+  const { s, workers } = base(30);   // no rig planted at all — nothing anywhere to haul
+  const f = plantFreighter(s, "hauler", 500, 500);
+  issueSetCollectPoint([f], true);
+
+  assignFerry(s, workers[0]);
+  assert.equal(workers[0].order, null, "room aboard, but nothing anywhere is worth fetching — not worth the trip");
+});
+
+test("with a rig's hauler slots already claimed by regular haulers, assignFerry still gets first refusal (it's checked before assignHaul in sim.js)", () => {
+  const { s, cc } = base(31);
+  const rig = plantRig(s, cc, { ore: 250 });   // storeCap 120 → capped at 120, well over the 34% threshold either way
+  const f = plantFreighter(s, "hauler", rig.x + 30, rig.y);
+  issueSetCollectPoint([f], true);
+  const extraHaulers = [];
+  for (let i = 0; i < 2; i++) { const w = makeUnit("worker", "player", rig.x, rig.y); s.units.set(w.id, w); extraHaulers.push(w); }
+  const ferryWorker = makeUnit("worker", "player", rig.x, rig.y);
+  s.units.set(ferryWorker.id, ferryWorker);
+
+  countLogistics(s);
+  assignFerry(s, ferryWorker);              // ferry checked FIRST (matches the real sim.js order)
+  for (const w of extraHaulers) assignHaul(s, w);   // haul checked second, same as sim.js
+
+  assert.equal(ferryWorker.order?.type, "ferry", "the freighter still got a worker despite 2 other haulers wanting the same rig");
+});
+
+test("a ferry worker on a COLLECTION-POINT freighter only ever loads it — it never drains it to carry home itself", () => {
+  const { s, cc, workers } = base(32);
+  const f = plantFreighter(s, "hauler", cc.x + 60, cc.y);
+  issueSetCollectPoint([f], true);
+  f.freight = { alloys: 40 };   // cargo aboard, but no producer backlog anywhere to load instead
+  const w = workers[0];
+  w.x = f.x; w.y = f.y;
+  w.order = { type: "ferry", freighterId: f.id, phase: "plan", manual: true };
+
+  for (let i = 0; i < 50; i++) updateFerry(s, w, 0.1);
+
+  assert.equal(freightUsed(f), 40, "the hold is untouched — a collection-point freighter carries itself home, not the worker");
+  assert.equal(w.cargo?.qty || 0, 0, "the worker never picked anything up from it");
+});
+
+test("an AUTO-assigned ferry worker goes idle once there's nothing left to do (unlike a manual one, which waits by the ship)", () => {
+  const { s, cc, workers } = base(33);
+  const rig = plantRig(s, cc, { ore: 60 }, 40, 0);   // a small, one-trip backlog (still ≥ the 34% auto-assign bar)
+  const f = plantFreighter(s, "hauler", cc.x + 40, cc.y);
+  issueSetCollectPoint([f], true);
+
+  assignFerry(s, workers[0]);
+  assert.equal(workers[0].order.type, "ferry");
+
+  // countLogistics resets/re-tallies the per-producer cap each tick in the real sim loop — needed
+  // here too since this drives updateFerry directly (see the identical note on the very first test
+  // in this file).
+  for (let i = 0; i < 4000 && workers[0].order; i++) { countLogistics(s); updateFerry(s, workers[0], 0.05); }
+
+  assert.equal(storeTotal(rig), 0, "it did carry the backlog in first");
+  assert.equal(workers[0].order, null, "…then, with nothing left to load and no draining to do, it freed itself up");
+});
+
+test("a whole base with an idle economy and no manual assignment: idle workers auto-ferry a collection-point freighter and keep it fed and shuttling on their own", () => {
+  const { s, cc, workers } = base(34);
+  const rig = plantRig(s, cc, { ore: 250 }, 300, 200);
+  const f = plantFreighter(s, "hauler", rig.x, rig.y);
+  issueSetCollectPoint([f], true);   // the ONLY setup step — no issueFerryFreighter, nothing manual
+  const oreBefore = s.players.player.resources.ore || 0;
+
+  for (let i = 0; i < 6000; i++) tick(s, 0.1);
+
+  assert.equal(storeTotal(rig), 0, "workers found and cleared the rig on their own");
+  assert.ok(near((s.players.player.resources.ore || 0) - oreBefore, 250, 1e-2),
+    "…entirely through auto-assignment: no right-click, and the ship banked it all itself");
+});
+
+test("auto-ferry + self-shuttling is deterministic: two same-seed runs, no manual assignment, bank identical treasuries", () => {
+  const run = () => {
+    const { s, cc } = base(35);
+    plantRig(s, cc, { ore: 300 }, 300, 200);
+    const f = plantFreighter(s, "hauler", cc.x + 300, cc.y + 200);
+    issueSetCollectPoint([f], true);
+    for (let i = 0; i < 5000; i++) tick(s, 0.1);
+    return { ore: s.players.player.resources.ore || 0, freight: freightUsed(f) };
+  };
+  assert.deepEqual(run(), run());
+});

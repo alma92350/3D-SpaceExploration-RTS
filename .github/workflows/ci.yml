@@ -1,0 +1,124 @@
+# CI (ADR-0006, ADR-0007, ADR-0009, P0-T02).
+#
+# Every job here corresponds to a promise the project makes, and each fails independently so a red
+# build says WHICH promise broke rather than just "CI failed":
+#
+#   verify   — types, the new tests, the architecture rules, the vendored engine's own suite
+#   vendor   — the vendored simulation is byte-identical to upstream (ADR-0003)
+#   perf     — the CPU-side frame budget against the committed baseline (ADR-0006)
+#   browser  — smoke, no-WebGL fallback, renderer conformance, and the T0 budget under a software
+#              rasteriser, which IS persona P2's hardware
+#   size     — the 3 MB payload budget and the three.js import surface (N-03, ADR-0005)
+#   docs     — every ADR is in the index with a status
+#
+# ADR-0006's warning is the reason these are separate: "a required CI check that nobody had to pass
+# was walked past for four days of red builds". A check that cannot say what broke is a check people
+# learn to ignore.
+
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "22"
+
+jobs:
+  verify:
+    name: typecheck + tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Logic and render-contract tests
+        run: npm test
+      - name: Vendored upstream simulation suite
+        run: npm run test:sim
+      - name: Build
+        run: npm run build
+
+  vendor:
+    name: vendored engine is unmodified
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      # Offline by design: it compares the tree against the hashes in src/engine/VENDOR.json, so it
+      # gives the same verdict with or without network (see scripts/check-vendor.mjs).
+      - run: npm run check:vendor
+
+  perf:
+    name: CPU-side perf gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npm run perf
+
+  browser:
+    name: browser smoke + conformance + T0 budget
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Install Chromium
+        # Only Chromium: the tiers are measured against a software rasteriser, and Firefox/WebKit
+        # add ten minutes for a signal this job is not looking for. Cross-browser support (N-04) is
+        # a Phase 6 concern with its own matrix.
+        run: npx playwright install --with-deps chromium
+      - name: Smoke, conformance and the T0 perf budget
+        run: npm run smoke
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-traces
+          path: test-results/
+          retention-days: 7
+
+  size:
+    name: payload budget
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run check:size
+
+  docs:
+    name: ADR index
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm run check:adr
