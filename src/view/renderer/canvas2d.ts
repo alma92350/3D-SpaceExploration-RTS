@@ -15,10 +15,18 @@
 // change makes the WebGL path draw something this one cannot, the suite says so on the PR.
 
 import {
-  type CameraState, type FogField, type FrameStats, type InstanceBatch, type MeshData,
+  type CameraState, type FogField, type PowerField, type FrameStats, type InstanceBatch, type MeshData,
   type OverlayLayer, type Renderer, type TerrainMesh, type Tier,
 } from "./port.js";
 import { OWNER_CSS, drawOverlayLayer } from "./overlays2d.js";
+
+/**
+ * The four `POWER_TIERS` bands, on-grid to isolated.
+ *
+ * Green through amber, matching the WebGL shader's ramp: the amber end is where a consumer draws
+ * 2.3× the grid capacity for the same job, so it reads as a warning rather than as decoration.
+ */
+const POWER_BAND_CSS = ["#2c6f43", "#4a7a3a", "#7a7231", "#8a5a25"] as const;
 import { projectToScreen } from "../../input/picking.js";
 
 interface Face {
@@ -37,6 +45,9 @@ export class Canvas2DRenderer implements Renderer {
 
   private fog: FogField | null = null;
   private fogVersion = -1;
+  private power: PowerField | null = null;
+  private powerVersion = -1;
+  private showPower = false;
   private terrainVersion = -1;
   private camera: CameraState | null = null;
   private width = 1280;
@@ -46,7 +57,7 @@ export class Canvas2DRenderer implements Renderer {
 
   private readonly stats: FrameStats = {
     drawCalls: 0, instances: 0, triangles: 0, overlayItems: 0,
-    terrainUploads: 0, fogUploads: 0, cpuMs: 0,
+    terrainUploads: 0, fogUploads: 0, powerUploads: 0, cpuMs: 0,
   };
 
   constructor(canvas: HTMLCanvasElement) {
@@ -77,6 +88,17 @@ export class Canvas2DRenderer implements Renderer {
     this.fogVersion = fog.version;
     this.fog = fog;
     this.stats.fogUploads++;
+  }
+
+  setPower(power: PowerField | null): void {
+    // `power` is the field to *show*; null hides it. The version guard still applies, so toggling
+    // does not re-upload, and the reference is kept so toggling back on is free.
+    if (power === null) { this.showPower = false; return; }
+    this.showPower = true;
+    if (power.version === this.powerVersion) return;
+    this.powerVersion = power.version;
+    this.power = power;
+    this.stats.powerUploads++;
   }
 
   beginFrame(camera: CameraState): void {
@@ -134,7 +156,15 @@ export class Canvas2DRenderer implements Renderer {
 
         // Unexplored is drawn, not skipped — dark enough to hide everything, light enough that the
         // world exists. Same reasoning as the WebGL path's fog ramp; see the comment there.
-        this.ctx.fillStyle = vis === 2 ? "#2a2f3a" : vis === 1 ? "#14171d" : "#0b0d12";
+        //
+        // The power overlay tints the same cell rather than adding a second pass: this renderer is
+        // the T0 fallback, and a second pass over every ground cell is the one cost it cannot take.
+        // Same four bands, same green-to-amber ramp as the shader, so switching renderers does not
+        // change what the grid looks like.
+        const band = this.showPower && this.power ? this.power.state[cy * this.power.cols + cx]! : 0;
+        this.ctx.fillStyle = band > 0
+          ? POWER_BAND_CSS[band - 1]!
+          : vis === 2 ? "#2a2f3a" : vis === 1 ? "#14171d" : "#0b0d12";
         this.ctx.beginPath();
         this.ctx.moveTo(P0.x, P0.y);
         this.ctx.lineTo(P1.x, P1.y);

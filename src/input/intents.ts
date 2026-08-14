@@ -137,6 +137,8 @@ export interface KeyResult {
   /** Camera actions the caller performs; the camera is not sim state, so it is not an intent. */
   readonly camera: "focusBase" | "rotateLeft" | "rotateRight" | null;
   readonly cancel: boolean;
+  /** Flip the power-grid overlay. A view concern, so it is not an intent (nothing in the sim moves). */
+  readonly togglePower?: boolean;
 }
 
 const NO_KEY: KeyResult = { intent: null, mode: null, camera: null, cancel: false };
@@ -152,6 +154,11 @@ export function translateKey(gesture: KeyGesture): KeyResult {
     // showing). Deploy is the only action button a selected colony ship has, so Z lands on it by
     // the same rule a returning player already has in their fingers.
     case "z": return { intent: { kind: "deploy" }, mode: { kind: "none" }, camera: null, cancel: false };
+    // The power grid overlay. `G` for grid — upstream has not spent it, and the alternatives
+    // (`P` for power) collide with nothing today but read as "pause" to anyone coming from another
+    // RTS. It is a toggle rather than a mode because the grid answers "where can I build this
+    // efficiently?", which a player asks while doing something else.
+    case "g": return { ...NO_KEY, togglePower: true };
     case "escape": return { intent: null, mode: { kind: "none" }, camera: null, cancel: true };
     case " ": case "home": return { ...NO_KEY, camera: "focusBase" };
     case ",": return { ...NO_KEY, camera: "rotateLeft" };
