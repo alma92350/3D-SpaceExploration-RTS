@@ -50,11 +50,30 @@ describe("the perf gate's judgement", () => {
   it("tolerates noise up to the slack but not beyond it", () => {
     // The band is `max(baseline × 1.1, baseline + slack)`; at these small numbers the slack is what
     // binds. This pins the intent — "something got materially slower", not "the runner was busy".
-    const justInside = judge(result({ p95: baseline.p95 + REGRESSION_SLACK_MS - 0.01 }), baseline);
+    const justInside = judge(result({ p95: baseline.p95! + REGRESSION_SLACK_MS - 0.01 }), baseline);
     expect(justInside.ok, "a run inside the slack is noise, not a regression").toBe(true);
 
-    const justOutside = judge(result({ p95: baseline.p95 + REGRESSION_SLACK_MS + 0.5 }), baseline);
+    const justOutside = judge(result({ p95: baseline.p95! + REGRESSION_SLACK_MS + 0.5 }), baseline);
     expect(justOutside.ok).toBe(false);
+  });
+
+  it("still gates draw calls when no p95 has been recorded", () => {
+    // A scene can be added before anyone has run it on a machine worth trusting. `p95: null` says
+    // so explicitly instead of leaving the field absent, which used to make the ceiling NaN and
+    // silently delete the check. The structural half — batch count, identical on every machine —
+    // must keep working regardless.
+    const unrecorded = { p95: null, maxDrawCalls: 40, recorded: "2026-08-15", reason: "new scene" };
+    const slow = judge(result({ p95: 30, maxDrawCalls: 40 }), unrecorded);
+    expect(slow.ok, "a slow but in-budget run must not fail on an unrecorded p95").toBe(true);
+
+    const extra = judge(result({ p95: 1, maxDrawCalls: 41 }), unrecorded);
+    expect(extra.ok, "the draw-call check must survive a null p95").toBe(false);
+    expect(extra.problems.join(" ")).toMatch(/instancing regressed/);
+
+    // And the PRD's own budget still applies, because that number is not machine-dependent.
+    const overBudget = judge(result({ p95: 40, maxDrawCalls: 40 }), unrecorded);
+    expect(overBudget.ok).toBe(false);
+    expect(overBudget.problems.join(" ")).toMatch(/exceeds the 33 ms budget/);
   });
 
   it("has no tolerance at all for a draw call appearing", () => {
