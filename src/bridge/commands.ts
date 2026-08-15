@@ -12,6 +12,7 @@ import {
   BUILDINGS, TECHS, UNITS, buy, canAfford, cancelProduction, cancelResearch, canPlaceBuilding,
   deployColonyShip, getEntity, isElectrifiable, issueAttack, issueAttackMove,
   issueBuild, issueCancelRecycle, issueGather, issueHold, issueMove, issuePatrol, issueRecycle,
+  UPGRADES, committedDoctrine, researchUpgrade,
   issueSetLogiPriority, issueSetRally, issueStop, prereqsMet, queueProduction, researchTech,
   sampleTerrain, sell, tradeables,
 } from "../engine/index.js";
@@ -38,7 +39,8 @@ export type Intent =
   | { kind: "recycle"; entityId: string }
   | { kind: "cancelRecycle"; entityId: string }
   | { kind: "trade"; com: string; qty: number; side: "buy" | "sell" }
-  | { kind: "logiPriority"; buildingId: string; priority: "high" | "normal" | "low" };
+  | { kind: "logiPriority"; buildingId: string; priority: "high" | "normal" | "low" }
+  | { kind: "doctrine"; buildingId: string; upgradeId: string };
 
 /**
  * Apply one intent. Returns a player-facing reason when the engine refused, or null on success.
@@ -168,6 +170,21 @@ export function applyIntent(state: State, intent: Intent, galaxy: Galaxy): strin
     case "cancelResearch":
       cancelResearch(state, intent.buildingId, intent.index);
       return null;
+
+    case "doctrine": {
+      const def = UPGRADES[intent.upgradeId];
+      if (!def) return "Unknown upgrade";
+      if (!state.buildings.get(intent.buildingId)) return null;
+      // The refusal has to distinguish the permanent case from the temporary one. `researchUpgrade`
+      // returns a bare `false` whether the player is short of crystals or has closed this path for
+      // the rest of the match, and those two send them to completely different places — so the
+      // doctrine lock is read (never re-derived) to phrase it.
+      if (researchUpgrade(state, intent.buildingId, intent.upgradeId)) return null;
+      const chosen = committedDoctrine(state, state.buildings.get(intent.buildingId)!.owner);
+      return chosen && def.doctrine && chosen !== def.doctrine
+        ? `${def.name} is closed — you committed to the ${chosen} doctrine`
+        : `Cannot research ${def.name} yet`;
+    }
 
     case "recycle": {
       const entity = getEntity(state, intent.entityId);

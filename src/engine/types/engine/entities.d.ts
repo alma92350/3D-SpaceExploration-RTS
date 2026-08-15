@@ -23,3 +23,47 @@ export declare function inputTotal(building: Building): number;
 export declare function inputCapOf(type: string): number;
 /** Whether a building type can take the +30% electrification upgrade. The engine's own list. */
 export declare function isElectrifiable(type: string): boolean;
+
+/**
+ * Refinery doctrine upgrades (P2-T12). Three paths — assault, bulwark, logistics — of three tiers
+ * each, plus `hardEdge`, which is `aiOnly` and carries NO `doctrine`. That absence is load-bearing:
+ * `committedDoctrine` guards on `.doctrine` rather than on membership precisely so a Hard-difficulty
+ * AI's seeded edge cannot read as a doctrine commitment, and anything iterating this table has to
+ * make the same distinction.
+ *
+ * The effect fields are the engine's own numbers, applied through `upgradeMult`. A panel states
+ * them; it never recomputes them.
+ */
+export interface UpgradeDef {
+  id: string;
+  name: string;
+  doctrine?: "assault" | "bulwark" | "logistics";
+  tier?: number;
+  ico?: string;
+  cost?: Resources;
+  time?: number;
+  requires?: string[];
+  desc?: string;
+  aiOnly?: boolean;
+  damageDealtMult?: number;
+  damageTakenMult?: number;
+  attackCooldownMult?: number;
+  chaseSpeedMult?: number;
+  gatherYieldMult?: number;
+  produceTimeMult?: number;
+  regenRate?: number;
+  regenDelay?: number;
+  [field: string]: unknown;
+}
+
+export declare const UPGRADES: Record<string, UpgradeDef>;
+
+/** The multiplier an owner's researched upgrades apply to `field`, 1 when none do. */
+export declare function upgradeMult(upgrades: Record<string, unknown>, field: string): number;
+
+/**
+ * The doctrine an owner has committed to — researched OR merely queued at a Refinery — or undefined.
+ * Committing is irreversible and locks out the other two, which is the trade-off a panel must state
+ * BEFORE the click, not after it.
+ */
+export declare function committedDoctrine(state: State, owner: OwnerId): string | undefined;

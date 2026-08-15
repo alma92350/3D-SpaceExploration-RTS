@@ -38,7 +38,12 @@ export {
   issueServiceBuilding, issueRepair,
 } from "@engine/engine/commands.js";
 
-export { BUILD_REACH, queueProduction, cancelProduction } from "@engine/engine/production.js";
+export { BUILD_REACH, queueProduction, cancelProduction, researchUpgrade } from "@engine/engine/production.js";
+
+// Refinery doctrines (P2-T12). `committedDoctrine` is the irreversible half: once an owner has
+// researched OR merely queued an upgrade on one path, the other two are closed for the match.
+export { UPGRADES, upgradeMult, committedDoctrine } from "@engine/engine/entities.js";
+export type { UpgradeDef } from "@engine/engine/entities.js";
 
 export { canPlaceBuilding, findPlacement, radiusOf } from "@engine/engine/colliders.js";
 
