@@ -118,4 +118,10 @@ export {
 } from "@engine/engine/rig.js";
 export type { RigInfo, RigSurvey, YieldTier } from "@engine/engine/rig.js";
 
+// The AI's own intel (P3-T15). Exported so a test can ask what the AI knows through the AI's own
+// fog, rather than asserting fairness from the outside and hoping.
+export {
+  INTEL_FADE, INTEL_FULL, readEnemy, sightEnemy, updateIntel,
+} from "@engine/engine/aiIntel.js";
+
 export { PLANETS, COM } from "@engine/data.js";
