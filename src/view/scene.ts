@@ -15,7 +15,7 @@
 // player READS, so they must survive the drop to T0 and to Canvas2D.
 
 import {
-  FLAG_BUILDING_KIND, FLAG_CONSTRUCTING, FLAG_SELECTED, type Snapshot,
+  FLAG_BUILDING_KIND, FLAG_CARRYING, FLAG_CONSTRUCTING, FLAG_SELECTED, type Snapshot,
 } from "../bridge/snapshot.js";
 import { type ElevationField, elevation } from "./terrain/elevation.js";
 import { interpolatePositions } from "./interpolate.js";
@@ -171,7 +171,24 @@ export class SceneComposer {
       const scale = isBuilding
         ? (constructing ? 0.35 + 0.65 * progress : 1)
         : 1;
-      const shade = constructing ? 0.45 + 0.35 * progress : 1;
+      // Shade carries construction for buildings and CARGO for units, and the two never collide
+      // because a building is never carrying and a unit is never constructing (P2-T05).
+      //
+      // A laden hauler brightens with how full its hold is, not merely with whether it is carrying:
+      // the snapshot already computes a 0..1 fullness, and collapsing that to a boolean would lose
+      // the difference between a hauler on its way home and one that has barely started. It is a
+      // per-instance attribute rather than a second "laden" mesh, which would have cost a draw call
+      // per owner to say one number (ADR-0006: uniqueness comes from instance attributes).
+      const shade = constructing
+        ? 0.45 + 0.35 * progress
+        : !isBuilding && (flags & FLAG_CARRYING) !== 0
+          // Downward, not upward. Brightening past 1 was the first instinct and it would have put
+          // 1.35 into a channel the port documents as 0..1 — a contract three implementations read,
+          // where WebGL would have brightened and Canvas2D might well have clamped, so the two
+          // renderers would disagree about the same frame. A laden hull sitting darker and heavier
+          // reads just as well and needs no contract change.
+          ? 1 - 0.38 * progress
+          : 1;
 
       if (lod === LOD_IMPOSTER) {
         // The imposter is a unit quad; its scale carries the entity's real size so a distant
