@@ -62,11 +62,24 @@ export const ENGINES: readonly EngineExpectation[] = [
   {
     project: "firefox-software",
     install: "firefox",
-    webgl2: "unverified",
+    // **Observed on the first CI run, and it is NOT what the prefs below were trying to buy.**
+    // Firefox reported no WebGL2 on the GitHub runner despite `webgl.force-enabled` and
+    // `webgl.enable-webgl2`, so the app took the Canvas2D fallback — correctly — and the
+    // conformance suite's `webgl2` case skipped with its reason.
+    //
+    // Pinned `false` because that is what this environment answers, and the pin's job is to make a
+    // CHANGE red: the day a runner or a Firefox release starts providing it, this goes red saying
+    // the matrix is under-claiming, which is the notice worth having. It is a fact about headless
+    // CI, not a claim that Firefox users have no WebGL2 — real Firefox has had it for years, and
+    // that is exactly why the pin needs the distinction written next to it rather than inferred
+    // from a bare `false`.
+    webgl2: false,
     why: "Firefox blocklists its GPU path on a headless runner and would otherwise report no WebGL "
        + "at all, so `webgl.force-enabled` overrides the blocklist and `layers.acceleration.disabled` "
        + "pins it to the software backend — the same deliberate choice Chromium's `--use-gl=swiftshader` "
-       + "makes, spelled in Firefox's vocabulary.",
+       + "makes, spelled in Firefox's vocabulary. Measured outcome: the override is not enough on the "
+       + "GitHub runner, so this project exercises the CANVAS2D half of N-04 — which is the half no "
+       + "other project covers, and is worth more than a third WebGL run.",
   },
   {
     project: "webkit",
