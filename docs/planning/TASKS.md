@@ -146,6 +146,71 @@ are from the vendored engine, not from the PRD's prose:
 | P2-T19 | Determinism fixture extended with economy orders | DONE | P2-T03 | The recorded replay includes economy orders and hashes identically; each one provably moves the hash | Six new orders — trade, logistics priority, pause, resume, recycle, cancel-recycle — across 1 400 ticks, 20 orders, 13 intent kinds. **Two things had to be fixed before the fixture actually covered them.** (1) `hashState` hashed only physical fields, so `paused`, `logiPriority` and `recycling` could stop reaching the engine with the hash unmoved — a green fixture proving nothing about the commands it issues, one layer below the failure the recorder itself was built to prevent. The economy fields and both buffers are hashed now. (2) The recycle/cancel pair **cancels out**: with `recycle` broken, `cancelRecycle` is a no-op and the end state is byte-identical. Found by dropping each order from the fixture and replaying — `recycle` alone came back NOT COVERED — and fixed with a second, uncancelled recycle at tick 1300 that leaves the Barracks recycling at the final tick. All five now provably move the hash. **Research is deliberately absent**: it needs a Datacenter (200 ore) and crystals, and the recorder cannot inject resources because the fixture records only a seed and a script — anything handed to the player would not exist on replay. Covering it needs a longer scenario, not a special case |
 | P2-T20 | Phase 2 playtest script + one recorded session | PARTIAL | P2-T09 … P2-T16 | Script exists; a tester runs the full chain to machinery without help, or a follow-up task is filed | **Script written (`docs/playtests/economy.md`), UNRUN under ADR-0011** — same disposition as P1-T24. Written now rather than reconstructed later, while the reasoning behind each cue is still fresh. It is aimed at the three legibility debts Phase 2 took on to buy its draw-call budget, each recorded in an ADR that admitted the cost and deferred the measurement to exactly here: thirteen entity types sharing a silhouette (ADR-0013, ADR-0014), metallic vs crystalline deposits (ADR-0014), and six status glyphs being a *vocabulary* rather than a self-evident cue (ADR-0015). **Two starting points, and both are required**: a cold start measures discoverability, a prepared save measures whether a going concern is readable — half the script is unreachable inside an hour from cold, and a tester who never reaches the Fabricator tells us nothing about it. The prepared save carries one starved Smelter, one unpowered Assembler, one idle Barracks and a Datacenter mid-research, handed over with no explanation. Three numeric gates written in advance so a result cannot be argued into a pass afterwards: E1 the colony reads, E2 the vocabulary is learnable, E3 the silhouette debt is survivable — and E3's failure trigger is an ADR with a measurement, not a task, because the budget that forced ADR-0013 has not moved. **The fuel trap is called out as the most likely place for a session to die**: a Reactor grants nothing until fuel reaches its own larder, so a freshly built one is *correctly* dead, and the badge is the only thing that says so |
 
+## Phase 2 exit gate — status
+
+Checked against PRD §5 (Phase 2): *"a player can run the full 2D economy in 3D with no panel
+missing; every economy panel has a logic test; perf budgets hold with 300 buildings on screen."*
+
+| Criterion | Status | Evidence |
+|---|---|---|
+| No panel missing | **PASS** | Eight panel models: building detail, market, research, doctrines, logistics, supply/Habitats, repair + recycling, Plasma Rig survey + yield. Every screen the 2D client's economy has |
+| Every economy panel has a logic test | **PASS** | All eight are pure `(state \| snapshot) → model` functions tested without a DOM (Q-10, ADR-0012 §4). **344 unit tests**, 15 browser tests |
+| Perf holds with 300 buildings | **PASS, measured** | GitHub runner, 300 buildings across all 29 types plus 200 units: **p95 21.95 ms against 33 ms**. Local re-measure after the Phase 2 additions: **p95 19.5 ms**, 16 draw calls, sim 0.62 ms/frame |
+| Draw calls inside ADR-0012's budget | **PASS, measured** | **28 building batches, exactly the ceiling** (`test/view/economy-draw-calls.test.ts`); whole frame inside its derived ceiling (ADR-0014) |
+| Determinism still bit-identical | **PASS in CI** | 20 orders, 13 intent kinds, 1 400 ticks; every economy order provably moves the hash (P2-T19) |
+| Both renderers draw everything | **PASS** | Conformance green against WebGL2, Canvas2D and the recording fake, including the new `status` badge |
+| The economy is *legible* | **NOT MEASURED** | `docs/playtests/economy.md` is written and unrun (ADR-0011). This is the criterion the phase actually rests on |
+
+**The legibility debt, counted from the code rather than from the ADRs.** ADR-0014 put the total at
+"thirteen entity types share a silhouette". Counting `meshIdForType` over the real roster says
+otherwise, and the difference is not a rounding error — it is a category the ADRs never named:
+
+| | Types | Meshes | Sharing | Kind |
+|---|---|---|---|---|
+| Buildings | 29 | 14 | **21** | Deliberate families (ADR-0013) |
+| Units | 18 | 6 | **14** | 4 freighters, deliberate (ADR-0014 §1) + a 10-strong `worker` family, **9 of them with no mesh at all** |
+| Commodities → deposits | 23 | 2 | **23** | Deliberate (ADR-0014 §1) |
+
+The nine-building `factory` family is the one ADR-0013 argued for; `fortress` (3), `powerplant` (3),
+`works`, `port` and `civic` (2 each) are the rest of it, so the buildings figure is **21, not 9**.
+
+**The finding: nine units render as Workers.** `ranger`, `breacher`, `dreadnought`, `mender`,
+`wraith`, `aegis`, `colossus`, `leviathan` and `heliumbomb` have no mesh of their own, so
+`meshIdForType` falls back to `worker`. That is not a silhouette family — nobody decided a
+Dreadnought should look like a Worker — it is the fallback firing on a roster Phase 1 only built the
+MVP of. It is *in scope for Phase 3* ("the full roster"), and it is recorded here because the gate is
+where an unmeasured fallback should stop being invisible.
+
+**It also puts a number on Phase 3's budget problem, now, rather than at the end of it.** ADR-0014's
+derived ceiling is computed over today's roster, where those nine share the Worker's mesh. Giving
+each a real silhouette costs **two batches apiece — one per owner — so 18 more** at mesh LOD (the
+imposter is a single shared mesh, so distance costs nothing extra). The 300-building Phase 2 scene
+measures 27–28. The derivation will move with the roster, which is what ADR-0014 built it to do;
+what it will not do is find the budget. That argument belongs in Phase 3, with a measurement,
+exactly as ADR-0013's did.
+
+Every collision above is a bet that the build menu and the panels carry a distinction the field no
+longer does, and every one is unmeasured until the playtest runs. E3 in `docs/playtests/economy.md`
+is the check, and its failure trigger is an ADR with a measurement rather than a task, because the
+budget that forced the families has not moved.
+
+**Six status glyphs (ADR-0015) are a vocabulary a player must be taught.** Shape is colour-blind-safe
+and it is not self-evident. E2 measures it; failing it does **not** mean adding colour.
+
+**What Phase 2 found that Phase 1 could not.** Four bugs that were green before they were looked at,
+all of the same shape — a test and an implementation agreeing with each other about something the
+engine never said:
+
+1. Cargo fullness divided by a hardcoded 10, the *Worker's* capacity. Every logistics unit read as a
+   full hold from its first crate, and P2-T05's own test agreed with it (P2-T07).
+2. `countLogistics` and `countRepairJobs` are both **mutators** that stamp tallies onto sim entities.
+   Two panels nearly wrote sim state on a frame, two phases apart (P2-T13, P2-T15).
+3. `rigSurvey`'s node-list argument: passing all nodes compiles, runs, and leaks every unscouted
+   deposit on the map through a build ghost (P2-T16).
+4. The determinism fixture hashed only physical fields, so `paused`, `logiPriority` and `recycling`
+   could stop reaching the engine with the hash unmoved (P2-T19).
+
+
 ## Phase 3 — Combat and the opponent
 
 Not yet decomposed. Headings: full unit roster, combat feedback, wreckage and craters, turret tiers,
