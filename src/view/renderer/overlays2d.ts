@@ -172,6 +172,60 @@ export function drawOverlayLayer(
       break;
     }
 
+    case "tracer": {
+      // A shot, fading out (P3-T06). Drawn in the shooter's own colour — but the colour is not the
+      // cue: a tracer is a LINE, and nothing else in the overlay vocabulary is one except the rally
+      // path, which is dashed and starts at a building the player selected.
+      ctx.lineWidth = 1.6;
+      ctx.lineCap = "round";
+      for (let i = 0; i < layer.count; i++) {
+        const off = i * layer.stride;
+        projectToScreen(camera, d[off]!, d[off + 1]!, d[off + 2]!, projected);
+        if (projected.behind) continue;
+        const sx = projected.x;
+        const sy = projected.y;
+        projectToScreen(camera, d[off + 3]!, d[off + 4]!, d[off + 5]!, projected);
+        if (projected.behind) continue;
+        ctx.globalAlpha = Math.max(0, Math.min(1, d[off + 6]!));
+        ctx.strokeStyle = OWNER_CSS[d[off + 7]! | 0] ?? OWNER_CSS[2]!;
+        ctx.beginPath();
+        ctx.moveTo(sx, sy);
+        ctx.lineTo(projected.x, projected.y);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+      break;
+    }
+
+    case "blast": {
+      // Something died here. An expanding ring that fades, so the eye is drawn to the moment rather
+      // than to a static dot — motion is the cue, which is the one thing a still frame cannot fake
+      // and the reason this is not just a coloured mark.
+      ctx.lineWidth = 1.8;
+      for (let i = 0; i < layer.count; i++) {
+        const off = i * layer.stride;
+        projectToScreen(camera, d[off]!, d[off + 1]!, d[off + 2]!, projected);
+        if (projected.behind) continue;
+        const progress = Math.max(0, Math.min(1, d[off + 3]!));
+        const size = (d[off + 4]! ? 16 : 8) * (0.35 + progress);
+        ctx.globalAlpha = 1 - progress;
+        ctx.strokeStyle = OWNER_CSS[d[off + 5]! | 0] ?? OWNER_CSS[2]!;
+        ctx.beginPath();
+        ctx.arc(projected.x, projected.y, size, 0, Math.PI * 2);
+        ctx.stroke();
+        // A cross through it, so the mark is not a circle alone — a ring at a distance reads as a
+        // selection, and this is the opposite news (N-05: shape carries meaning, not colour).
+        ctx.beginPath();
+        ctx.moveTo(projected.x - size * 0.6, projected.y - size * 0.6);
+        ctx.lineTo(projected.x + size * 0.6, projected.y + size * 0.6);
+        ctx.moveTo(projected.x + size * 0.6, projected.y - size * 0.6);
+        ctx.lineTo(projected.x - size * 0.6, projected.y + size * 0.6);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+      break;
+    }
+
     case "status": {
       // The building-state badge (P2-T08). One stroke colour for every state on purpose: the state
       // is carried by the SHAPE (N-05), and giving each glyph its own colour would let a future

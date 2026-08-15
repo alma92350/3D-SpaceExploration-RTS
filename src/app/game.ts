@@ -100,7 +100,12 @@ export class Game {
     });
 
     this.loop = new FixedStepLoop({
-      step: (dt) => this.bridge.step(dt),
+      step: (dt) => {
+        this.bridge.step(dt);
+        // Once per SIM step, not per frame: the snapshot object is the same across the frames
+        // between ticks, so ingesting from `renderFrame` would replay every shot three times.
+        this.composer.ingestTick(this.bridge.snapshot);
+      },
       render: (alpha, frameMs) => this.renderFrame(alpha, frameMs),
     });
 
@@ -171,6 +176,7 @@ export class Game {
   private renderFrame(alpha: number, frameMs: number): void {
     const snap = this.bridge.snapshot;
     this.applyContinuousPan(frameMs / 1000);
+    this.composer.ageEffects(frameMs / 1000);
     this.updateGhost();
 
     const rect = this.elements.viewport.getBoundingClientRect();

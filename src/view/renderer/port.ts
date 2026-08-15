@@ -118,7 +118,9 @@ export type OverlayKind =
   | "ghost"        // x, y, z, radius, valid(0|1), reach
   | "waypoint"     // x, y, z, kind
   | "status"       // x, y, z, concern, activity
-  | "aura";        // x, y, z, radius, ownerSlot
+  | "aura"         // x, y, z, radius, ownerSlot
+  | "tracer"       // x0, y0, z0, x1, y1, z1, fade, ownerSlot
+  | "blast";       // x, y, z, progress, big(0|1), ownerSlot
 
 export interface OverlayLayer {
   readonly kind: OverlayKind;
@@ -233,4 +235,9 @@ export const OVERLAY_STRIDE: Readonly<Record<OverlayKind, number>> = {
   // The guard aura (P3-T04): a ground ring at the engine's own `guardAura.range`. Owner rides along
   // because an enemy bubble and a friendly one call for opposite decisions.
   aura: 5,
+  // Combat feedback (P3-T06). Two kinds because they are two geometries: a tracer is a line
+  // between two points, a blast is a point with a radius. Merging them would mean a stride with
+  // dead fields in half its rows.
+  tracer: 8,
+  blast: 6,
 };

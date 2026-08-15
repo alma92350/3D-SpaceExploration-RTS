@@ -1,14 +1,14 @@
 {
   "T0": {
     "p95": 2.77,
-    "maxDrawCalls": 16,
+    "maxDrawCalls": 17,
     "recorded": "2026-08-15",
-    "reason": "Draw calls 15 -> 16 for the P2-T08 building-state badge (ADR-0015), which adds one `status` overlay layer to any frame containing a badge. Re-recorded deliberately, per judge()'s own rule, and ONLY the draw-call count: p95 is untouched at Phase 1's number because nothing got slower. Measured rather than assumed — disabling the badge push and re-running returns T0 to exactly 15, T2 to 17 and P2 to 27, so the delta is the overlay layer and nothing else. The badge is filtered at push time, so it is one layer for the whole frame and not one per building: 6 badges on 80 buildings here, 64 on 300 in the P2 scene."
+    "reason": "Draw calls 16 -> 17 for P3-T06's combat-feedback tracers. Re-recorded deliberately, per judge()'s own rule, and ONLY the draw-call count: p95 is untouched because nothing got slower. The +1 is one `tracer` overlay layer for the whole frame \u2014 measured at 67 tracers live in this scene, drawn in a single call. NOTE: this scene also exercises a second new kind, `blast`, and it never fires here \u2014 `PerfScene` extracts with its own extractor AFTER `bridge.step` has already drained `state.events`, so deaths are structurally invisible to the harness. Tracers are gated by the perf run; death marks are NOT, and P3-T16 owns closing that."
   },
   "T2": {
     "p95": 5.16,
-    "maxDrawCalls": 18,
+    "maxDrawCalls": 19,
     "recorded": "2026-08-15",
-    "reason": "Draw calls 17 -> 18 for the P2-T08 building-state badge (ADR-0015). Same single `status` overlay layer as T0, same measurement: with the badge push disabled this scene returns to exactly 17. p95 deliberately NOT re-recorded — the CI runner measured 5.10 ms against this 5.16 ms baseline, i.e. faster, so the local host's higher reading is the machine artefact judge() warns about and writing it here would blind the gate."
+    "reason": "Draw calls 18 -> 19 for P3-T06's combat-feedback tracers \u2014 the same single `tracer` overlay layer as T0, with 246 tracers live at peak in this scene and still one draw call. p95 deliberately NOT re-recorded: the CI runner measured 5.10 ms against this 5.16 ms baseline while the local host reports 8+ ms on identical commits, which is the machine artefact judge() warns about."
   }
 }

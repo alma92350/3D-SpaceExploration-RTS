@@ -89,6 +89,10 @@ export class PerfScene {
     this.extractor.extract(this.bridge.state, {
       viewer: "player", credits: 0, supplyUsed: 0, supplyCap: 0,
     });
+    // Combat feedback is ingested here and nowhere else, exactly as `game.ts` does it (P3-T06).
+    // Without this line the perf gate would never see a tracer and would silently report that
+    // combat feedback is free — the harness has to run the same path the game runs.
+    this.composer.ingestTick(this.extractor.snapshot);
   }
 
   /**
@@ -99,6 +103,8 @@ export class PerfScene {
    */
   render(renderer: Renderer, alpha: number): FrameStats {
     const t = this.frame++ / 60;
+    // A frame's worth of effect ageing, as the real loop does before composing.
+    this.composer.ageEffects(1 / 60);
     const map = this.bridge.state.map;
     this.rig.focusOn(
       map.width * (0.5 + 0.35 * Math.sin(t * 0.35)),
