@@ -157,6 +157,34 @@ describe("engine declarations", () => {
     expect(rig.digCount).toBeGreaterThan(0);
   });
 
+  it("a guard aura is really on both the unit and the building that project one", () => {
+    // Declared for P3-T04, which draws the radius. Both defs carry the field and the two ranges
+    // deliberately differ, so a view that hardcoded either would be wrong about the other.
+    expect(engine.UNITS.aegis?.guardAura?.range, "UNITS.aegis.guardAura is declared but absent").toBe(96);
+    expect(engine.BUILDINGS.aegisbastion?.guardAura?.range, "the Bastion's aura is declared but absent").toBe(130);
+    expect(engine.BUILDINGS.aegisbastion?.attack, "the Aegis Bastion must have NO attack").toBeUndefined();
+    for (const g of [engine.UNITS.aegis?.guardAura, engine.BUILDINGS.aegisbastion?.guardAura]) {
+      expect(g?.damageTakenMult, "a multiplier that is not below 1 is not a protective aura").toBeLessThan(1);
+    }
+  });
+
+  it("a real tick fills `state.anvils`, which the aura overlay reads", () => {
+    // Transient and rebuilt every tick by `collectAnvils`, so it does not exist until the sim runs.
+    const galaxy = engine.createGalaxy({ seed: FIXED_SEED, startId: "helix" });
+    const state = engine.activeState(galaxy);
+    const base = state.map.bases.player;
+    const bastion = engine.makeBuilding("aegisbastion", "player", base.x + 60, base.y);
+    state.buildings.set(bastion.id, bastion);
+    engine.stepGalaxy(galaxy, 0.05);
+
+    const mine = (state.anvils ?? []).find((a) => a.id === bastion.id);
+    expect(mine, "State.anvils is declared but the engine never filled it").toBeDefined();
+    for (const field of ["id", "owner", "x", "y", "range", "mult"]) {
+      expect(mine, `anvil.${field} is declared but absent`).toHaveProperty(field);
+    }
+    expect(mine!.range).toBe(130);
+  });
+
   it("the MVP roster exists in the engine's own definitions", () => {
     // The nine types Phase 1 draws (PRD §5, Phase 1). A typo here would surface as a missing mesh
     // at runtime; here it is a named failure.

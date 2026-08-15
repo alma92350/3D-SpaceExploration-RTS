@@ -166,6 +166,13 @@ declare global {
     canGather?: boolean;
     /** Freighters and haulers: how much freight they carry. Absent for everything else. */
     cargoHold?: number;
+    /**
+     * A protective bubble: allies inside `range` take `damageTakenMult` of the damage they would.
+     * The Aegis unit carries one (96 / 0.82) and so does the Aegis Bastion building (130 / 0.8) —
+     * `collectAnvils` folds both into `state.anvils` with one shape, which is why they share a
+     * declaration here rather than each getting their own.
+     */
+    guardAura?: { range: number; damageTakenMult: number };
     buildCategories?: string[];
     odysseyOnly?: boolean;
     requires?: string[];
@@ -187,6 +194,8 @@ declare global {
     attack?: number;
     range?: number;
     odysseyOnly?: boolean;
+    /** The Aegis Bastion's protective bubble. It has NO `attack` — the aura is its whole function. */
+    guardAura?: { range: number; damageTakenMult: number };
     // --- economy (Phase 2) ---
     /** Grid capacity this building contributes, if it is a power source. */
     energyGrants?: number;
@@ -231,6 +240,13 @@ declare global {
     fogs: Record<OwnerId, Fog>;
     fog: Fog;
     fogAI: Fog;
+    /**
+     * This tick's guard-aura projectors — the Aegis unit and the Aegis Bastion — rebuilt from live
+     * positions by `collectAnvils` (engine/sim.js) and never serialized. `range` is the aura's
+     * radius in world units and `mult` the damage-taken multiplier it applies; a still-constructing
+     * bastion is already excluded, so a consumer must not re-derive either.
+     */
+    anvils?: Array<{ id: string; owner: OwnerId; x: number; y: number; range: number; mult: number }>;
     events: SimEvent[];
     /** Odyssey only: the world's commodity market (`engine/market.js`). */
     market: MarketState;

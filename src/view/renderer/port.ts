@@ -117,7 +117,8 @@ export type OverlayKind =
   | "rally"        // x0, y0, z0, x1, y1, z1
   | "ghost"        // x, y, z, radius, valid(0|1), reach
   | "waypoint"     // x, y, z, kind
-  | "status";      // x, y, z, concern, activity
+  | "status"       // x, y, z, concern, activity
+  | "aura";        // x, y, z, radius, ownerSlot
 
 export interface OverlayLayer {
   readonly kind: OverlayKind;
@@ -229,4 +230,7 @@ export const OVERLAY_STRIDE: Readonly<Record<OverlayKind, number>> = {
   // ours; packing them into a single number would mean inventing a value one past the engine's
   // enum, which breaks silently the day upstream adds a seventh concern.
   status: 5,
+  // The guard aura (P3-T04): a ground ring at the engine's own `guardAura.range`. Owner rides along
+  // because an enemy bubble and a friendly one call for opposite decisions.
+  aura: 5,
 };
