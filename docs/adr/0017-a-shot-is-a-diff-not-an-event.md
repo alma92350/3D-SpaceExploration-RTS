@@ -6,14 +6,42 @@
 **Answers:** Q-12
 **Relates to:** ADR-0006, ADR-0008, ADR-0012 §5, P3-T05, P3-T06, P3-T07
 
+## Correction — the premise below is false (P5-T15, PARITY §7.1)
+
+> **This ADR's stated premise is wrong, and the decision it justified has a measured defect.**
+>
+> `engine/combat.js:187` pushes an **`attackHit`** event on every landed hit, carrying `x`, `y`,
+> `fromX`, `fromY`, `unitType`, `owner`, and the three cue flags P5-T15 now draws. So "there is no
+> such event" was never true, and the sentence in the Decision that allows a derivation *"for the
+> stated reason that there is nothing to ask instead"* has no reason left standing.
+>
+> **What it costs, measured:** `extractShots` resolves a shot's endpoint from `unit.autoTarget`, and
+> `combat.js:46` takes an explicitly ordered attack's target straight off `unit.order` — leaving the
+> `if (!targetId)` block, the only place in the engine that ever writes `autoTarget`, unreachable.
+> A Skiff right-clicked onto a Worker fired **10 shots, drew 0 tracers and logged 10 `dropped`**.
+> Right-click-to-attack is the most common combat order in an RTS and it has produced no visual
+> feedback since Phase 3, against a `dropped` counter this ADR says must stay at zero.
+>
+> **The decision stands for now and is not quietly patched.** A stopgap
+> (`order.targetId ?? autoTarget`) would still lose the *killing* shot, because `combat.js` nulls
+> the order on the kill — taking `dropped` from 10 to about 1 and disguising ordered attacks as the
+> ordinary 12.9% case below, which is worse than the bug. The real fix is to read `attackHit`
+> instead of diffing `attackTimer`: it carries **both endpoints**, pushed *before* the corpse is
+> removed, so it answers point 4 below — the whole reason this design exists — and this defect at
+> once. That is a new decision rather than a patch, and it is filed as **P6-T01**.
+>
+> Everything else here still holds: points 1, 2 and 3 were measured and remain true, the tracer path
+> is correct for every auto-acquired target, and no part of it has been touched.
+
 ## Context
 
 PRD §5 asks Phase 3 for "combat feedback (tracers, impacts, death)" and adds an exit criterion that
 "no combat feedback allocates per frame". The obvious implementation is to consume an engine event
 per shot.
 
-**There is no such event.** The simulation emits thirteen event types in total and exactly one of
-them is about combat — `entityKilled`. No shot, no impact, no damage-dealt. Whatever draws a tracer
+**There is no such event.** ~~The simulation emits thirteen event types in total and exactly one of
+them is about combat — `entityKilled`. No shot, no impact, no damage-dealt.~~ **This is false — see
+the correction above.** `attackHit` exists and carries both endpoints. Whatever draws a tracer
 has to derive the fact that a shot happened.
 
 Four things were measured before deciding, on a 120-unit fight over 400 ticks (20 s):

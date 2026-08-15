@@ -6,14 +6,15 @@ client, and not written from the PRD's prose — both of those have been wrong a
 before (Phase 2 found the recipe chain is nine, not seven; Phase 3 found the PRD listing veterancy
 chevrons that Phase 1 had already built).
 
-**The count is [117 rows: 100 present, 4 absent, 13 out of scope](#4-the-count)** — 76/29/12 when
+**The count is [117 rows: 104 present, 0 absent, 13 out of scope](#4-the-count)** — 76/29/12 when
 this document was drafted, moved by Phase 5 closing nine of §5.6's eleven. A checklist that came out
 mostly ticked on its first draft would be evidence that it had been written by optimism rather than
 by enumeration, so the number is the point of the document, not an embarrassment in it. **§4 also
 records that its own first draft reported three mutually inconsistent totals and now carries the
 command that counts it**, which is the more useful lesson. The number that mattered most was
 **§5.2's 18 of 28** — ten of the engine's own orders with no gesture, no button and no intent — and
-it is now **28 of 28**. The four rows still absent are one row's worth of work, in flight.
+it is now **28 of 28**, and **no row is ABSENT** — which is what §3 says "fully ticked" means. The
+thirteen that are OUT each cite the decision that made them out, twelve of them from Phase 0.
 
 ---
 
@@ -142,8 +143,8 @@ grep -cE '^\| [0-9]+ \|.*\| PRESENT \|$' docs/planning/PARITY.md   # and ABSENT,
 
 | | Rows |
 |---|---|
-| **PRESENT** | **100** |
-| **ABSENT** | **4** |
+| **PRESENT** | **104** |
+| **ABSENT** | **0** |
 | **OUT of scope** | **13** |
 | **Total** | **117** |
 
@@ -152,10 +153,10 @@ stood when this document was first written, at the start of Phase 5:
 
 | Area | Present | Absent | Out | Was | Reads |
 |---|---|---|---|---|---|
-| §5.1 The world and the view | 11 | 1 | — | 11 / 1 | The rally line, which P5-T15 is drawing |
+| §5.1 The world and the view | 12 | — | — | 11 / 1 | Closed |
 | §5.2 Orders | 28 | — | — | 18 / 10 | **Closed. This was the number the file was written to expose** |
 | §5.3 The economy | 22 | — | — | 20 / 2 | Closed. Both gaps were re-derivations that had rotted, not missing systems |
-| §5.4 Combat | 16 | 3 | — | 16 / 3 | Three payload fields on an event nothing reads — P5-T15's |
+| §5.4 Combat | 19 | — | — | 16 / 3 | Closed. The three were payload fields on an event nothing read |
 | §5.5 The galaxy | 13 | — | — | 11 / 2 | Closed |
 | §5.6 The long game | 10 | — | 1 | 0 / 11 | Closed. Audio is OUT under ADR-0020 with its reopening condition named |
 | §5.7 Out of scope | — | — | 12 | — | Each cites the decision that made it out |
@@ -183,7 +184,7 @@ trace** (the thing a reviewer can check, or the reason there is nothing to check
 | 5 | Selection rings | `radiusOf` | `scene.ts` `selection` overlay | PRESENT |
 | 6 | Health bars | `snap.entities.hp/maxHp` | `scene.ts` `health` overlay | PRESENT |
 | 7 | Veterancy chevrons | `VETERANCY_RANKS`, `rankMults` | `scene.ts:274` pushes `chevron` on `e.rank[i] > 0` | PRESENT |
-| 8 | **Rally lines** | `issueSetRally` writes `building.rally` | **The `rally` overlay kind exists in `renderer/port.ts` and both renderers draw it — and `SceneComposer` never pushes one.** The only caller is `view/landing.ts`, drawing a line to a landing point. A rally line for a rally point no player can set | ABSENT |
+| 8 | **Rally lines** | `issueSetRally` writes `building.rally` | `snap.rally` ← `building.rally`; `SceneComposer.pushRally` fills the `rally` overlay both renderers already drew and the composer had never pushed. Three filters, each an engine fact rather than a rule re-derived here: viewer-owned (buildings cross on *explored* memory, so without it a scouted enemy factory keeps a live line running out of it), `BUILDINGS[type].produces` (upstream's own — five defs say a building without it stays "out of the rally-point UI and rally rendering"), and selected-only (Q-07's rule: every building is minted with a rally at `x+60,y+60`, so drawing all of them paints an identical diagonal stub out of every factory). That default is not a null — `updateProduction` really sends units there — so drawing it is honest, and it is how a player learns the rally point exists. `nodeId` deliberately does not cross: it changes what happens on arrival, not where the line goes | PRESENT |
 | 9 | Build ghost with validity shading | `canPlaceBuilding`, `sampleTerrain`, `prereqsMet` | `checkPlacement`; P1-T18 sweeps the map verdict-for-verdict | PRESENT |
 | 10 | Canvas2D fallback renderer | — | `renderer/canvas2d.ts`; conformance suite green in all three implementations | PRESENT |
 | 11 | Graphics tier, auto-detected and overridable | — | `main.ts` tier picker, persisted through `saveSettings` | PRESENT |
@@ -258,9 +259,9 @@ This is the table that decides the phase. Each row is one verb the 2D game gives
 | 63 | Tracers — who is shooting whom | derived from `attackTimer` (ADR-0017) | `snap.shots`; `view/effects.ts` | PRESENT |
 | 64 | Impacts / blast rings | derived | `blast` overlay | PRESENT |
 | 65 | Deaths | `entityKilled` event | `snap.deaths`; P3-T07 | PRESENT |
-| 66 | **A siege hit reading heavier than a normal one** | `attackHit.heavy` — `def.bonusVsBuildings && target.kind === "building"` | **Nothing reads it.** The event is not consumed at all (see §7.1) | ABSENT |
-| 67 | **A counter-triangle hit telegraphing** | `attackHit.bonus` — `def.bonusVs[target.type]` | Nothing reads it. This is the cue that teaches a player the counter system without a manual | ABSENT |
-| 68 | **A splash impact ring at the weapon's own radius** | `attackHit.splashRadius` — `def.splash.radius` | Nothing reads it. `combat.js:169` says it exists "so `renderEffects.js` can draw an impact ring". The Colossus is the first unit with splash and its hits look like everyone else's | ABSENT |
+| 66 | **A siege hit reading heavier than a normal one** | `attackHit.heavy` — `def.bonusVsBuildings && target.kind === "building"` | `snap.impacts.heavy` → a new `impact` overlay kind; a wedge driven onto a plate, 12 px at stroke 2.4 — larger and heavier than row 67's spark, and a different figure, so the two never differ by hue alone (N-05). Both draw in the ATTACKER's colour, so hue is already spent saying whose weapon it was. Copied from the event, never re-derived: `heavy` is a question about the attacker's weapon against the target's kind that the snapshot cannot ask | PRESENT |
+| 67 | **A counter-triangle hit telegraphing** | `attackHit.bonus` — `def.bonusVs[target.type]` | `snap.impacts.bonus` → the same layer; a four-pointed concave spark, radially symmetric under a quarter turn where the siege wedge is not, thrown one glyph-height above the impact so a hit carrying BOTH flags shows both without a precedence rule throwing a fact away. The matchup is read out of the engine's own `bonusVs` table rather than typed in, and asserted from both sides of one fight so the mark is a contrast rather than a constant. **A plain hit draws nothing at all** — 47 of 203 measured hits carry a flag, and the silence is what makes the cue legible | PRESENT |
+| 68 | **A splash impact ring at the weapon's own radius** | `attackHit.splashRadius` — `def.splash.radius` | `snap.impacts.splashRadius` — `def.splash.radius` carried ON the event, because it is a weapon property and `view/` may not ask the engine (ADR-0008). A dashed ground ring at exactly that radius, deforming over a slope like a selection ring because it is a measurement in world units, and constant for its whole life so any still frame is the true reach. `combat.js:169`'s "so `renderEffects.js` can draw an impact ring" is finally true | PRESENT |
 | 69 | Guard aura coverage | `collectAnvils` → `state.anvils` | `snap.auras`; dashed ground ring, fog-gated on live vision | PRESENT |
 | 70 | Helium Bomb fuse and two blast radii | `fuseUntil`, `BOMB_CORE_RADIUS`, `BOMB_BLAST_RADIUS`, `bombDamageAt` | `snap.bombs`; sweeping arc. **The device itself is untrainable — row 47** | PRESENT |
 | 71 | Arm / disarm / detonate | `lightFuse` + the `armed` flip the engine's own AI does | `O` / `Shift+O`; `phase3-input.test.ts` | PRESENT |
