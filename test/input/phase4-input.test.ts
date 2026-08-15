@@ -112,8 +112,13 @@ const NO_CAMPAIGN = {
   board: null,
   saves: { available: false, saves: [] },
   now: 0,
-  settings: { tierOverride: null, edgeScroll: true },
+  settings: { tierOverride: null, edgeScroll: true, newGame: null },
   currentTier: "T1",
+  news: {
+    entries: [], unseen: 0, toast: null, latestId: null,
+    total: 0, dropped: 0, resynced: 0, since: null,
+  },
+  newsVersion: 0,
 } as const;
 
 /** Everything the galaxy screens are showing, in the order the shell concatenates it. */
@@ -414,7 +419,7 @@ describe("a gesture opens each Phase 4 screen", () => {
     hudRoot = els.hudRoot;
     viewport = els.viewport;
     renderer = new RecordingRenderer();
-    game = new Game(els, renderer, "T0", { tierOverride: null, edgeScroll: false },
+    game = new Game(els, renderer, "T0", { tierOverride: null, edgeScroll: false, newGame: null },
       { seed: SEED, worldId: SEAT });
 
     // A finished pad, so the destinations are genuinely reachable rather than reachable-looking.
@@ -632,12 +637,18 @@ describe("a gesture opens each Phase 4 screen", () => {
     expect(queued.some((i) => i.kind === "jump"), "Z reached no galaxy control at all").toBe(true);
   });
 
-  it("tells the player when a colony is lost, on the line a refused order uses", () => {
-    // Where `sweepColonies`' notifications land, and the reason they land THERE. They are not
-    // alerts in `view/alerts.ts`' sense: an alert carries the world position that "focus last alert"
-    // jumps the camera to, and a colony note is about a world that is not on screen and has no
-    // position on the seat's map to jump to. The transient notice is the line this client already
-    // uses for news with nowhere to point — a refused order, a tier drop.
+  it("keeps the news of a lost colony after the next refused order wipes the notice line", () => {
+    // Where `sweepColonies`' notifications land, and why they stopped landing where they used to.
+    // They are not alerts in `view/alerts.ts`' sense: an alert carries the world position that
+    // "focus last alert" jumps the camera to, a colony note is about a world that is not on screen,
+    // and `adoptSeat` clears the alert board on every jump — which would delete this news at exactly
+    // the moment it becomes the only thing worth knowing.
+    //
+    // **This test used to assert the notice line, and that WAS the defect** (P5-T16, PARITY row 93).
+    // The notice is one shared element, cleared by the next thing written to it and shared with
+    // command errors, so the second half of this test — the part that writes something else to it —
+    // is what the old version could never have survived. The news was reaching the player and could
+    // not survive contact with the next thing that happened.
     const colonyId = [...game.bridge.galaxy.planets.keys()].find((id) => id !== SEAT)!;
     const colony = game.bridge.galaxy.planets.get(colonyId)!;
     const b = makeBuilding("habitat", "player", colony.map.bases.player.x + 60, colony.map.bases.player.y + 60);
@@ -648,10 +659,25 @@ describe("a gesture opens each Phase 4 screen", () => {
     colony.buildings.delete(b.id);
     step();                                            // …and now it does not
 
+    press("y");
+    frame();
+    const news = [...hudRoot.querySelectorAll("button")]
+      .find((x) => x.textContent?.includes("News"));
+    expect(news, "there is no way to reach the news at all").toBeDefined();
+    expect(news!.textContent, "the unseen count did not reach the closed board's button").toMatch(/\(\d+\)/);
+    news!.click();
+    frame();
+
+    const drawer = hudRoot.querySelector('[data-hud="economy"]')!;
+    expect(drawer.textContent, "losing a colony said nothing to the player").toMatch(/lost/i);
+    expect(drawer.textContent).toContain(colonyId);
+
+    // Now write something else to the shared notice line — the exact event that used to erase this.
+    game.bridge.enqueue({ kind: "build", buildingType: "command", x: -9999, y: -9999 });
+    step();
     const notice = hudRoot.querySelector('[data-hud="notice"]')!;
-    expect(notice.textContent, `losing a colony said nothing to the player`).toMatch(/lost/i);
-    expect(notice.textContent).toContain(colonyId);
-    expect(notice.classList.contains("visible")).toBe(true);
+    expect(notice.textContent, "nothing was written to the notice, so this proves nothing").not.toBe("");
+    expect(drawer.textContent, "a refused order erased the news of a lost colony").toMatch(/lost/i);
   });
 
   it("reads a button's payload at the press, not at the moment its node was built", () => {

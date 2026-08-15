@@ -31,6 +31,7 @@ import {
   type EconomyBoard, type EconomyModel, type GalaxyBoard, type HudAction, type HudCommand,
   type HudModel, EconomyCache, GalaxyCache, HudView, hudModel,
 } from "../ui/hud.js";
+import { NewsFeed, newsModel } from "../ui/news.js";
 import { loadOnboardingSeen, markOnboardingSeen } from "../ui/onboarding.js";
 import { type SaveCatalog, deleteSave, newSaveId, readCatalog, writeSave } from "../ui/save-panel.js";
 import { MinimapView, minimapToWorld } from "../ui/minimap.js";
@@ -141,6 +142,14 @@ export class Game {
    * not a thing to do on a tick.
    */
   private savesCatalog: SaveCatalog = { available: false, saves: [] };
+  /**
+   * News from the worlds the player is not standing on (P5-T16).
+   *
+   * Galaxy-scoped, and deliberately NOT cleared on a jump — unlike `alerts`, which is, because an
+   * alert is a place on the map you just left. This is about the worlds you are not on, so a jump
+   * is the moment it becomes the only thing worth knowing.
+   */
+  private readonly news = new NewsFeed();
   /**
    * The buttons the HUD is currently showing, in order — what a positional key press indexes into.
    *
@@ -413,6 +422,8 @@ export class Game {
         now: this.wallClock(),
         settings: this.settings,
         currentTier: this.tier,
+        news: newsModel(this.news, this.bridge.galaxy.time || 0),
+        newsVersion: this.news.version,
       });
     // The world's own action row is emptied on a galaxy screen. The positional keys must address
     // what the player is LOOKING at, and a Deploy button from the world behind the starmap would
@@ -424,15 +435,24 @@ export class Game {
     this.actions = screen.kind === "world" ? [...hud.actions, ...drawer.actions] : drawer.actions;
     const error = this.bridge.takeCommandError();
     if (error) this.hud.notice(error);
-    // A colony's news, which does NOT fit the alert board — see `takeColonyNotes`. It lands in the
-    // notice, the same line a refused order does, and the standing condition behind it is on the
-    // starmap itself: `alertForWorld` marks a contested world for as long as it is contested, which
-    // is the difference between a moment and a state that `view/alerts.ts` is built around.
+    // A colony's news, which does NOT fit the alert board — see `takeColonyNotes`, and `news.ts`'s
+    // header for why it is beside `view/alerts.ts` rather than in it.
     //
-    // The newest wins when several arrive on one frame. That is what a one-line notice means, and
-    // the sweep raises each of these at most once per state change, so "several" is two worlds
-    // falling in the same frame rather than a stream.
-    for (const note of this.bridge.takeColonyNotes()) this.hud.notice(colonyNotice(note));
+    // **This used to go straight into `hud.notice`, and that was the defect.** The notice is ONE
+    // shared line, cleared only by the next notice and shared with the command error above it — so
+    // a colony falling was erased by the next refused order, several notes on one frame showed only
+    // the last, and the line then sat there forever because `notice` is only called when there is
+    // something to say. The news was reaching the player and could not survive contact with the
+    // next thing that happened. The feed gives it memory; the toast keeps the transient half.
+    //
+    // Once per frame is correct: `ingest` is idempotent with respect to the galaxy (it reads the
+    // engine's queues through a cursor and writes none of them), and the colony notes are already
+    // destroyed by the drain, which is why the shell does the draining and the model never does.
+    this.news.ingest({
+      galaxy: this.bridge.galaxy,
+      colonyNotes: this.bridge.takeColonyNotes(),
+      now: this.bridge.galaxy.time || 0,
+    });
 
     const correction = this.tierMonitor.sample(frameMs);
     if (correction.dropped) {
@@ -913,6 +933,10 @@ export class Game {
       else this.tierMonitor.clearManual();
       return;
     }
+    if (command.kind === "readNews") {
+      this.news.markAllSeen();
+      return;
+    }
     if (command.kind === "dismissOnboarding") {
       this.onboardingSeen = true;
       markOnboardingSeen();
@@ -1016,11 +1040,4 @@ const NO_ACTIONS: readonly HudAction[] = [];
  * in progress. An unrecognised type is reported as itself rather than dropped — a fourth kind
  * upstream should reach the player looking odd, not silently not reach them at all.
  */
-function colonyNotice(note: { readonly type: string; readonly planetId: string }): string {
-  switch (note.type) {
-    case "lost": return `${note.planetId} is lost — nothing of yours is left standing there`;
-    case "hostile": return `${note.planetId}'s neighbour has declared war on your colony`;
-    case "attacked": return `Your colony on ${note.planetId} is under attack`;
-    default: return `${note.planetId}: ${note.type}`;
-  }
-}
+

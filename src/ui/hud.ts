@@ -17,6 +17,7 @@ import { diplomacyPanelModel } from "./diplomacy-panel.js";
 import { doctrinePanelModel } from "./doctrine-panel.js";
 import { gatePanelModel } from "./gate-panel.js";
 import { milestoneLabel, milestonesPanelModel } from "./milestones-panel.js";
+import { type NewsModel } from "./news.js";
 import { type OnboardingModel, onboardingModel, settingsModel } from "./onboarding.js";
 import { reliefPanelModel } from "./relief-panel.js";
 import { type SaveCatalog, savePanelModel } from "./save-panel.js";
@@ -90,7 +91,9 @@ export type HudCommand =
   | { readonly kind: "loadSave"; readonly id: string }
   | { readonly kind: "deleteSave"; readonly id: string }
   | { readonly kind: "settings"; readonly settings: Settings }
-  | { readonly kind: "dismissOnboarding" };
+  | { readonly kind: "dismissOnboarding" }
+  /** Mark the news board read. View state — the engine has no idea a board exists. */
+  | { readonly kind: "readNews" };
 
 /**
  * One button the HUD is showing.
@@ -867,7 +870,7 @@ export interface ApproachState {
  * Only one is open at a time. Nine sections at once is a wall, and every one of these is a thing a
  * player goes to look at deliberately rather than something they need beside the jump board.
  */
-export type GalaxyBoard = "diplomacy" | "gate" | "records" | "system";
+export type GalaxyBoard = "diplomacy" | "gate" | "records" | "news" | "system";
 
 export interface GalaxyInput {
   readonly galaxy: Galaxy;
@@ -884,6 +887,15 @@ export interface GalaxyInput {
   readonly settings: Settings;
   /** The tier actually running, which is not necessarily the one chosen (see `settingsModel`). */
   readonly currentTier: Tier;
+  /** What has happened on the worlds the player is not standing on (P5-T16). */
+  readonly news: NewsModel;
+  /**
+   * `NewsFeed.version`, which is what the drawer caches on.
+   *
+   * `galaxy.tick` is not enough for this one: marking the board read changes the model without
+   * moving the tick, and so does a merge folding a new event into a line that already existed.
+   */
+  readonly newsVersion: number;
 }
 
 /**
@@ -908,7 +920,7 @@ function galaxySections(input: GalaxyInput): EconomySection[] {
     jumpSection(galaxy),
     colonySection(galaxy),
     laneSection(galaxy, input.stepSeconds),
-    campaignSection(input.board),
+    campaignSection(input.board, input.news.unseen),
   ];
 
   // The relief board is the one that is NOT behind a button, because it is the one a player needs
@@ -923,6 +935,7 @@ function galaxySections(input: GalaxyInput): EconomySection[] {
     case "records":
       sections.push(milestonesSection(galaxy), scoreSection(galaxy, relief));
       break;
+    case "news": sections.push(newsSection(input.news, galaxy.time || 0)); break;
     case "system":
       sections.push(
         savesSection(input.galaxy, input.saves, input.now),
@@ -973,6 +986,9 @@ function galaxyCacheKeyOf(input: GalaxyInput): string {
     // becomes "13 minutes ago" on its own, and nothing else pays for it.
     input.board === "system" ? `${Math.floor(input.now / 5000)}:${input.saves.saves.length}` : "-",
     input.board === "system" ? `${input.settings.tierOverride ?? "auto"}:${input.currentTier}` : "-",
+    // Not gated on the board being open: the unseen count rides on the Campaign button, so it has to
+    // be right while the board is shut — which is the only state in which it means anything.
+    input.newsVersion,
   ].join("|");
 }
 
@@ -1208,11 +1224,12 @@ function laneSection(galaxy: Galaxy, stepSeconds: number): EconomySection {
 // what makes it green.
 
 /** The board switcher. Always on the starmap, so every campaign panel is two clicks from anywhere. */
-function campaignSection(open: GalaxyBoard | null): EconomySection {
+function campaignSection(open: GalaxyBoard | null, unseenNews: number): EconomySection {
   const boards: readonly { readonly id: GalaxyBoard; readonly label: string; readonly detail: string }[] = [
     { id: "diplomacy", label: "Diplomacy", detail: "your neighbour's stance, and the three ways to move it" },
     { id: "gate", label: "Antimatter Gate", detail: "both sides of the race" },
     { id: "records", label: "Records", detail: "milestones, score, and the one terminal choice" },
+    { id: "news", label: "News", detail: "what happened on the worlds you are not standing on" },
     { id: "system", label: "Saves & settings", detail: "this browser's storage" },
   ];
   return {
@@ -1223,7 +1240,9 @@ function campaignSection(open: GalaxyBoard | null): EconomySection {
     // it — the same rule M and L follow on the battlefield.
     actions: boards.map(({ id, label, detail }) => ({
       id: `board:${id}`,
-      label: open === id ? `▾ ${label}` : label,
+      // The unseen count rides on the closed button, because a board nobody opens is a board that
+      // has to say it is worth opening. It is the only thing on this row that is not static.
+      label: (open === id ? `▾ ${label}` : label) + (id === "news" && unseenNews > 0 ? ` (${unseenNews})` : ""),
       detail,
       enabled: true,
       command: { kind: "galaxyBoard", board: open === id ? null : id },
@@ -1465,6 +1484,58 @@ function settingsSection(settings: Settings, currentTier: Tier): EconomySection 
     }
   }
   return { id: "settings", title: "Settings", lines, actions, warning: null };
+}
+
+/**
+ * News from the worlds the player is not standing on (P5-T16, PARITY rows 93 and 94).
+ *
+ * The channel this replaces was not missing, which is what the checklist got wrong about it: the
+ * shell has drained `takeColonyNotes` since Phase 4 closed and pushed each note into
+ * `HudView.notice`. That is **one shared line**, cleared only by the next notice and shared with
+ * command errors — so a colony falling was erased by the next refused order, several notes on one
+ * frame showed only the last, and the line then sat there forever because `notice` is only called
+ * when there is something to say. The news was reaching the player and could not survive contact
+ * with the next thing that happened.
+ *
+ * So the board gives it memory, a merge window and an age, and the count of what the window folded
+ * is kept rather than hidden: a raid that coalesced into one line contributed one entry and three
+ * hundred events, and the difference between those numbers is the whole point of the window.
+ */
+function newsSection(model: NewsModel, now: number): EconomySection {
+  const lines: string[] = [];
+  if (model.entries.length === 0) {
+    lines.push(model.since === null
+      ? "Nothing has happened elsewhere yet."
+      : "Nothing since this board started watching.");
+  }
+  for (const entry of model.entries) {
+    // `lastAt` rather than `at`: an entry that merged three minutes of raiding is as old as the
+    // last shot, not the first, and the difference is whether it is still happening.
+    const age = Math.max(0, Math.round(now - entry.lastAt));
+    lines.push(
+      `${entry.seen ? " " : "•"} ${entry.text}`
+      + (entry.count > 1 ? ` ×${entry.count}` : "")
+      + (age > 0 ? ` — ${formatClock(age)} ago` : ""),
+    );
+  }
+  // Reported rather than hidden, for `savePanelModel`'s reason: a board that silently drops the
+  // oldest news is a board that lies about being the record.
+  if (model.dropped > 0) lines.push(`${model.dropped} older item${model.dropped === 1 ? "" : "s"} dropped`);
+  if (model.resynced > 0) lines.push(`${model.resynced} queue${model.resynced === 1 ? "" : "s"} was drained underneath this board`);
+
+  return {
+    id: "news",
+    title: "News",
+    lines,
+    actions: [{
+      id: "readNews",
+      label: "Mark all read",
+      detail: model.unseen > 0 ? `${model.unseen} unread` : "nothing unread",
+      enabled: model.unseen > 0,
+      command: { kind: "readNews" },
+    }],
+    warning: null,
+  };
 }
 
 /** The first sixty seconds (P5-T10), on the world screen and nowhere else. */
