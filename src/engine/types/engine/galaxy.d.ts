@@ -124,11 +124,23 @@ export declare function canJumpTo(galaxy: Galaxy, destId: string): boolean;
 export declare function jumpVessel(state: State): Unit | null;
 /** Who is actually standing in the ring. Lane-booked ships are skipped. */
 export declare function stagedRiders(state: State, spaceport: Building): Unit[];
+/**
+ * What would actually ride, and what would be left standing.
+ *
+ * **`staged` and `leftBehind` are COUNTS, and `stagedSupply` is supply, not hulls** — a manifest
+ * that reported a head count where the engine caps on supply would be right for an army of Skiffs
+ * and wrong for one Heavy Hauler. `used`/`capacity` are the supply the riders spend and the pad's
+ * tier ceiling. (An earlier version of this declaration invented `supply` and `left`: both
+ * type-checked and were `undefined` at runtime, which is precisely the fiction ADR-0003's façade
+ * exists to prevent. Verified against `galaxy.js:1013` and `galaxy.js:1063`.)
+ */
 export declare function jumpManifest(state: State, spaceport: Building): {
-  riders: Unit[]; supply: number; capacity: number; left: Unit[];
+  riders: Unit[]; capacity: number; used: number;
+  stagedSupply: number; staged: number; leftBehind: number;
 };
 export declare function jumpManifestAll(state: State): {
-  riders: Unit[]; supply: number; capacity: number; left: Unit[];
+  riders: Unit[]; capacity: number; used: number;
+  stagedSupply: number; staged: number; leftBehind: number;
 };
 export declare function spaceportTier(b: Building): number;
 export declare function jumpCapacity(b: Building): number;
@@ -138,8 +150,9 @@ export declare function freightCapacity(riders: Unit[]): number;
 export declare function cargoManifest(
   from: State, capacity?: number, goods?: readonly string[],
 ): Record<string, number>;
-export declare function loadFreighter(state: State, unitId: string, com: string, qty: number): boolean;
-export declare function unloadFreighter(state: State, unitId: string, com: string, qty: number): boolean;
+/** Returns the quantity actually moved — **not** a boolean. 0 means nothing moved. */
+export declare function loadFreighter(state: State, unitId: string, com: string, qty: number): number;
+export declare function unloadFreighter(state: State, unitId: string, com: string, qty: number): number;
 export declare function deleteLane(galaxy: Galaxy, laneId: string): boolean;
 /** The engine's own landing snap. A picker that used the raw click would disagree with it. */
 export declare function snapLandingPoint(map: GameMap, x: number, y: number): { x: number; y: number };
