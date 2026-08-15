@@ -8,7 +8,7 @@ import { BUILD_REACH, BUILDINGS, NODE_RADIUS, UNITS } from "../engine/index.js";
 import { WorldBridge, type WorldOptions } from "../bridge/world.js";
 import { checkPlacement } from "../bridge/commands.js";
 import { GalaxySnapshotExtractor, type GalaxySnapshot } from "../bridge/galaxy-snapshot.js";
-import { FLAG_BUILDING_KIND, type Snapshot } from "../bridge/snapshot.js";
+import { FLAG_BUILDING_KIND, engineId, type Snapshot } from "../bridge/snapshot.js";
 import { FixedStepLoop, STEP_SECONDS } from "./loop.js";
 import { type Settings, saveSettings } from "./settings.js";
 import { CameraRig, clamp } from "../input/camera.js";
@@ -879,8 +879,11 @@ export class Game {
   private nodeAt(x: number, y: number): string | null {
     const nodes = this.bridge.snapshot.nodes;
     for (let i = 0; i < nodes.count; i++) {
+      // `engineId`, not `n${id - 1}`: a salvage or crater deposit is named off the entity that died
+      // there (`wreck-u12-ore`), so it has no number to rebuild from and the arithmetic answered
+      // `n-1` for every one of them. Right-clicking any of them ordered a gather on nothing.
       if (Math.hypot(nodes.x[i]! - x, nodes.y[i]! - y) <= NODE_RADIUS + ENTITY_PICK_SLACK)
-        return `n${nodes.ids[i]! - 1}`;
+        return engineId(nodes.ids[i]!);
     }
     return null;
   }
@@ -902,9 +905,6 @@ export class Game {
   }
 }
 
-function engineId(numeric: number): string {
-  return numeric < 0 ? `b${-numeric - 1}` : `u${numeric - 1}`;
-}
 
 /** `FogField.state`'s "explored but not visible" — the port's own middle value. */
 const FOG_EXPLORED_NOT_VISIBLE = 1;

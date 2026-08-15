@@ -17,6 +17,7 @@
 import { describe, expect, it } from "vitest";
 import { WorldBridge } from "../../src/bridge/world.js";
 import { SNAP_PLAYER, numericId } from "../../src/bridge/snapshot.js";
+import { applyIntent } from "../../src/bridge/commands.js";
 import { idsInBox } from "../../src/input/intents.js";
 import { STEP_SECONDS } from "../../src/app/loop.js";
 import { RELIEF_COOLDOWN, surrenderGalaxy } from "../../src/engine/index.js";
@@ -141,42 +142,49 @@ describe("relief arrives through the step the app actually runs (P5-T07)", () =>
 });
 
 /* =================================================================================================
-   THE DEFECT — the relief ship cannot be clicked
+   THE DEFECT, INVERTED — the relief ship can be clicked
 
-   Found by writing the test above, reported rather than fixed: the codec is `src/bridge/snapshot.ts`
-   and `src/input/intents.ts`, neither of which this row may touch. Pinned here in the shape
-   `test/bridge/galaxy-save.test.ts` established for the market price book — asserting what happens
-   TODAY, so it cannot change in either direction without a reviewed red, and inverted rather than
-   deleted once it is fixed.
+   This section was written the other way up. Found by writing the test above and pinned rather than
+   fixed, because the codec is `src/bridge/snapshot.ts` and this row could not touch it; it asserted
+   what happened TODAY so the defect could not change in either direction without a reviewed red.
+   The codec was then fixed, this went red on the very first assertion, and it is inverted here
+   rather than deleted — the scenario (wipe a player out, wait for the engine to rescue them, box-
+   select the rescue) is expensive to build and is exactly what a regression would need.
 
-   The mechanism, in three lines that are individually reasonable:
+   The mechanism, in three lines that were individually reasonable:
 
      • Entities that cross worlds get their own id scheme. `checkGalaxyRescue` mints the relief ship
        as `"g" + galaxy.entitySeq` and `jumpCapital` mints jump riders exactly the same way — the
        engine's comment on the relief line says "galaxy id scheme (as in jumpCapital)".
-     • `numericId` packs an engine id into the snapshot's `Int32Array` by dropping the first
-       character and sign-flipping buildings: `"g1"` and `"u1"` both pack to 2.
+     • `numericId` packed an engine id into the snapshot's `Int32Array` by dropping the first
+       character and sign-flipping buildings, so `"g1"` and `"u1"` both packed to 2.
      • Every decoder in this client — `intents.ts`, `hud.ts`, `game.ts`, `building-panel.ts`, four
-       copies of the same three lines — unpacks a positive number as `u${n - 1}`. There is no `g`.
+       copies of the same three lines — unpacked a positive number as `u${n - 1}`. There was no `g`.
 
-   What a player loses: a box-select over a relief colony ship yields the id `u1`, `applySelect`
-   drops it (`getEntity` finds nothing), and the selection stays EMPTY — so the one ship the engine
-   sends a wiped-out player to re-found from cannot be selected, moved or deployed. When a `u`-unit
-   with the same number does exist, it is worse than a dead click: the wrong unit is selected, and
-   every subsequent order goes to it.
+   What a player lost: a box-select over a relief colony ship yielded the id `u1`, `applySelect`
+   dropped it (`getEntity` finds nothing), and the selection stayed EMPTY — so the one ship the
+   engine sends a wiped-out player to re-found from could not be selected, moved or deployed. When a
+   `u`-unit with the same number existed it was worse than a dead click: the wrong unit was
+   selected, and every subsequent order went to it.
 
-   Its blast radius is wider than this row. Every jump rider carries a `g` id too (P4-T04), so the
-   same dead click applies to a whole expedition the moment it lands — which is why this is pinned
+   Its blast radius was wider than this row. Every jump rider carries a `g` id too (P4-T04), so the
+   same dead click applied to a whole expedition the moment it landed — which is why it was pinned
    here rather than described in a comment and forgotten.
+
+   The fix gave each of the engine's id namespaces its own band. A second collision fell out of
+   writing it, and `test/bridge/id-codec.test.ts` covers both: wreck and crater deposits are named
+   off the entity that died there (`wreck-u12-ore`), `parseInt` answered NaN, and an `Int32Array`
+   stores NaN as 0 — so every salvage node and every crater in the game shared the id 0 and decoded
+   to `n-1`. Neither could be right-clicked either.
    ================================================================================================= */
 
-describe("THE DEFECT: a `g`-id entity is unaddressable through the snapshot (P5-T07)", () => {
-  it("packs the galaxy id scheme onto the world scheme, and unpacks it as the wrong unit", () => {
-    expect(numericId("g1"), "the codec now distinguishes the galaxy id scheme").toBe(numericId("u1"));
+describe("the relief ship is addressable through the snapshot (P5-T07)", () => {
+  it("keeps the galaxy id scheme distinct, so a box-select selects the ship the engine sent", () => {
+    expect(numericId("g1"), "`g` and `u` collapsed onto one band again").not.toBe(numericId("u1"));
 
     const bridge = wipedOut();
     const at = stepUntilRelief(bridge);
-    expect(at, "no relief ship, so there is nothing to fail to click").not.toBeNull();
+    expect(at, "no relief ship, so there is nothing to click").not.toBeNull();
 
     const shipId = ships(bridge)[0]!;
     expect(shipId, "the relief ship is no longer minted under the galaxy id scheme").toMatch(/^g\d+$/);
@@ -187,11 +195,12 @@ describe("THE DEFECT: a `g`-id entity is unaddressable through the snapshot (P5-
     const picked = idsInBox(bridge.snapshot, -1e6, -1e6, 1e6, 1e6);
     expect(picked, "the ship is not being picked up by a box-select at all — a different bug")
       .toHaveLength(1);
-    expect(picked[0], "the decoder now returns the engine's own id (the defect is fixed — invert this section)")
-      .not.toBe(shipId);
-    expect(
-      bridge.state.units.has(picked[0]!),
-      "the decoded id now names a real unit (the defect is fixed — invert this section)",
-    ).toBe(false);
+    expect(picked[0], "the decoder does not return the engine's own id").toBe(shipId);
+    expect(bridge.state.units.has(picked[0]!), "the decoded id names no live unit").toBe(true);
+
+    // …and the order actually lands, which is the thing the player was failing to do. `select` is
+    // the engine's own applySelect, so this is the click, not a re-derivation of it.
+    applyIntent(bridge.state, { kind: "select", ids: picked, additive: false }, bridge.galaxy);
+    expect(bridge.state.selection, "the ship decodes but will not select").toEqual([shipId]);
   });
 });

@@ -23,7 +23,7 @@ import { repairPanelModel } from "./repair-panel.js";
 import { researchPanelModel } from "./research-panel.js";
 import { rigSurveyModel, rigYieldModel } from "./rig-panel.js";
 import { type ApproachBrief, type GroundPoint, type LandingSite } from "../view/landing.js";
-import { FLAG_BUILDING_KIND, type Snapshot } from "../bridge/snapshot.js";
+import { FLAG_BUILDING_KIND, engineId, type Snapshot } from "../bridge/snapshot.js";
 
 export interface SelectionEntry {
   readonly id: string;
@@ -332,9 +332,6 @@ export function formatClock(seconds: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
-function engineId(numeric: number): string {
-  return numeric < 0 ? `b${-numeric - 1}` : `u${numeric - 1}`;
-}
 
 // ---------------------------------------------------------------------------
 // The economy (P4-T01). Still a model; still no DOM.

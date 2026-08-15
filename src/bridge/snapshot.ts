@@ -549,12 +549,106 @@ export interface Snapshot {
 }
 
 /**
- * Engine ids are `u12` / `b7` / `n3`. Pack to an int so the hot tables stay numeric; buildings go
- * negative so a single number carries both the identity and the kind.
+ * Engine ids packed into the one `Int32Array` every hot table is made of, and back again.
+ *
+ * The simulation mints ids in namespaces it keeps **deliberately** apart, and says so in its own
+ * comments — `engine/bomb.js` on `crater-${bomb.id}`: *"so it can never collide with a
+ * map-generated node's `n<N>` id scheme — the two id spaces are namespaced apart by construction"*.
+ * There are five:
+ *
+ *   • `u12` — a unit.               `b7` — a building.               `n3` — a map deposit.
+ *   • `g4`  — anything the GALAXY minted: the relief ship `checkGalaxyRescue` sends a wiped-out
+ *     player, and every rider `jumpCapital` lands on a new world. Both from `galaxy.entitySeq`.
+ *   • `wreck-u12-ore`, `crater-bomb3-ore` — salvage and crater deposits, named off the entity that
+ *     died there. **No number to pack at all.**
+ *
+ * This used to be `Number.parseInt(id.slice(1))`, sign-flipped for buildings, which collapsed all
+ * five onto one. Two live breakages came out of that, both of them a dead click on the exact
+ * object the player was told to click:
+ *
+ *   • `n7`, `u7` and `g7` all packed to **8**. So `entityAt` resolved the relief ship's `g1` to
+ *     `u1` — which either names nothing (the selection stays empty) or names a *different unit*,
+ *     which is worse: every subsequent order goes to it. Whole expeditions land under `g` ids.
+ *   • `parseInt("reck-u12-ore")` is **NaN**, and an `Int32Array` stores NaN as **0**. Every wreck
+ *     and every crater on the map packed to the same 0 and decoded to the id `n-1`, so no salvage
+ *     deposit and no crater in the game could be right-clicked (ADR-0018, shipped in Phase 3).
+ *
+ * So each namespace gets its own band, and ids with nothing to pack are interned. Buildings keep
+ * the sign convention because `isBuildingId` is what lets a single number carry the kind — and
+ * they can keep it: `jumpCapital` re-ids **riders only**, so no building ever carries a `g`.
  */
+// 16.7 M ids per namespace against four bands, inside `Int32Array`'s 2.1 B with two orders of
+// magnitude spare. A counter that reached the band edge would encode into its NEIGHBOUR's space and
+// decode as the wrong kind — silently, which is the failure mode this whole rewrite exists to
+// remove — so `numericId` interns anything that big instead. That is slower and correct rather than
+// fast and wrong, and it is what makes the codec total for *every* counter value rather than for
+// the ones a match happens to reach.
+const ID_BAND = 1 << 24;
+const BAND_GALAXY = ID_BAND;
+const BAND_NODE = 2 * ID_BAND;
+const BAND_OPAQUE = 3 * ID_BAND;
+
+/**
+ * `wreck-…` / `crater-…` ids, interned in first-seen order — the one namespace with no counter to
+ * read. Hashing them would reintroduce exactly the collision this exists to remove.
+ *
+ * It only grows, which is deliberate and cheap: the entries are the strings the engine already
+ * holds, and a match makes hundreds, not millions. Two worlds can mint the same `wreck-u12-ore`,
+ * and that is fine — a snapshot only ever holds the active seat, so they never coexist in one
+ * table, and the same string mapping to the same integer is the correct answer anyway.
+ */
+const opaqueIds: string[] = [];
+const opaqueIndex = new Map<string, number>();
+
 export function numericId(id: string): number {
-  const n = Number.parseInt(id.slice(1), 10);
-  return id.charCodeAt(0) === 98 /* 'b' */ ? -(n + 1) : n + 1;
+  // Hand-rolled rather than `parseInt(id.slice(1))`, because `slice` allocates a string and this
+  // runs for every entity and every node, every tick (ADR-0006: no per-frame allocation). Falling
+  // out of it: "the digits ran out" is a branch here, where it used to be a silent NaN.
+  const len = id.length;
+  if (len < 2) return intern(id);
+  let n = 0;
+  for (let i = 1; i < len; i++) {
+    const d = id.charCodeAt(i) - 48;
+    if (d < 0 || d > 9) return intern(id);
+    n = n * 10 + d;
+  }
+  const kind = id.charCodeAt(0);
+  // Buildings own the ENTIRE negative half and are not banded, so they need no bound and must not
+  // take the guard below: interning one would hand it a positive id, and `isBuildingId` — the only
+  // channel the snapshot has for an entity's kind — would then call a building a unit.
+  if (kind === 98 /* 'b' */) return -(n + 1);
+  if (n + 1 >= ID_BAND) return intern(id);  // see ID_BAND: never encode into the next band
+  switch (kind) {
+    case 117: return n + 1;                 // 'u'
+    case 103: return BAND_GALAXY + n + 1;   // 'g'
+    case 110: return BAND_NODE + n + 1;     // 'n'
+    default:  return intern(id);            // a namespace this client has not met yet
+  }
+}
+
+/**
+ * The inverse. **This is the only one** — it used to be copied into `intents.ts`, `hud.ts`,
+ * `game.ts` and `building-panel.ts`, four transcriptions of three lines, and all four were wrong
+ * in the same two ways because that is what four copies of a rule do.
+ */
+export function engineId(numeric: number): string {
+  if (numeric < 0) return `b${-numeric - 1}`;
+  if (numeric > BAND_OPAQUE) return opaqueIds[numeric - BAND_OPAQUE - 1] ?? "";
+  if (numeric > BAND_NODE) return `n${numeric - BAND_NODE - 1}`;
+  if (numeric > BAND_GALAXY) return `g${numeric - BAND_GALAXY - 1}`;
+  // Zero is not a packed id — nothing encodes to it now that NaN cannot. Naming it beats returning
+  // the confident lie `u-1`.
+  return numeric === 0 ? "" : `u${numeric - 1}`;
+}
+
+function intern(id: string): number {
+  let i = opaqueIndex.get(id);
+  if (i === undefined) {
+    i = opaqueIds.length;
+    opaqueIds.push(id);
+    opaqueIndex.set(id, i);
+  }
+  return BAND_OPAQUE + i + 1;
 }
 
 export function isBuildingId(numeric: number): boolean {

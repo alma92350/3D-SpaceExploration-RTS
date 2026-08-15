@@ -18,7 +18,7 @@
 // scout; binding rotation to them now would collide the day Phase 3 adds those orders.
 
 import { type Intent } from "../bridge/commands.js";
-import { type Snapshot, FLAG_BUILDING_KIND } from "../bridge/snapshot.js";
+import { type Snapshot, FLAG_BUILDING_KIND, engineId, numericId } from "../bridge/snapshot.js";
 
 export type MouseButton = "left" | "right" | "middle";
 
@@ -377,7 +377,7 @@ export function idsInBox(snap: Snapshot, x0: number, y0: number, x1: number, y1:
 
 function sameTypeAs(snap: Snapshot, entityId: string): string[] {
   const e = snap.entities;
-  const numeric = toNumeric(entityId);
+  const numeric = numericId(entityId);
   let typeIndex = -1;
   for (let i = 0; i < e.count; i++) if (e.ids[i] === numeric) { typeIndex = e.typeIndex[i]!; break; }
   if (typeIndex < 0) return [entityId];
@@ -390,17 +390,9 @@ function sameTypeAs(snap: Snapshot, entityId: string): string[] {
 }
 
 function isEnemy(snap: Snapshot, entityId: string): boolean {
-  const numeric = toNumeric(entityId);
+  const numeric = numericId(entityId);
   const e = snap.entities;
   for (let i = 0; i < e.count; i++) if (e.ids[i] === numeric) return e.owner[i] === 1;
   return false;
 }
 
-function toNumeric(id: string): number {
-  const n = Number.parseInt(id.slice(1), 10);
-  return id.charCodeAt(0) === 98 ? -(n + 1) : n + 1;
-}
-
-function engineId(numeric: number): string {
-  return numeric < 0 ? `b${-numeric - 1}` : `u${numeric - 1}`;
-}
