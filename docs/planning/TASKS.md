@@ -354,12 +354,47 @@ Phase 3's; it is named here so Phase 4 starts by deciding whether to pay it down
 
 ## Phase 4 — The galaxy
 
-Not yet decomposed. Headings: 3D starmap (see Q-03), jumps and staging, the landing picker as an
-approach view, background worlds, colonies and income, credits, freight lanes, standing orders.
+Goal: Odyssey becomes Odyssey — more than one world. Exit criteria: PRD §5, Phase 4 — *a player can
+settle a second world and run both; the galaxy save round-trips; background simulation holds its
+frame budget while the active world renders.*
 
-**Start by deciding the reachability question above.** Phase 4 adds a starmap, a landing picker and
-standing orders — all of them UI-first — so it is the phase that either pays down the panel-wiring
-debt or formally accepts the model-layer bar and says so in the definition of done.
+*Amended from the vendored engine, as the Phase 2 and Phase 3 headers were, because the amendment
+changes what this phase IS:*
+
+- **Almost the entire scope already exists in `engine/galaxy.js`.** Jumps (`canJump`, `canJumpTo`,
+  `jumpCost`, `jumpCapital`), the Spaceport staging ring (`SPACEPORT_CAPACITY` by tier,
+  `stagedRiders`, `jumpManifest`, `upgradeSpaceport`), the landing picker's own grid
+  (`LANDING_PICK_GRID`, `snapLandingPoint`), colonies and income (`sweepColonies`,
+  `COLONY_INCOME_PER_BUILDING`, `COLONY_INCOME_CAP`, `PACIFIED_INCOME`), freight lanes
+  (`createLane`, `assignShipToLane`, `runLanes`, `LANE_PERIOD`), cargo (`CARGO_GOODS`,
+  `loadFreighter`, `cargoManifest`), standing orders (`colonyPolicy.js`), and the background
+  scheduler (`stepGalaxy`, `BG_STEP`). **Phase 4 is wiring and presentation**, the same finding
+  Phase 3 made about formations and escorts — with two genuine exceptions below.
+- **The background simulation already runs, and has since Phase 1.** `WorldBridge.stepWorld` calls
+  `stepGalaxy`, not `tick`, deliberately (P1-T02's comment says so). So "background worlds" is not a
+  feature to build; it is a **budget to measure**. `BG_STEP` spreads N worlds round-robin across 4
+  frames, so the exit criterion is a perf row, not a systems row.
+- **The two things that are actually new are both 3D**: the starmap (Q-03, still OPEN and now due)
+  and the landing picker rebuilt as an approach view. Everything else has an engine function behind
+  it.
+- **The reachability gap is Phase 4's, and it is first.** Phase 4's own scope is UI-first — a
+  starmap, a picker, a lane panel, standing orders — so it cannot be built on top of an unresolved
+  question about whether panels are reachable at all. P4-T01 settles it.
+
+| ID | Task | Status | Deps | Definition of done | Notes |
+|---|---|---|---|---|---|
+| P4-T01 | Settle the reachability question, and pay down Phase 2's half | TODO | — | Every Phase 2 economy intent has a gesture or a control that produces it; the panel modules are imported by something; a test fails when an intent has no way in | The decision the Phase 3 gate deferred here. Six of seven panel modules are imported by nothing, so **"a player can run the full 2D economy in 3D with no panel missing" is not true on the plain reading** even though the Phase 2 gate passes it on eight panel *models*. Phase 3's half is already closed and `test/input/phase3-input.test.ts` is the pattern to extend, not to copy |
+| P4-T02 | **Q-03**: starmap as a true 3D scene or a 2.5D diagram | TODO | — | Decided in an ADR, with a measurement rather than a preference | The question has been open since Phase 0 and is now due. It is a **draw-call and legibility** question, not an aesthetic one: eleven worlds plus lanes plus stances against a budget ADR-0014 derives. Measure before deciding, as ADR-0016 did |
+| P4-T03 | The starmap: worlds, claims, stances, alerts | TODO | P4-T02 | Every world in `galaxy.worlds` is placed, owned and legible; a stance change is visible without opening a panel | `galaxyStatus` is the engine's own summary — report it, never re-derive it. `updateFactionWarmth` moves stances on its own clock |
+| P4-T04 | Jumps and the Spaceport staging ring | TODO | P4-T03 | `canJump`/`canJumpTo`/`jumpCost` decide, never a re-derivation; the manifest a player sees is `jumpManifest`'s; tier capacity is visible before committing | `FUEL_DISCOUNT_BY_TIER` means the cost depends on the Spaceport's tier, so a UI that showed `JUMP_COST` would be wrong for every upgraded port. `stagedRiders` is the staging ring's actual membership |
+| P4-T05 | The landing picker as a 3D approach view | TODO | P4-T03 | A landing site is chosen in 3D; the chosen point is `snapLandingPoint`'s, not the raw click | The second genuinely new thing. `LANDING_PICK_GRID` (160) is the engine's own snap, and a picker that placed the raw click would disagree with where the colony actually lands |
+| P4-T06 | Colonies, passive income and credits | TODO | P4-T04 | `sweepColonies`' income reaches the HUD; the cap and the per-building rate are visible, not implied | `COLONY_INCOME_CAP` (6) is the number that makes a fifth colony worth less than the fourth — a player who cannot see it will keep expanding for income that is not coming |
+| P4-T07 | Freight lanes | TODO | P4-T06 | A lane is created, assigned, and runs; `runLanes` is the mover; `LANE_PERIOD` is visible so a player can tell a slow lane from a broken one | Whole API upstream. The legibility risk is that a lane is *periodic* — nothing moves for ten sim-seconds at a time, which reads as broken |
+| P4-T08 | Colony standing orders | TODO | P4-T06 | `getColonyPolicy`/`setColonyPolicy` round-trip; `sanitizePolicy` is the validator, never a copy | `runColonyPolicies` is what acts on them. `MAX_WORKER_TARGET` (20) is a clamp a UI must show rather than silently apply |
+| P4-T09 | The galaxy save round-trips | TODO | P4-T06 | A galaxy with two settled worlds serialises and deserialises to an identical hash, including lanes, policies and background world state | `GALAXY_SAVE_VERSION` and `serializeGalaxy`/`deserializeGalaxy` exist. The exit criterion names this explicitly, and the trap is the append-only roster growth `stepGalaxy`'s cache comment describes |
+| P4-T10 | Perf: the background simulation holds its budget | TODO | P4-T03 | A galaxy with the full roster settled holds the T0 budget while the active world renders; the background cost is measured per world, not in aggregate | The third exit criterion, and the one that is a **measurement rather than a build** — `stepGalaxy` has run since Phase 1. `BG_STEP` (4) is the round-robin spread; the number to report is cost per background world per frame |
+| P4-T11 | Determinism fixture crosses a jump | TODO | P4-T04, P4-T09 | The recorded replay includes a jump and hashes identically; the jump provably moves the hash | P3-T17's per-order check applies unchanged. A jump changes `galaxy.activeId`, which `hashState` does **not** currently cover — so this row probably widens the hash, and that is the point |
+| P4-T12 | Phase 4 playtest script | TODO | P4-T03 … P4-T08 | Script exists; written and left UNRUN under ADR-0011 | Same shape as `combat.md`. The starmap is the first screen in this project that is not the battlefield, so "where am I" is a real question to ask |
 
 ## Phase 5 — The long game
 
