@@ -231,6 +231,14 @@ export { FREIGHTER_AI_TECH, assignFerry } from "@engine/engine/haul.js";
 
 export { updateScoutMode } from "@engine/engine/scout.js";
 
+// The predicates those orders gate on. Every one of the ten engine functions above returns `void` —
+// not P2-T12's bare `false`, not `surrenderGalaxy`'s nothing-on-one-path, but nothing ever, on any
+// path — so each silently skips whatever in the selection it does not accept. The bridge therefore
+// has to ask BEFORE the call, and it must ask with the engine's own predicate: P5-T13 had to
+// transcribe `canLogisticsType`'s one-line body into `bridge/commands.ts` to do it, which is a
+// second copy of a rule and exactly what ADR-0012 §5 forbids.
+export { canLogisticsType, canGatherType, canBuildCategory } from "@engine/engine/entities.js";
+
 // The new-game screen (row 104). `WorldOptions` has accepted `difficulty` and `playerFaction` since
 // Phase 1 and `main.ts` has never passed either, so every session ever played has been medium /
 // frontier. The roster and the tuning tables are the engine's own; nothing here picks a default.

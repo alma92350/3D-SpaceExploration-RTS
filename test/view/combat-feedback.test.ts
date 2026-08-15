@@ -177,23 +177,29 @@ describe("combat feedback in a composed frame", () => {
     // way: swapping the far end's elevation for the near end's survived every test in this file.
     // A tracer whose far end carried the shooter's height sinks into any slope it crosses, which is
     // precisely the thing the lift exists to prevent.
-    const field = elevationFieldFrom(
-      { cols: 4, rows: 1, cell: 40, type: new Uint8Array([0, 0, 2, 2]) } as never, 160, 40,
-    );
-    const composer = new SceneComposer(field);
-    const renderer = new RecordingRenderer();
-    renderer.registerMeshes(buildMeshes());
-    renderer.resize(1280, 720, 1);
-    const rig = new CameraRig({ mapWidth: 160, mapHeight: 40 }, field);
-    rig.focusOn(80, 20);
-    const terrain = buildTerrainMesh(field, { relief: true, apron: 0 });
+    const { bridge, composer, renderer, draw } = firefight();
+    const map = bridge.state.map;
+    const field = elevationFieldFrom(map.terrain, map.width, map.height);
+    const base = map.bases.player;
 
-    // One shot from open ground (height 0) onto high ground (height 18).
+    // A real rise on this world, found rather than assumed: the base sits on the zero plane, so a
+    // tracer that stayed near it would leave both ends level and prove nothing.
+    let high: { x: number; y: number } | null = null;
+    for (let cy = 0; cy < field.rows && !high; cy++) {
+      for (let cx = 0; cx < field.cols; cx++) {
+        const x = cx * field.cell + field.cell / 2;
+        const y = cy * field.cell + field.cell / 2;
+        if (elevation(field, x, y) > 10) { high = { x, y }; break; }
+      }
+    }
+    expect(high, "this world is flat, so the per-end lift cannot be told from a shared one").not.toBeNull();
+
+    composer.effects.clear();
     composer.ingestTick({
       shots: {
         count: 1, dropped: 0,
-        fromX: new Float32Array([20]), fromY: new Float32Array([20]),
-        toX: new Float32Array([140]), toY: new Float32Array([20]),
+        fromX: new Float32Array([base.x]), fromY: new Float32Array([base.y]),
+        toX: new Float32Array([high!.x]), toY: new Float32Array([high!.y]),
         owner: new Uint8Array([0]),
       },
       deaths: { count: 0, x: new Float32Array(0), y: new Float32Array(0), owner: new Uint8Array(0), isBuilding: new Uint8Array(0) },
@@ -202,15 +208,16 @@ describe("combat feedback in a composed frame", () => {
         heavy: new Uint8Array(0), bonus: new Uint8Array(0), splashRadius: new Float32Array(0),
       },
     } as unknown as Parameters<SceneComposer["ingestTick"]>[0]);
-    composer.compose(renderer, emptySnapshot(), rig.update(1280, 720), TIERS.T2, terrain, 0, null);
+    draw();
 
     const l = layer(renderer, "tracer")!;
     expect(l, "no tracer was packed").not.toBeNull();
-    const rise = elevation(field, 140, 20) - elevation(field, 20, 20);
-    expect(rise, "the stub field is flat, so this proves nothing").toBeGreaterThan(10);
+    const rise = elevation(field, high!.x, high!.y) - elevation(field, base.x, base.y);
+    expect(rise, "the two ends are on level ground, so this proves nothing").toBeGreaterThan(5);
     expect(
       l.data[4]! - l.data[1]!,
-      "both ends of the tracer came out at the same height across an 18-unit rise",
+      "both ends of the tracer came out at the same height across a real rise — the far end is being " +
+      "lifted onto the ground under the SHOOTER, so a tracer sinks into any slope it crosses",
     ).toBeCloseTo(rise, 3);
   });
 

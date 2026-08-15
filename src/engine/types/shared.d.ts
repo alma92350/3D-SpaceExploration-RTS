@@ -135,6 +135,24 @@ declare global {
      * this comes due, and the warning has to outlive it (P3-T10).
      */
     fuseUntil?: number | null;
+    // --- logistics modes (P5-T13). Written by the orders in PARITY §5.2 rows 37-40, read by
+    // engine/haul.js and engine/gather.js. All absent until an order sets one. ---
+    /**
+     * An explicit home Command Center, overriding `zoneFirst`'s nearest-CC guess — the multi-base
+     * control. `issueSetHomeBase` writes whatever id it is handed; `zoneFirst`'s `pinned` test then
+     * silently ignores anything that is not an own, finished Command Center, so the bridge checks.
+     */
+    homeCC?: string | null;
+    /** Parked as a collection point. `nearestGatherDrop` can prefer one over a nearer base (P2-T07). */
+    collectPoint?: boolean;
+    /** Where a collection-point freighter was parked. Set by `issueSetCollectPoint`, not by movement. */
+    anchor?: { x: number; y: number } | null;
+    /** Handed to the AI hauler. Gated on `FREIGHTER_AI_TECH`, which the engine checks silently. */
+    aiLogistics?: boolean;
+    /** A freighter's player-managed, multi-commodity hold — named to stay clear of the hold STANCE. */
+    freight?: Resources;
+    /** How many haulers are already ferrying to this freighter (`MAX_HAULERS` caps it). */
+    ferriers?: number;
   }
 
   interface Building {
@@ -151,7 +169,13 @@ declare global {
     buildProgress: number;
     queue: Array<{ unitType: string; progress: number }>;
     targetId: string | null;
-    rally: { x: number; y: number };
+    /**
+     * Where a newly produced unit is sent. **`nodeId` is upstream's own fourth field** and it is why
+     * a rally point is not merely a point: `issueSetRally(building, x, y, nodeId)` makes a worker
+     * spawn already mining, and a rally intent carrying only x/y would be quietly worse than the 2D
+     * game's for exactly the unit that needs it most (P5-T13, PARITY row 31).
+     */
+    rally: { x: number; y: number; nodeId?: string | null };
     /** As `Unit.attackTimer` — a static defence fires on the same rule (combat.js line 487). */
     attackTimer?: number;
     tier?: number;

@@ -6,13 +6,14 @@ client, and not written from the PRD's prose — both of those have been wrong a
 before (Phase 2 found the recipe chain is nine, not seven; Phase 3 found the PRD listing veterancy
 chevrons that Phase 1 had already built).
 
-**The count is [117 rows: 85 present, 20 absent, 12 out of scope](#4-the-count)** — 76/29/12 when
+**The count is [117 rows: 100 present, 4 absent, 13 out of scope](#4-the-count)** — 76/29/12 when
 this document was drafted, moved by Phase 5 closing nine of §5.6's eleven. A checklist that came out
 mostly ticked on its first draft would be evidence that it had been written by optimism rather than
 by enumeration, so the number is the point of the document, not an embarrassment in it. **§4 also
 records that its own first draft reported three mutually inconsistent totals and now carries the
-command that counts it**, which is the more useful lesson. The number that still matters most is
-**§5.2's 18 of 28** — ten of the engine's own orders with no way in — and Phase 5 did not move it.
+command that counts it**, which is the more useful lesson. The number that mattered most was
+**§5.2's 18 of 28** — ten of the engine's own orders with no gesture, no button and no intent — and
+it is now **28 of 28**. The four rows still absent are one row's worth of work, in flight.
 
 ---
 
@@ -141,9 +142,9 @@ grep -cE '^\| [0-9]+ \|.*\| PRESENT \|$' docs/planning/PARITY.md   # and ABSENT,
 
 | | Rows |
 |---|---|
-| **PRESENT** | **85** |
-| **ABSENT** | **20** |
-| **OUT of scope** | **12** |
+| **PRESENT** | **100** |
+| **ABSENT** | **4** |
+| **OUT of scope** | **13** |
 | **Total** | **117** |
 
 By area, so the shape is visible rather than the total. The **Was** column is where each section
@@ -151,12 +152,12 @@ stood when this document was first written, at the start of Phase 5:
 
 | Area | Present | Absent | Out | Was | Reads |
 |---|---|---|---|---|---|
-| §5.1 The world and the view | 11 | 1 | — | 11 / 1 | Phase 1 is essentially complete |
-| §5.2 Orders | 18 | 10 | — | 18 / 10 | **Ten of the engine's own orders still have no way in — Phase 5 did not move this at all** |
-| §5.3 The economy | 20 | 2 | — | 20 / 2 | Phase 2 is complete; both gaps are in the *menus*, not the systems |
-| §5.4 Combat | 16 | 3 | — | 16 / 3 | Three of the four are payload fields on an event the client does not read |
-| §5.5 The galaxy | 11 | 2 | — | 11 / 2 | Phase 4 is complete except for two things nothing opens |
-| §5.6 The long game | 9 | 2 | — | 0 / 11 | **Phase 5's nine. The two left are a new-game screen and audio** |
+| §5.1 The world and the view | 11 | 1 | — | 11 / 1 | The rally line, which P5-T15 is drawing |
+| §5.2 Orders | 28 | — | — | 18 / 10 | **Closed. This was the number the file was written to expose** |
+| §5.3 The economy | 22 | — | — | 20 / 2 | Closed. Both gaps were re-derivations that had rotted, not missing systems |
+| §5.4 Combat | 16 | 3 | — | 16 / 3 | Three payload fields on an event nothing reads — P5-T15's |
+| §5.5 The galaxy | 13 | — | — | 11 / 2 | Closed |
+| §5.6 The long game | 10 | — | 1 | 0 / 11 | Closed. Audio is OUT under ADR-0020 with its reopening condition named |
 | §5.7 Out of scope | — | — | 12 | — | Each cites the decision that made it out |
 
 **The interesting number is not 62/104, it is §5.2's 18/28.** Ten engine orders — a third of the
@@ -212,16 +213,16 @@ This is the table that decides the phase. Each row is one verb the 2D game gives
 | 28 | Escort a ship | `issueEscort` | `P`, then click a ship; `phase3-input.test.ts` | PRESENT |
 | 29 | Hold a formation | `issueHoldFormation` | `T`; `phase3-input.test.ts` | PRESENT |
 | 30 | Move in formation | `issueMove(…, {shape, leaderPos})` | `F` cycles the shape, then click; `phase3-input.test.ts` | PRESENT |
-| 31 | **Set a rally point** | `issueSetRally` | **`{kind:"setRally"}` exists in `bridge/commands.ts` and appears nowhere else in `src/` or `test/`.** No button, no key, no test. Upstream's version also takes a `nodeId` — rally-to-node, so new workers spawn already mining — which the intent does not carry either | ABSENT |
-| 32 | **Cancel a queued unit** | `cancelProduction` | **`{kind:"cancelTrain"}` exists in `bridge/commands.ts` and appears nowhere else in `src/` or `test/`.** A production queue a player can fill and cannot empty | ABSENT |
-| 33 | **Repair (a manual order)** | `issueRepair` | Exported by the façade (`index.ts:38`) and **imported by nothing**. Menders auto-repair via `updateRepair`, so this is the *explicit* "go fix that" — the one a player gives when the automation picks wrong. P2-T15's panel shows who needs repairing and offers no way to send anybody | ABSENT |
-| 34 | **Service a building (manual haul)** | `issueServiceBuilding` | Exported by the façade and imported by nothing. The manual counterpart to `assignHaul` | ABSENT |
-| 35 | **Scout mode** | `issueScout`, `updateScoutMode` (`scout.js`) | Exported by the façade for Phase 3 and never wired. `scout.js` is a whole module — one export — that nothing reaches | ABSENT |
-| 36 | **Assist build** | `issueAssistBuild` | Not in the façade. Named in the Phase 3 header as one of "eight engine commands the bridge has never exposed"; still eight | ABSENT |
-| 37 | **Ferry a freighter** | `issueFerryFreighter`, `assignFerry`, `updateFerry` | Not in the façade | ABSENT |
-| 38 | **Set home base** | `issueSetHomeBase` | Not in the façade. The engine's comment calls it "an explicit player override for `zoneFirst`'s usual nearest-CC guess" — the multi-base control | ABSENT |
-| 39 | **Set collect point** | `issueSetCollectPoint` | Not in the façade. `nearestGatherDrop` already honours it (P2-T07 names the landed collection-point freighter that can win the drop-off) — the client reads the consequence and cannot set the cause | ABSENT |
-| 40 | **AI logistics toggle** | `issueSetAILogistics`, `FREIGHTER_AI_TECH` | Not in the façade | ABSENT |
+| 31 | **Set a rally point** | `issueSetRally` | `U` arms a rally mode; the next click sets it on every selected building the engine says `produces` anything, and carries `nodeId` when the click lands on a deposit — **upstream's rally-to-minerals, which the intent could not carry as it stood**: `issueSetRally(building, x, y, nodeId)` makes a worker spawn already mining, so a rally point with only x/y would be quietly worse than the 2D game's for the one unit that needs it most. A building that trains nothing is refused rather than given a dead rally, because `issueSetRally` accepts any building at all | PRESENT |
+| 32 | **Cancel a queued unit** | `cancelProduction` | `Delete` cancels the **newest** job in each selected building's queue — not a letter, because this board has none to spare and "remove the last thing I added" is what the key means everywhere else; not Backspace, which still navigates in some browsers. `cancelProduction` is the one order in this group that ANSWERS, so its boolean is the refusal. The intent's `buildingId`/`queueIndex` became optional because nothing that can press a key can know either | PRESENT |
+| 33 | **Repair (a manual order)** | `issueRepair` | `Shift+R`, then click any own entity — R for **R**epair, with bare R still patrol. Gated on `canLogisticsType` and on `updateRepairJob`'s own drop rule. **Owner-checked at the bridge, because nothing in the engine checks**: `issueRepair` does not, and `updateRepairJob` tests only `!target || hp <= 0 || constructing` — so upstream will have a worker heal an *enemy* building, verified against `repair.js:128` | PRESENT |
+| 34 | **Service a building (manual haul)** | `issueServiceBuilding` | `I`, then click an own finished building. `updateService`'s own `if (!b || b.constructing)` is the refusal, asserted both ways after mutation testing found the guard **deletable with every test still green** — the only symptom is one tick later, when the job is silently discarded | PRESENT |
+| 35 | **Scout mode** | `issueScout`, `updateScoutMode` (`scout.js`) | `E` — the letter `input/intents.ts` reserved for it in the MVP, in a header written four phases before it could be spent: *"upstream has already spent Q and E on select-army and scout"*. `scout.js`'s single export now actually runs; the test steps the sim and asserts the Ranger moves under a stance nobody gave a destination to | PRESENT |
+| 36 | **Assist build** | `issueAssistBuild` | `Shift+I`, then click a site under construction — sharing I with row 34 because **the engine makes the two exclusive**: `updateService` drops a service job on a `constructing` target next tick, and a build order is the only thing that helps one. Filtered by `canBuildType`, which IS `canBuildCategory(u.type, BUILDINGS[t].category)` | PRESENT |
+| 37 | **Ferry a freighter** | `issueFerryFreighter`, `assignFerry`, `updateFerry` | `Shift+F`, then click a freighter; bare F cycles the formation. `UNITS[f.type].cargoHold` is required — `updateFerry` nulls its target without one, and the plain Freighter has none | PRESENT |
+| 38 | **Set home base** | `issueSetHomeBase` | `Shift+H`, then click a Command Center. Upstream's own gesture is a right-click on a CC, which is untakeable here because right-click is the single context order. `zoneFirst`'s `pinned` test is quoted condition for condition (own, finished, `isCommandCenter`), because `issueSetHomeBase` writes `homeCC` regardless and `zoneFirst` then silently ignores it — the multi-base control would have read as broken. The accepting set is the engine's wider one: logistics, support **and** freighter | PRESENT |
+| 39 | **Set collect point** | `issueSetCollectPoint` | `Shift+P` toggles it; bare P is protect/escort. The bridge flips the flag because only the sim knows which way it points. A hold-less freighter is refused — `assignShuttle` can never move one, so the engine accepts the switch and collects nothing forever — and the test's witness is the engine's own consumer: a loaded ship is given its `shuttle` run | PRESENT |
+| 40 | **AI logistics toggle** | `issueSetAILogistics`, `FREIGHTER_AI_TECH` | `Shift+L` toggles it; bare L opens the haulage board, the same subject one level down. `FREIGHTER_AI_TECH` is asked **before** the order, because `issueSetAILogistics` skips an unresearched ship silently and returns nothing — without the check the key is simply dead until a tech the player may not know exists is finished. Standing down is never gated, as upstream's comment requires | PRESENT |
 
 ### 5.3 The economy
 
@@ -512,6 +513,15 @@ see a method nobody calls.** `phase4-input.test.ts` already made this argument a
 built a second check for it. The equivalent for content would be a sweep asserting that every
 `UNITS` key the engine would accept has a button — and the Phase 1 intent sweep that does not exist
 (§2, step 4) would have caught rows 31 and 32 five phases ago.
+
+> **Both now exist, and both found something on the day they were written.** P5-T14's menu sweep
+> takes `queueProduction` itself as its oracle — run for real on a rich fixture and rolled back — and
+> asserts an iff per producer over every `UNITS` key. P5-T13's union sweep reads every `kind` out of
+> the `Intent` union **in the source** and fails by name unless a gesture produces it or a named
+> enumeration test covers it; it is the check that would have caught `setRally` and `cancelTrain`
+> sitting in `bridge/commands.ts` with no producer on either end since Phase 1. Neither is a list
+> anybody has to remember to update, which is the only property that matters: every previous
+> instance of this failure was found by a person noticing, and people stopped noticing four times.
 
 ---
 

@@ -20,7 +20,7 @@ import {
   sampleTerrain, sell, tradeables,
   offerTribute, offerGift, fulfillRequest, tributeCost, surrenderGalaxy,
   // --- Phase 5's parity close-out (P5-T13, PARITY.md §5.2 rows 31–40) ---------------------------
-  canBuildType, FREIGHTER_AI_TECH,
+  canBuildType, canLogisticsType, FREIGHTER_AI_TECH,
   issueAssistBuild, issueFerryFreighter, issueRepair, issueScout, issueServiceBuilding,
   issueSetAILogistics, issueSetCollectPoint, issueSetHomeBase,
 } from "../engine/index.js";
@@ -523,7 +523,7 @@ export function applyIntent(state: State, intent: Intent, galaxy: Galaxy): strin
     case "collectPoint": {
       const ships = selectedUnits(state).filter((u) => UNITS[u.type]?.role === "freighter");
       if (ships.length === 0) return `Only a ${roleNames("freighter")} can be a collection point`;
-      const on = intent.on ?? !ships.every((u) => (u as FreighterModes).collectPoint === true);
+      const on = intent.on ?? !ships.every((u) => u.collectPoint === true);
       // `issueSetCollectPoint` takes every freighter role, and `assignShuttle` only ever moves a
       // ship with a hold — `freightUsed` is 0 and `freightRoom` is 0 without `cargoHold`, so the
       // run it offers can never start. Switching a hold-less ship on is accepted by the engine and
@@ -538,7 +538,7 @@ export function applyIntent(state: State, intent: Intent, galaxy: Galaxy): strin
     case "aiLogistics": {
       const ships = selectedUnits(state).filter((u) => UNITS[u.type]?.role === "freighter");
       if (ships.length === 0) return `Only a ${roleNames("freighter")} can be automated`;
-      const on = intent.on ?? !ships.every((u) => (u as FreighterModes).aiLogistics === true);
+      const on = intent.on ?? !ships.every((u) => u.aiLogistics === true);
       // The research gate, asked BEFORE the order. `issueSetAILogistics` skips an unresearched
       // freighter silently and returns nothing, so without this the key is simply dead until a
       // tech the player may not know exists has been finished. Standing DOWN is never gated —
@@ -755,24 +755,6 @@ function selectedUnits(state: State): Unit[] {
    is read by exactly one place, and has never been declared — written down next to that place.
    ================================================================================================= */
 
-/**
- * `UnitDef.canLogistics` — the flag `entities.js`' `canLogisticsType` is, in full:
- * `return !!UNITS[unitType]?.canLogistics;`
- *
- * The predicate itself does not cross the façade and neither does the field, so this is a
- * transcription of a one-line engine function, not a second opinion about which units haul. The
- * fix belongs in `src/engine/index.ts` (export `canLogisticsType`) and in `UnitDef` (declare the
- * flag); both are ADR-0003 territory and this file may not touch either.
- */
-interface LogisticsDef { canLogistics?: boolean }
-
-/** The two freighter modes, as `commands.js` writes them. `Unit` declares neither. */
-interface FreighterModes { collectPoint?: boolean; aiLogistics?: boolean }
-
-/** `issueServiceBuilding` / `issueFerryFreighter` / `issueRepair`'s own gate, and half of home base. */
-function canLogisticsType(type: string): boolean {
-  return !!(UNITS[type] as LogisticsDef | undefined)?.canLogistics;
-}
 
 /**
  * `issueSetHomeBase`'s filter, expression for expression:
