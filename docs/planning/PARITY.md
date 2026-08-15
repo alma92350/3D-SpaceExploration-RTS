@@ -100,6 +100,19 @@ hiding, and they have been hiding there since the MVP.
 | **ABSENT** | The engine does it; nothing above the bridge reaches it | The trace column names the export that is going unused |
 | **OUT** | Deliberately not ported | The trace column cites the ADR or the board row that decided it. Never a silent omission |
 
+**`OUT` covers two different things and the trace must say which.** Most of §5.7 is *never* — a
+module this product does not contain, decided in Phase 0. One row (105, audio) is *not yet*: an
+accepted ADR deferred it, with a stated condition that would reopen it. Both are legitimately out of
+a parity count, because a parity checklist measures whether a decision was made and recorded rather
+than whether the answer was yes — but a deferral filed as a permanent exclusion is how a "not yet"
+becomes a "never" without anyone deciding it. So a deferred row's trace names **the ADR and the
+condition**, and it is listed in §5.6 beside the phase that deferred it rather than buried in §5.7.
+
+This distinction is also what makes the exit criterion meetable at all. "The parity checklist is
+fully ticked" cannot mean "no row is OUT" — twelve rows were out before a line of Phase 5 was
+written. It means **no row is ABSENT**: nothing the engine does is left unreachable without a
+recorded decision.
+
 **`PRESENT` is not "the logic exists and is proven".** That was the bar this board met for two whole
 phases before P4-T01, and the reachability section of `TASKS.md` records what it cost: eight panel
 *models*, six of them imported by nothing. A row here is present when a **player** can reach it. A
@@ -299,9 +312,9 @@ mutation-checked). The two that remain are named rather than quietly dropped.
 | 102 | **Surrender** | `surrenderGalaxy` | A `surrender` intent and a button on the Records board. `surrenderGalaxy` returns **no value at all** and refuses silently on a seat already over, so `applyIntent` asks the question the engine will not answer — otherwise a second press on a struck-through button would say nothing, and this HUD keeps struck-through buttons clickable on purpose | PRESENT |
 | 103 | **The score breakdown** | `scoreBreakdown` (bank / army / structures), `playerScore` | `src/ui/score-panel.ts` on the Records board, bank / army / structures shown separately because upstream's comment says the breakdown exists "so a HUD can show WHY". §6.2's ruling holds: it is a readout, never a win condition | PRESENT |
 | 104 | **New-game setup: faction and difficulty** | `PLAYABLE_FACTIONS` (3), `factionTrait`, `DIFFICULTY_OPTIONS` (3, each with ~12 tuning fields) | `WorldOptions` accepts `difficulty` and `playerFaction`; **`main.ts` passes neither**, so every session is `medium` / `frontier`. There is no new-game screen at all | ABSENT |
-| 105 | **Audio** | **none — `grep -ri audiocontext src/engine` finds nothing** | Not an engine capability. See §6.3: upstream *does* have a `sound.js`, it simply was not vendored, which is the evidence Q-06 (P5-T02) has been waiting for | ABSENT |
+| 105 | **Audio** | **none — `grep -ri audiocontext src/engine` finds nothing** | **ADR-0020: no audio yet.** Not a gap in the wiring — `sound.js` exists upstream and was never vendored (§6.3), so there is nothing above the bridge to reach. The ADR's own reason is the reopening condition, and it is a client-side one: **the bridge discards the events audio would speak for**, so the row reopens when `attackHit` and the galaxy note queues are consumed — which rows 66–68, 93 and 94 are doing. Recorded as a deferral rather than an exclusion; `longgame.md` tasks 4 and 16 are written to notice its absence unprompted | OUT |
 
-*(Row 105 is counted in §5.6's total of 11; rows 95–105 are eleven.)*
+*(Rows 95–105 are eleven. Row 105 is OUT rather than ABSENT — see §3 on the two kinds of OUT — so §5.6 counts as nine present, one absent and one out.)*
 
 ### 5.7 Out of scope — and why, in each case
 
