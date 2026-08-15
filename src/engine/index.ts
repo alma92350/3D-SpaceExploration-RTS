@@ -125,3 +125,24 @@ export {
 } from "@engine/engine/aiIntel.js";
 
 export { PLANETS, COM } from "@engine/data.js";
+
+// ---------------------------------------------------------------------------------------------
+// Phase 4 — the galaxy above the seat (P4-T09).
+//
+// The save round-trip cannot be proved against a FRESH galaxy: a fresh one regenerates from its
+// seed, so it would round-trip even if serialization dropped every field. Proving anything needs a
+// galaxy that has diverged — a second world settled, a lane running, a standing order set — and
+// that needs the mutators below. Each is upstream's own; nothing here is a rule reimplemented.
+//
+// `BG_STEP` and `LANE_PERIOD` cross as the two integer schedules the galaxy scheduler runs on. A
+// test that guessed either would be asserting against its own arithmetic rather than the engine's.
+// ---------------------------------------------------------------------------------------------
+
+export {
+  BG_STEP, LANE_PERIOD, JUMP_COST, jumpCost, jumpCapital,
+  createLane, assignShipToLane, unassignShipFromLane, runLanes, sweepColonies,
+} from "@engine/engine/galaxy.js";
+
+export {
+  MAX_WORKER_TARGET, sanitizePolicy, getColonyPolicy, setColonyPolicy,
+} from "@engine/engine/colonyPolicy.js";
