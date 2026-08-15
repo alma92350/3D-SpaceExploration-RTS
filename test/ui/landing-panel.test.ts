@@ -20,7 +20,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
-  LANDING_PICK_GRID, activeState, createGalaxy, makeBuilding, makeUnit, playerSpaceports,
+  activeState, createGalaxy, makeBuilding, makeUnit, playerSpaceports,
   previewPlanet, snapLandingPoint,
 } from "../../src/engine/index.js";
 import { applyIntent } from "../../src/bridge/commands.js";
@@ -172,7 +172,9 @@ describe("what the jump is allowed to promise", () => {
     const model = landingPanelModel(brief, near, site);
     expect(model.landingX).toBe(near.x);
     expect(model.landingY).toBe(near.y);
-    expect(model.siteX).toBe(100);                       // the clamp's margin, not a grid line
+    // Upstream 50ceb88 (issue #94) made the snap pick the nearest real landing SITE, so this is a
+    // site rather than the old off-lattice clamp margin of 100.
+    expect(brief.sites.xs, "the picker left the engine's own site list").toContain(model.siteX);
     jumpWith(honest, FRESH, model.landingX, model.landingY);
     const landed = riderPosition(honest, FRESH);
 
@@ -183,10 +185,12 @@ describe("what the jump is allowed to promise", () => {
     // The forwarded raw point lands exactly where the player was shown.
     expect(landed.x - ring.dx).toBe(model.siteX);
     expect(landed.y - ring.dy).toBe(model.siteY);
-    // The snapped point, forwarded, is rounded a second time and lands a grid line further in —
-    // 60 units from the ring the picker drew, with nothing on screen to say so.
-    expect(drifted.x - ring.dx).toBe(LANDING_PICK_GRID);
-    expect(drifted.x - landed.x).toBe(LANDING_PICK_GRID - 100);
+    // **And so does the snapped point, which it did NOT before.** This assertion is inverted from
+    // what it was: the snap used to round then clamp, so feeding the picker's own answer back in
+    // landed 60 units from the ring it had drawn. Reported as upstream issue #94, fixed in 50ceb88,
+    // and the panel still forwards the raw point — no longer because it must, but because it is
+    // correct either way and this test now guards the engine's promise rather than working round it.
+    expect(drifted.x, "the snap is no longer a fixed point — issue #94 has regressed").toBe(landed.x);
     expect(drifted.y).toBe(landed.y);
   });
 

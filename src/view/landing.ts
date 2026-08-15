@@ -106,6 +106,16 @@ export interface ApproachBrief {
   readonly field: ElevationField;
   /** `snapLandingPoint`, bound to this destination's map. Never a grid constant. */
   readonly snap: SnapLanding;
+  /**
+   * `landingSites`, bound to this map — the sites the engine will actually accept, per axis.
+   *
+   * Added upstream in 50ceb88 (issue #94, reported from here). Before it, this module had to
+   * *probe* the snap function to find its step (`snapStep` below), because the bare grid and the
+   * real sites disagree near a map edge — "nearest multiple of LANDING_PICK_GRID" was up to 60
+   * units wrong there. The list is the source of truth now; the probe is kept only as the fallback
+   * for a snap with no site list.
+   */
+  readonly sites: { readonly xs: readonly number[]; readonly ys: readonly number[] };
   /** The player's completed Spaceports here, in the engine's own `playerSpaceports` order. */
   readonly pads: readonly LandingPad[];
   /** `map.bases.player` — the world's fixed generation-time anchor, the last fallback. */

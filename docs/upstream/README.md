@@ -1,21 +1,33 @@
-# Fixes owed upstream
+# Fixes owed upstream — **ALL LANDED**
 
-Three defects this client found in the simulation, with verified patches. **They are not applied
+> **Closed.** All three were reported as upstream issues #92, #93 and #94, fixed in
+> `alma92350/SpaceExploration-RTS` PR #95, and arrived here through `npm run sync:engine`:
+> the pinned ref moved `93f607ae46fb` → **`50ceb88d36f2`**. Nothing in this directory is
+> outstanding; it is kept as the record of the round trip, because it is the first time this
+> project exercised ADR-0003's upstream-first path end to end.
+>
+> **Upstream solved #94 better than the patch below proposed.** Rather than clamping to the lattice,
+> it added `landingSites(map)` — the sites a map actually offers, per axis — and made
+> `snapLandingPoint` pick the nearest one. That makes the site list the source of truth instead of
+> the bare grid, which is the distinction that made "nearest multiple of the grid" wrong by up to 60
+> units near an edge. `ApproachBrief` now carries that list beside the bound `snap`, and
+> `view/landing.ts`'s probe (`snapStep`) is demoted to a fallback.
+
+Three defects this client found in the simulation, with verified patches. **They were not applied
 here and must not be**: ADR-0003 vendors `engine/` byte-for-byte and says changes to simulation
 behaviour go upstream first, then arrive through a sync that bumps the pinned ref. A local edit
 breaks the drift check, which is the whole point of the drift check.
 
-So this directory is a staging post, not a fork. It holds what a maintainer needs to apply the
-fixes to `alma92350/SpaceExploration-RTS` and nothing else.
+So this directory was a staging post, not a fork.
 
 | File | |
 |---|---|
 | `0001-three-defects-found-from-the-3d-client.patch` | The patch. Three hunks, 63 lines, against `93f607ae46fb` — the commit `src/engine/VENDOR.json` pins, verified identical to upstream `main` at the time of writing |
 | `verify-defects.mjs` | Runs each defect and its fix side by side and prints the numbers below. `node docs/upstream/verify-defects.mjs <path-to-patched-engine>` |
 
-A branch exists upstream — `claude/three-defects-found-from-the-3d-client` — created from that same
-commit and **currently empty**: this session could not push the file contents to it. See "How to
-land these" below.
+A branch was created upstream — `claude/three-defects-found-from-the-3d-client` — and left empty,
+because this session could not push file contents to it. The fixes landed via PR #95 from a
+different branch instead; the empty one can be deleted.
 
 ---
 
@@ -80,22 +92,27 @@ game's balance, not for the client that found it.
 
 ---
 
-## How to land these
+## How they landed, and what it cost
 
-Applying the patch needs a clone, which this session was not permitted to make. Either:
+Reported as issues rather than a PR, because this session could clone neither repo and could not
+push 103 kB of file content through the API. That turned out to be the better shape anyway: the
+upstream session ran the real ~41 k-line suite, which this one could not, and it improved fix 3
+rather than applying it. **Six CI checks green on node 20 and node 22 before merge.**
 
-```
-git clone https://github.com/alma92350/SpaceExploration-RTS
-cd SpaceExploration-RTS
-git checkout claude/three-defects-found-from-the-3d-client
-git apply /path/to/0001-three-defects-found-from-the-3d-client.patch
-npm test          # upstream's own ~41k lines — NOT run by this session
-```
+The whole round trip, as a record of ADR-0003's path working:
 
-**Nothing here has been run against upstream's test suite.** Each fix was verified against the
-vendored copy of the same commit, which is byte-identical to upstream, by the script beside this
-file — but that proves the defect and the fix, not the absence of a regression elsewhere. Fixes 1
-and 2 are inert outside the paths described. Fix 3 is not, and its blast radius is the reason it is
-called out separately above.
+1. Three separate rows of Phase 4 each found one defect **as a side effect of testing something
+   else** — the save round-trip, the colony income panel, the landing picker.
+2. Each was pinned here as a test asserting the defect **is there**, with a note saying an upstream
+   fix should turn it red.
+3. Reported upstream with a measurement, a reproduction and a suggested diff.
+4. Fixed upstream, merged, synced (`93f607ae46fb` → `50ceb88d36f2`).
+5. **All three pinned tests went red on the sync, exactly as designed** — plus one that fired for
+   the wrong reason (see below). Each was then *inverted* into a regression guard rather than
+   deleted: the scenarios are expensive to build and are precisely what a regression would need.
 
-Once merged upstream, `npm run sync:engine` brings them here and the pinned ref moves.
+**One guard cried wolf, and that is worth recording.** `test/engine/galaxy-coordinates.test.ts`
+pinned ADR-0019's premise by file, function **and line number** — and the fix added nine lines above
+`jumpCost`, moving it from 975 to 984. Nothing about the premise had changed. A guard that fires on
+unrelated edits is one the next person deletes, so it now pins file and function only, and prints
+the line in the failure message where it helps and cannot cause a false alarm.

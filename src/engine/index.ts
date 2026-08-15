@@ -160,7 +160,7 @@ export {
   canJump, canJumpTo, jumpVessel, stagedRiders, jumpManifest, jumpManifestAll,
   spaceportTier, jumpCapacity, upgradeSpaceport, playerSpaceports,
   freightCapacity, cargoManifest, loadFreighter, unloadFreighter, deleteLane,
-  snapLandingPoint, previewPlanet, galaxyStatus, backgroundWorldIds,
+  snapLandingPoint, landingSites, previewPlanet, galaxyStatus, backgroundWorldIds,
 } from "@engine/engine/galaxy.js";
 
 export { runColonyPolicies } from "@engine/engine/colonyPolicy.js";

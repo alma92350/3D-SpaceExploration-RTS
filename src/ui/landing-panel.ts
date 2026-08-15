@@ -27,7 +27,7 @@
 // Everything player-facing here follows from `landingSite`'s `source`, so the words and the marker
 // can never disagree about which of the three cases the jump is in.
 
-import { playerSpaceports, previewPlanet, snapLandingPoint } from "../engine/index.js";
+import { landingSites, playerSpaceports, previewPlanet, snapLandingPoint } from "../engine/index.js";
 import { elevationFieldFrom } from "../view/terrain/elevation.js";
 import { type ApproachBrief, type GroundPoint, type LandingSite } from "../view/landing.js";
 
@@ -66,6 +66,7 @@ export function approachBrief(galaxy: Galaxy, destId: string): ApproachBrief {
     field: elevationFieldFrom(map.terrain, map.width, map.height),
     // The engine's own function, bound to this map. Not a grid, not a copy of the rounding.
     snap: (x: number, y: number) => snapLandingPoint(map, x, y),
+    sites: landingSites(map),
     // `playerSpaceports` sorts by id, lowest first, and `landingZone` breaks its ties on that
     // order — so the order is carried, not just the set.
     pads: playerSpaceports(dest).map((b) => ({

@@ -160,3 +160,12 @@ export declare function previewPlanet(galaxy: Galaxy, planetId: string): unknown
 /** The engine's own per-world summary. Report it; never re-derive it. */
 export declare function galaxyStatus(galaxy: Galaxy): unknown;
 export declare function backgroundWorldIds(seed: number, startId: string, count?: number): string[];
+
+/**
+ * The landing sites a map actually offers, per axis (added upstream in 50ceb88, issue #94).
+ *
+ * The site list is the source of truth, not the bare grid: near a map edge the two disagree, and
+ * "nearest multiple of LANDING_PICK_GRID" was wrong by up to 60 units there. `snapLandingPoint`
+ * picks the nearest entry of these, which is what makes it a fixed point.
+ */
+export declare function landingSites(map: GameMap): { xs: number[]; ys: number[] };

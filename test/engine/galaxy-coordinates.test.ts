@@ -395,12 +395,19 @@ describe("no engine function reads a world position except as |Δx| (P4-T03, ADR
     }
 
     // ADR-0019 §2's table, as an assertion: "Engine read-sites of a world's position — 2, both
-    // Math.abs(Δx)", at galaxy.js:975 (`jumpCost`) and galaxy.js:605 (`checkExpansion`).
+    // Math.abs(Δx)" — `checkExpansion` and `jumpCost`.
+    //
+    // **Identified by file and function, deliberately NOT by line.** The first version pinned
+    // `galaxy.js:975` too, and an upstream sync fired it: the engine fix for the landing-snap
+    // defect added nine lines above `jumpCost`, moving it to 984. Nothing about ADR-0019's premise
+    // had changed — still two sites, still both `Math.abs(Δ)` — but the guard cried wolf, and a
+    // guard that cries wolf on unrelated edits is one the next person deletes. The line is still
+    // printed in the failure message, where it helps and cannot cause a false alarm.
     expect(
-      sites.map((s) => `${s.file}:${s.line} ${s.fn}()`),
+      sites.map((s) => `${s.file} ${s.fn}()`),
       "the number of places that read a world position has changed:\n  " +
       sites.map((s) => `${s.file}:${s.line} in ${s.fn}() — ${s.text}`).join("\n  "),
-    ).toEqual(["galaxy.js:605 checkExpansion()", "galaxy.js:975 jumpCost()"]);
+    ).toEqual(["galaxy.js checkExpansion()", "galaxy.js jumpCost()"]);
 
     for (const site of sites) {
       expect(site.calls, `${site.fn}() reads ${site.calls} positions on one line — that is not a Δ`).toBe(2);
