@@ -116,8 +116,12 @@ export function onboardingModel(input: OnboardingInput): OnboardingModel {
     },
     {
       id: "select",
-      text: "Left-click your colony ship to select it. Drag a box to take several units at once.",
-      keys: [],
+      // `Q` named here because P6-T11 made it real, and NOT before: the card's whole discipline is
+      // that every key it names is data put through `translateKey`, so naming one the app does not
+      // bind fails this file's own test. Until this phase there was no keyboard answer to give —
+      // a player without a mouse read this line, which told them to click, and stopped.
+      text: "Left-click your colony ship to select it — or press Q. Drag a box to take several units at once.",
+      keys: ["q"],
       buttons: ["left"],
       done: snap.selection.length > 0,
     },

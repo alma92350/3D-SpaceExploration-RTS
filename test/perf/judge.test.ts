@@ -22,6 +22,9 @@ function result(over: Partial<PerfResult> = {}): PerfResult {
     maxTriangles: 13_016,
     terrainUploads: 1,
     fogUploads: 30,
+    // Zero, because a scene with no build ghost never brings the grid up at all — see
+    // `PerfResult.powerUploads`. The check is "not once per frame", so 0 must pass.
+    powerUploads: 0,
     simMsPerFrame: 0.7,
     // Explicitly null, not omitted: T0 settles no roster, and `PerfResult.background` says so out
     // loud for the same reason `Baseline.p95` does (P4-T10).
@@ -77,6 +80,20 @@ describe("the perf gate's judgement", () => {
     const overBudget = judge(result({ p95: 40, maxDrawCalls: 40 }), unrecorded);
     expect(overBudget.ok).toBe(false);
     expect(overBudget.problems.join(" ")).toMatch(/exceeds the 33 ms budget/);
+  });
+
+  it("fails a power field that re-uploads every frame, and passes one that is version-gated", () => {
+    // The grid is a whole `cols × rows` byte field. `setPower` re-uploads only when `version` moves
+    // (ADR-0012 §2), and until P6-T07 gave a perf scene a build ghost nothing had ever called it in
+    // a gated run — so the one of the three version-gated uploads with no test was also the one with
+    // no coverage. Judged against the FRAME count rather than a constant: the field legitimately
+    // moves whenever a power source is built or destroyed, and no fixed number separates a busy
+    // base from a broken gate.
+    expect(judge(result({ powerUploads: 12 }), baseline).ok, "a dozen changes in 300 frames is a base being built")
+      .toBe(true);
+    const perFrame = judge(result({ powerUploads: 300 }), baseline);
+    expect(perFrame.ok).toBe(false);
+    expect(perFrame.problems.join(" ")).toMatch(/version gate is not holding/);
   });
 
   it("has no tolerance at all for a draw call appearing", () => {

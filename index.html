@@ -81,6 +81,7 @@
       <p id="fallback-notice" class="fallback-notice"></p>
       <p class="hint">
         <b>LMB</b> select · <b>drag</b> box-select · <b>RMB</b> order ·
+        <b>Q</b> select next type (shift: one at a time) · <b>K</b> act at the screen centre ·
         <b>Z C V B N</b> fire the 1st–5th button below · <b>A</b> attack-move · <b>X</b> stop ·
         <b>H</b> hold · <b>R</b> patrol · <b>F</b> formation · <b>T</b> hold formation ·
         <b>P</b> protect · <b>O</b> arm bomb · <b>0-9</b> groups (ctrl set) ·
@@ -94,6 +95,15 @@
       <p class="hint">
         <b>Y</b> opens the starmap — <b>click a world</b> to approach it, <b>move</b> to mark the
         landing, then the confirm button (or <b>Z</b>) jumps.
+      </p>
+      <!-- P6-T11, N-05: the game is playable with no mouse at all, and a route through the list
+           above is worth more than two more entries in it. Every key named here is checked against
+           `translateKey` by `test/ui/onboarding.test.ts` — the hint paragraph is hand-written prose
+           that no compiler reads, and that check is the only thing that can tell when it lies. -->
+      <p class="hint">
+        No mouse? <b>Q</b> picks the next kind of thing you own and flies there, <b>WASD</b> aims
+        the middle of the screen, and <b>K</b> acts on it — move, gather, attack, or place whatever
+        you have armed.
       </p>
       <!-- P6-T06. Filled by `src/app/build.ts` from the version `vite.config.ts` injects, so no
            human ever retypes it. Every playtest script asks a tester which build they were on, and

@@ -210,12 +210,20 @@ describe("dismissal outlives the tab (P5-T10)", () => {
    through the real thing.
    ================================================================================================= */
 
-/** Does `translateKey` do ANYTHING with this key? Every field of `KeyResult`, so nothing is missed. */
+/**
+ * Does `translateKey` do ANYTHING with this key?
+ *
+ * Read off the RESULT rather than from a list of field names, and that is a correction: the hand
+ * written list said "every field of `KeyResult`, so nothing is missed" and could only ever be every
+ * field on the day it was written. P6-T11 added two (`select`, `crosshair`), and a check that
+ * quietly stops covering a new binding is the same failure as the sidebar paragraph it guards.
+ *
+ * `NO_KEY` is `{ intent: null, mode: null, camera: null, cancel: false }` — so a key this module
+ * does not own has nothing but nulls and a false, and anything else means it is bound.
+ */
 function translated(key: string): boolean {
   const r: KeyResult = translateKey({ key, shift: false, ctrl: false });
-  return r.intent !== null || r.mode !== null || r.camera !== null || r.cancel
-    || r.togglePower === true || r.group !== undefined || r.bomb !== undefined
-    || r.action !== undefined || r.board !== undefined || r.screen !== undefined;
+  return Object.values(r).some((v) => v !== null && v !== undefined && v !== false);
 }
 
 const VIEW_W = 1280;

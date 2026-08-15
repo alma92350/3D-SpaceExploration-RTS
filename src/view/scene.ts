@@ -182,6 +182,27 @@ export class SceneComposer {
 
     const cullSq = tier.cullDistance * tier.cullDistance;
     const lodSq = tier.lodDistance * tier.lodDistance;
+    // The imposter quad's facing, computed ONCE for the frame (P6-T07).
+    //
+    // The quad's geometry is a unit square in the model's XY plane, so its outward normal is +Z
+    // (`generators.ts`: "one camera-facing quad. The renderer billboards it"). No renderer
+    // billboards it: both apply the batch's own `yaw` about Y and nothing else, and this pushed 0.
+    // Measured consequence, on the 8 yaw snaps the rig actually allows — the quad was BACK-FACING
+    // at five of them (0, 1, 2, 6, 7), which the instance material's front-face culling drops
+    // entirely, and at two of those (2 and 6) it projected to 0.00 px wide, which is nothing in
+    // either renderer. `yawIndex` 0 is the boot default, so the game's opening camera drew no
+    // imposter at all — and past T0's LOD distance that is a median 57% of the entities on screen.
+    //
+    // A rotation of θ about Y sends the normal to (sin θ, cos θ), and the eye sits at
+    // −(sin yaw, cos yaw) × horizontal from the look-at point, so θ = yaw + π points the quad at
+    // the camera. VIEW-PLANE aligned rather than eye-facing: one addition for the whole frame
+    // instead of an `atan2` per instance, and imposters that never rotate against each other.
+    // Measured after: front-facing and 21.10 px wide at all eight snaps, where the widest the old
+    // code ever managed was 21.10 at two of them and 0.00 at two more.
+    //
+    // It cannot fix PITCH. `drawInstances` applies a Y rotation only, so a vertical quad under a
+    // camera pitched 74° down stays foreshortened; a full billboard needs a renderer change.
+    const imposterYaw = camera.yaw + Math.PI;
 
     for (let i = 0; i < e.count; i++) {
       const x = this.interpX[i]!;
@@ -229,7 +250,8 @@ export class SceneComposer {
       if (lod === LOD_IMPOSTER) {
         // The imposter is a unit quad; its scale carries the entity's real size so a distant
         // Command Center still reads as bigger than a distant Skiff.
-        this.batchFor("imposter", owner, lod).push(x, height, y, 0, e.radius[i]! * 2.2 * scale, shade);
+        this.batchFor("imposter", owner, lod)
+          .push(x, height, y, imposterYaw, e.radius[i]! * 2.2 * scale, shade);
       } else {
         this.batchFor(mesh, owner, lod).push(x, height, y, e.facing[i]!, scale, shade);
       }
@@ -274,8 +296,22 @@ export class SceneComposer {
       this.overlays.get("selection")!.push(x, height + 0.4, y, e.radius[i]! * 1.35);
     }
 
-    // Health bars only where they can be read: at imposter range they are sub-pixel clutter that
-    // costs a draw call's worth of vertices and tells the player nothing.
+    // Health bars, chevrons and status badges only where they can be read.
+    //
+    // This used to say they are "sub-pixel clutter that costs a draw call's worth of vertices" past
+    // imposter range, and P6-T07 measured both halves of that and found both wrong. They are drawn
+    // by `drawOverlayLayer`, which both renderers share, as CONSTANT-pixel 2D shapes projected onto
+    // the overlay canvas — a health bar is a 22×5 px `fillRect` at 200 units and at 2 000 — so they
+    // are never sub-pixel at any distance, and they have no vertices at all.
+    //
+    // The gate is still right, for the reason it did not give: at imposter range the entities are a
+    // few pixels apart on screen while their bars stay 22 px wide, so the bars stop reading as
+    // belonging to anything and become a solid band. It is CROWDING, not shrinking — which matters,
+    // because the two have different fixes and only one of them is a distance.
+    //
+    // Sharing `lodSq` with the mesh/imposter switch is convenient rather than derived: "is the mesh
+    // worth drawing?" and "can the player read a bar?" are different questions, and `tiers.ts` now
+    // records that neither has a measured answer behind it.
     if (distSq <= lodSq) {
       const hp = e.hp[i]!;
       const maxHp = e.maxHp[i]!;

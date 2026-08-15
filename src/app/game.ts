@@ -118,6 +118,23 @@ export class Game {
   private readonly groups = new ControlGroups();
   /** The alert board (P3-T14). Client state, like the control groups beside it. */
   private readonly alerts = new AlertFeed();
+  /**
+   * Where the selection cycle is standing (P6-T11) — the ids the last Q press ASKED for, and the
+   * simulation tick it asked on.
+   *
+   * Client state for the control groups' reason, and it exists for one specific case: a `select` is
+   * an intent, so it lands on the next TICK, and two Q presses inside one 50 ms tick would both read
+   * the same stale `state.selection` and pick the same type twice. Key repeat does exactly that.
+   *
+   * **The stamp is the tick and not the selection**, and the difference is a bug found by writing
+   * the test: comparing against the selection this press started from cannot tell "my `select` has
+   * not landed yet" from "something put the selection back to where it was", so a control-group
+   * recall onto the group the player had just cycled off would leave the cycle a step behind
+   * forever. Within one tick nothing else can have moved the selection; after it, the simulation is
+   * the position of record, and it holds this cycle's own answer anyway.
+   */
+  private cycleAsked: readonly string[] = [];
+  private cycleTick = -1;
   private readonly keys = new Set<string>();
   private pointerX = 0;
   private pointerY = 0;
@@ -296,6 +313,10 @@ export class Game {
     this.alerts.clear();
     this.ghost = null;
     this.mode = { kind: "none" };
+    // The cycle's cursor is engine ids from the world just left, exactly like an alert's position —
+    // and the new seat keeps its own tick count, so the stamp means nothing here either.
+    this.cycleAsked = [];
+    this.cycleTick = -1;
     // An approach view onto the world just arrived on is a picker for a jump that has happened.
     // Unreachable through the confirm button (it closes the screen itself) and cheap to be sure of.
     if (this.screen.kind === "approach" && this.screen.destId === this.seatId) {
@@ -675,6 +696,13 @@ export class Game {
     if (result.intent) this.bridge.enqueue(result.intent);
     if (result.group) this.applyGroup(result.group.n, result.group.op);
     if (result.bomb) this.applyBomb(result.bomb);
+    // P6-T11's two keys. Both belong to the battlefield for the same reason the camera commands
+    // below it do: the cycle MOVES the camera and the crosshair IS the camera, and neither means
+    // anything on a screen that camera is not being drawn through.
+    if (this.screen.kind === "world") {
+      if (result.select) this.applySelect(result.select.scope);
+      if (result.crosshair) this.pressCrosshair(result.crosshair);
+    }
     // A positional key fires the Nth button the HUD is showing, or nothing at all when the row is
     // shorter than that — never the last button, which is how a player learns to distrust the row.
     if (result.action) {
@@ -763,7 +791,14 @@ export class Game {
   private updateGhost(): void {
     if (this.mode.kind !== "build") { this.ghost = null; return; }
     const camera = this.camera.update(...this.viewportSize());
-    const hit = pickGround(camera, this.field, this.pointerX, this.pointerY);
+    // **No pointer in the window means no pointer to follow** (P6-T11). `pointerX/pointerY` are 0,0
+    // until the first `pointermove`, so a keyboard-only player armed a build and was shown a ghost
+    // pinned to the top-left corner of the viewport — the wrong validity, the wrong Plasma Rig
+    // survey (`refreshEconomy` reads this position), and, once `K` could place, the wrong spot. The
+    // camera centre is where their crosshair is, so it is where the preview belongs.
+    const hit = this.pointerInside
+      ? pickGround(camera, this.field, this.pointerX, this.pointerY)
+      : this.cameraPoint();
     const state = this.bridge.state;
     const check = checkPlacement(state, this.mode.buildingType, hit.x, hit.y);
     const def = BUILDINGS[this.mode.buildingType];
@@ -818,6 +853,136 @@ export class Game {
         ? { kind: "detonate", unitId: id }
         : { kind: "armBomb", unitId: id, armed: !u.armed });
     }
+  }
+
+  /* ---------------------------------------------------------------------------------------------
+     Keyboard-only play (P6-T11)
+
+     Two presses, resolved here for `applyGroup`'s reason: `input/intents.ts` is pure and can see
+     neither the roster nor the camera, so it says WHICH WAY to step and WHICH BUTTON to press, and
+     the snapshot answers the rest. Nothing below writes simulation state — a cycle becomes an
+     ordinary `select` intent and a crosshair press becomes an ordinary gesture, both through the
+     same queue a mouse uses.
+     --------------------------------------------------------------------------------------------- */
+
+  /**
+   * A selection-cycle press — Q takes the next TYPE, Shift+Q the next MEMBER of the type held now.
+   *
+   * Read from the SNAPSHOT rather than from engine state, and that is the same small map hack
+   * `applyGroup`'s recall guards against: the snapshot is fog-filtered, so a cycle can only ever
+   * reach something the player can actually see.
+   *
+   * The roster is taken in the snapshot's own order — buildings before units, then the engine's own
+   * insertion order — rather than re-sorted here. That order is already stable and already the
+   * engine's (ADR-0012 §5), so the cycle visits the same types in the same sequence every lap, and
+   * a second Barracks appearing does not renumber the one the player was standing on.
+   */
+  private applySelect(scope: "type" | "member"): void {
+    const e = this.bridge.snapshot.entities;
+    const roster: number[] = [];
+    for (let i = 0; i < e.count; i++) if (e.owner[i] === 0) roster.push(i);
+    if (roster.length === 0) return;                   // nothing left alive: say nothing, do nothing
+
+    const from = new Set(this.cycleFrom());
+    const at = roster.find((i) => from.has(engineId(e.ids[i]!)));
+    // -1 when the selection is empty, the enemy's, or dead. `indexOf(-1)` is -1 and the wrap below
+    // turns that into 0, so "nothing selected" starts the lap at the first type — no second branch.
+    const held = at === undefined ? -1 : e.typeIndex[at]!;
+
+    // Kept as roster INDICES rather than ids until the last moment, so the camera below reads the
+    // position of a thing that was actually chosen instead of looking one back up by name.
+    let picked: number[];
+    if (scope === "type") {
+      const types: number[] = [];
+      for (const i of roster) if (!types.includes(e.typeIndex[i]!)) types.push(e.typeIndex[i]!);
+      const next = types[(types.indexOf(held) + 1) % types.length]!;
+      picked = roster.filter((i) => e.typeIndex[i] === next);
+    } else {
+      // Narrow, then step. The type is whatever is selected now — or the first one the player owns,
+      // so Shift+Q from nothing still lands on something rather than being a dead key.
+      const type = held < 0 ? e.typeIndex[roster[0]!]! : held;
+      const members = roster.filter((i) => e.typeIndex[i] === type);
+      // Stepping only makes sense from ONE member. From the whole group (what Q just gave them, and
+      // the common case) this narrows to the first rather than skipping it.
+      const step = from.size === 1 ? members.findIndex((i) => from.has(engineId(e.ids[i]!))) : -1;
+      picked = [members[(step + 1) % members.length]!];
+    }
+
+    const ids = picked.map((i) => engineId(e.ids[i]!));
+    this.bridge.enqueue({ kind: "select", ids, additive: false });
+    // **And the camera goes with it**, which is the other half of this row: the minimap's
+    // click-to-jump had no keyboard equivalent beyond Home and Space, and a player who cannot travel
+    // to their own units cannot order them. The FIRST of the new selection rather than its centroid
+    // — a centroid of two ships at opposite corners is empty ground, and this way the camera always
+    // lands on something real.
+    this.camera.focusOn(e.x[picked[0]!]!, e.y[picked[0]!]!);
+    this.cycleAsked = ids;
+    this.cycleTick = this.bridge.state.tick;
+  }
+
+  /** Where the cycle steps from — see `cycleAsked` for why this is not simply the selection. */
+  private cycleFrom(): readonly string[] {
+    const state = this.bridge.state;
+    return this.cycleTick === state.tick && this.cycleAsked.length > 0
+      ? this.cycleAsked
+      : state.selection;
+  }
+
+  /**
+   * A crosshair press — the keyboard's "here".
+   *
+   * One synthesised `PointerGesture` back through `translatePointer`, deliberately: the twelve
+   * pending modes, the context order's move/attack/gather branch and the shift modifier are all
+   * already written there and tested there, and a second copy for the keyboard is a second copy to
+   * drift. `emit` is the same call the mouse handlers make.
+   */
+  private pressCrosshair(press: { button: "left" | "right"; shift: boolean }): void {
+    const { x, y } = this.crosshair();
+    this.emit({
+      // `type` DESCRIBES the gesture here rather than deciding anything, and mutation testing says
+      // so out loud: mislabelling it changes no behaviour that any test can see, because
+      // `translatePointer` reads `type` only inside the left-button branch and a left crosshair
+      // press only ever happens with a mode armed — which consumes the click before the type
+      // switch. Written truthfully anyway; recorded here so the next reader does not take the line
+      // for a decision, or go looking for the test that pins it.
+      type: press.button === "right" ? "contextClick" : "click",
+      button: press.button, worldX: x, worldY: y,
+      entityId: this.entityAt(x, y), nodeId: this.nodeAt(x, y),
+      shift: press.shift, ctrl: false,
+    });
+  }
+
+  /**
+   * Where a crosshair press acts: **the build ghost when one is up, and the camera centre when it
+   * is not.**
+   *
+   * The ghost case is not a special rule so much as the absence of a lie. The ghost is the
+   * interface's own statement of where a building lands (P1-T18 draws its validity in shape and
+   * colour), and while the pointer is inside the viewport the ghost follows the pointer — so a key
+   * that placed the building anywhere else would contradict the picture the player is looking at.
+   * With no pointer in the window the ghost is already at the camera centre (`updateGhost`), and
+   * the two answers are the same one.
+   */
+  private crosshair(): { x: number; y: number } {
+    const ghost = this.ghost;
+    if (!ghost) return this.cameraPoint();
+    CROSSHAIR_POINT.x = ghost.x;
+    CROSSHAIR_POINT.y = ghost.y;
+    return CROSSHAIR_POINT;
+  }
+
+  /**
+   * The camera's centre, clamped to the map exactly as a picked click is (`onPointerUp`).
+   *
+   * Returns the shared scratch rather than a fresh point, and that is `pickGround`'s own rule
+   * ("allocation in a mousemove handler at 60 Hz is exactly the GC pressure ADR-0006 forbids") —
+   * this one is called from `updateGhost`, which runs on every frame a build is armed.
+   */
+  private cameraPoint(): { x: number; y: number } {
+    const map = this.bridge.state.map;
+    CROSSHAIR_POINT.x = clamp(this.camera.targetX, 0, map.width);
+    CROSSHAIR_POINT.y = clamp(this.camera.targetY, 0, map.height);
+    return CROSSHAIR_POINT;
   }
 
   /* ---------------------------------------------------------------------------------------------
@@ -1077,6 +1242,9 @@ const FOG_EXPLORED_NOT_VISIBLE = 1;
 
 /** Scratch for `worldAtPixel`. Reused: a starmap click must not allocate any more than a world one. */
 const SCREEN_POINT = { x: 0, y: 0, behind: false };
+
+/** Scratch for the keyboard's crosshair (P6-T11), for the same reason and one more: `updateGhost`. */
+const CROSSHAIR_POINT = { x: 0, y: 0 };
 
 /** The empty action row a galaxy screen renders the world's HUD with. Shared, so it costs nothing. */
 const NO_ACTIONS: readonly HudAction[] = [];
