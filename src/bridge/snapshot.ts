@@ -297,6 +297,89 @@ export class AuraTable {
   }
 }
 
+/**
+ * Shots fired this tick (P3-T05, ADR-0017).
+ *
+ * The engine emits no shot event — thirteen event types exist and the only combat one is
+ * `entityKilled` — so the bridge derives one by diffing `attackTimer`, which `combat.js` only ever
+ * decrements toward zero or resets to `def.cooldown`. A rise is a shot, exactly.
+ *
+ * `dropped` is not diagnostics. **12.9% of shots in a measured fight have a target that no longer
+ * exists** by the time this runs, because the engine applies damage and removes the corpse inside
+ * the same tick — so the killing shot is precisely the one a lookup-and-skip implementation loses.
+ * A counter that stays zero is the only evidence the `prevPos` fallback is still working.
+ */
+export class ShotTable {
+  capacity: number;
+  count = 0;
+  /** How many shots could not be given an endpoint at all. Must stay 0. */
+  dropped = 0;
+  fromX: Float32Array;
+  fromY: Float32Array;
+  toX: Float32Array;
+  toY: Float32Array;
+  owner: Uint8Array;
+
+  constructor(capacity: number) {
+    this.capacity = capacity;
+    this.fromX = new Float32Array(capacity);
+    this.fromY = new Float32Array(capacity);
+    this.toX = new Float32Array(capacity);
+    this.toY = new Float32Array(capacity);
+    this.owner = new Uint8Array(capacity);
+  }
+
+  ensure(needed: number): void {
+    if (needed <= this.capacity) return;
+    let next = this.capacity || 64;
+    while (next < needed) next *= 2;
+    const grown = new ShotTable(next);
+    this.capacity = next;
+    this.fromX = grown.fromX;
+    this.fromY = grown.fromY;
+    this.toX = grown.toX;
+    this.toY = grown.toY;
+    this.owner = grown.owner;
+  }
+}
+
+/**
+ * Entities that died this tick — the one combat cue the engine hands over ready-made (P3-T07).
+ *
+ * `WorldBridge.step` used to clear `state.events` and throw the contents away, on the grounds that
+ * nothing consumed them in the MVP. This is what consumes them. Per-tick, never a running log: a
+ * twenty-minute match would otherwise accumulate every death it ever saw.
+ */
+export class DeathTable {
+  capacity: number;
+  count = 0;
+  x: Float32Array;
+  y: Float32Array;
+  owner: Uint8Array;
+  /** 1 for a building, 0 for a unit — a base going down reads differently from a skirmisher. */
+  isBuilding: Uint8Array;
+
+  constructor(capacity: number) {
+    this.capacity = capacity;
+    this.x = new Float32Array(capacity);
+    this.y = new Float32Array(capacity);
+    this.owner = new Uint8Array(capacity);
+    this.isBuilding = new Uint8Array(capacity);
+  }
+
+  ensure(needed: number): void {
+    if (needed <= this.capacity) return;
+    let next = this.capacity || 32;
+    while (next < needed) next *= 2;
+    const grown = new DeathTable(next);
+    this.capacity = next;
+    this.x = grown.x;
+    this.y = grown.y;
+    this.owner = grown.owner;
+    this.isBuilding = grown.isBuilding;
+  }
+}
+
 /** The full commodity buffers of one selected building. Only the selection gets these (Q-07). */
 export interface BuildingBuffers {
   input: Record<string, number>;
@@ -320,6 +403,10 @@ export interface Snapshot {
   nodes: NodeTable;
   /** Guard-aura projectors the player can see (P3-T04). */
   auras: AuraTable;
+  /** Shots fired this tick, derived (P3-T05, ADR-0017). */
+  shots: ShotTable;
+  /** Entities that died this tick, from the engine's own events (P3-T07). */
+  deaths: DeathTable;
   /** Stable index → engine type name. Grows only when a type is first seen. */
   typeNames: string[];
   comNames: string[];
@@ -461,6 +548,12 @@ export class SnapshotExtractor {
   private powerHash = -1;
   /** numeric id → offset into `prevBuf`, rebuilt from the previous extraction each tick. */
   private readonly prevPos = new Map<number, number>();
+  /**
+   * numeric id → last tick's `attackTimer`. The whole basis of shot detection (ADR-0017): the
+   * engine only ever decrements this field or resets it to `def.cooldown` on firing, so a rise is a
+   * shot. Kept here rather than in the snapshot because it is bookkeeping, not something to draw.
+   */
+  private readonly prevAttack = new Map<number, number>();
   private prevBuf: Float32Array;
   private fogHash = -1;
 
@@ -475,6 +568,8 @@ export class SnapshotExtractor {
       entities: new EntityTable(initialCapacity),
       nodes: new NodeTable(Math.max(32, map.nodes.length)),
       auras: new AuraTable(16),
+      shots: new ShotTable(64),
+      deaths: new DeathTable(32),
       typeNames: [],
       comNames: [],
       fog: { cols, rows, cell: FOG_CELL_SIZE, state: new Uint8Array(cols * rows), version: 0 },
@@ -574,6 +669,8 @@ export class SnapshotExtractor {
 
     e.count = n;
     this.diffLifetimes();
+    this.extractShots(state, fog);
+    this.extractDeaths(state, fog);
     this.extractNodes(state, fog);
     this.extractAuras(state, fog);
     this.extractFog(fog);
@@ -790,6 +887,101 @@ export class SnapshotExtractor {
       n++;
     }
     nodes.count = n;
+  }
+
+  /**
+   * Shots fired this tick, derived from `attackTimer` rising (P3-T05, ADR-0017).
+   *
+   * **Must run before `rememberPreviousPositions`.** That is not an ordering nicety: a target killed
+   * this tick is gone from `state.units` but still in `prevPos` with the position it died at, and
+   * 12.9% of shots in a measured fight are exactly that case. Resolving the endpoint by lookup alone
+   * would drop every killing shot — the ones a player most needs to see.
+   */
+  private extractShots(state: State, fog: Fog): void {
+    const shots = this.snapshot.shots;
+    shots.count = 0;
+    shots.dropped = 0;
+
+    // Sized to the entity count rather than grown per shot: the peak measured 33 in a 120-unit
+    // fight, and a table that can hold "everyone fired at once" can never need to grow mid-loop.
+    shots.ensure(state.units.size + state.buildings.size);
+
+    for (const u of state.units.values()) this.pushShot(state, fog, u, u.autoTarget ?? null);
+    for (const b of state.buildings.values()) this.pushShot(state, fog, b, b.targetId ?? null);
+
+    // Anything that survived to the end of the tick keeps its timer; anything that did not is
+    // pruned so the map cannot grow for the length of a match.
+    if (this.prevAttack.size > (state.units.size + state.buildings.size) * 2) {
+      for (const id of [...this.prevAttack.keys()]) {
+        if (!this.livingIds.has(id)) this.prevAttack.delete(id);
+      }
+    }
+  }
+
+  private readonly livingIds = new Set<number>();
+
+  private pushShot(state: State, fog: Fog, e: Entity, targetId: string | null): void {
+    const id = numericId(e.id);
+    this.livingIds.add(id);
+    const timer = (e as { attackTimer?: number }).attackTimer ?? 0;
+    const was = this.prevAttack.get(id) ?? 0;
+    this.prevAttack.set(id, timer);
+    if (!(timer > was + 1e-9)) return;              // no reset this tick — nothing was fired
+
+    // Fog: a tracer from an unseen shooter is a line pointing straight at it (ADR-0017 §4).
+    if (e.owner !== "player" && !isVisibleAt(fog, e.x, e.y)) return;
+    if (!targetId) { this.snapshot.shots.dropped++; return; }
+
+    const target = state.units.get(targetId) ?? state.buildings.get(targetId);
+    let tx: number;
+    let ty: number;
+    if (target) {
+      tx = target.x;
+      ty = target.y;
+    } else {
+      // Dead this tick. `prevPos` still holds where it stood, because this runs before the
+      // rebuild — which is the whole reason for the ordering above.
+      const off = this.prevPos.get(numericId(targetId));
+      if (off === undefined) { this.snapshot.shots.dropped++; return; }
+      tx = this.prevBuf[off]!;
+      ty = this.prevBuf[off + 1]!;
+    }
+
+    const shots = this.snapshot.shots;
+    const n = shots.count;
+    shots.fromX[n] = e.x;
+    shots.fromY[n] = e.y;
+    shots.toX[n] = tx;
+    shots.toY[n] = ty;
+    shots.owner[n] = e.owner === "player" ? SNAP_PLAYER : SNAP_AI;
+    shots.count = n + 1;
+  }
+
+  /**
+   * Deaths, from the engine's own `entityKilled` events (P3-T07).
+   *
+   * Per tick, never a running log: `WorldBridge` drains `state.events` after every step, and a
+   * twenty-minute match would otherwise accumulate every death it ever saw.
+   */
+  private extractDeaths(state: State, fog: Fog): void {
+    const deaths = this.snapshot.deaths;
+    deaths.count = 0;
+    const events = state.events ?? [];
+    deaths.ensure(events.length);
+    for (const ev of events) {
+      if (ev.type !== "entityKilled") continue;
+      const x = ev.x as number;
+      const y = ev.y as number;
+      // Explored, not visible: a wreck the player walks up to later should still have flashed. But
+      // a death in ground they have never seen is not theirs to know about.
+      if (!exploredAt(fog, x, y)) continue;
+      const n = deaths.count;
+      deaths.x[n] = x;
+      deaths.y[n] = y;
+      deaths.owner[n] = ev.owner === "player" ? SNAP_PLAYER : SNAP_AI;
+      deaths.isBuilding[n] = ev.kind === "building" ? 1 : 0;
+      deaths.count = n + 1;
+    }
   }
 
   /**

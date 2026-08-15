@@ -62,3 +62,4 @@ Template: [`0000-template.md`](0000-template.md). Keep it to a page. Sections:
 | [0014](0014-the-frame-ceiling-is-derived-not-chosen.md) | The frame's draw-call ceiling is derived from the roster, not chosen | Accepted |
 | [0015](0015-building-state-is-a-shape-vocabulary.md) | Building state is a shape vocabulary behind a new overlay kind | Accepted |
 | [0016](0016-the-nine-units-get-their-own-silhouettes.md) | The nine unmeshed units get their own silhouettes | Accepted |
+| [0017](0017-a-shot-is-a-diff-not-an-event.md) | A shot is a diff, not an event | Accepted |

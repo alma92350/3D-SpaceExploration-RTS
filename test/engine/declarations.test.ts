@@ -185,6 +185,28 @@ describe("engine declarations", () => {
     expect(mine!.range).toBe(130);
   });
 
+  it("a real fight writes the combat fields the shot stream reads", () => {
+    // Declared for P3-T05. `attackTimer` and `autoTarget` are written by `updateCombat`, not by
+    // `makeUnit`, so a duel has to actually happen before either exists — which is exactly why this
+    // drives one instead of inspecting a fresh unit.
+    const galaxy = engine.createGalaxy({ seed: FIXED_SEED, startId: "helix" });
+    const state = engine.activeState(galaxy);
+    const base = state.map.bases.player;
+    const a = engine.makeUnit("lancer", "player", base.x + 40, base.y);
+    const b = engine.makeUnit("bastion", "ai", base.x + 58, base.y);
+    state.units.set(a.id, a);
+    state.units.set(b.id, b);
+
+    let fired = false;
+    for (let i = 0; i < 200 && !fired; i++) {
+      const before = a.attackTimer ?? 0;
+      engine.stepGalaxy(galaxy, 0.05);
+      if ((a.attackTimer ?? 0) > before + 1e-9) fired = true;
+    }
+    expect(fired, "Unit.attackTimer is declared but never rose — no shot was detectable").toBe(true);
+    expect(a.autoTarget, "Unit.autoTarget is declared but the engine never set it").toBeTruthy();
+  });
+
   it("the MVP roster exists in the engine's own definitions", () => {
     // The nine types Phase 1 draws (PRD §5, Phase 1). A typo here would surface as a missing mesh
     // at runtime; here it is a named failure.

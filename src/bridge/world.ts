@@ -113,11 +113,15 @@ export class WorldBridge {
   step(dt: number = STEP_SECONDS): void {
     this.drain();
     stepGalaxy(this.galaxy, dt);
-    // The engine queues per-tick events for the UI to drain. Nothing consumes them in the MVP
-    // (audio and alerts are Phase 3/5), and an undrained array grows without bound for the whole
-    // session — so the bridge drains it, which is exactly what upstream's own client does.
-    this.state.events.length = 0;
+    // The engine queues per-tick events for the UI to drain, and an undrained array grows without
+    // bound for the whole session — so the bridge drains it, exactly as upstream's own client does.
+    //
+    // **The order matters and used to be wrong (P3-T07).** This cleared the list BEFORE extracting,
+    // so the snapshot never saw a single event and `entityKilled` — the one combat cue the engine
+    // hands over ready-made — was thrown away every tick with nothing to show for it. Extract
+    // first, then drain, and the drain still happens exactly once per step.
     this.refresh();
+    this.state.events.length = 0;
   }
 
   private drain(): void {

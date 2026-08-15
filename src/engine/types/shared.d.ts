@@ -90,6 +90,17 @@ declare global {
     kills?: number;
     hold?: boolean;
     dead?: boolean;
+    /**
+     * Seconds until this unit may fire again. `combat.js` only ever decrements it toward zero or
+     * resets it to `def.cooldown` when it fires — so **a rise between ticks is a shot** (ADR-0017),
+     * which is the only signal the engine gives that one happened.
+     */
+    attackTimer?: number;
+    /**
+     * The sticky auto-acquired target id. Committed across ticks rather than re-chosen each one, so
+     * it names WHO is being shot at, never THAT a shot occurred — the timer above says that.
+     */
+    autoTarget?: string | null;
   }
 
   interface Building {
@@ -107,6 +118,8 @@ declare global {
     queue: Array<{ unitType: string; progress: number }>;
     targetId: string | null;
     rally: { x: number; y: number };
+    /** As `Unit.attackTimer` — a static defence fires on the same rule (combat.js line 487). */
+    attackTimer?: number;
     tier?: number;
     dead?: boolean;
     // --- economy (Phase 2). All optional: a Command Center has none of them. ---
