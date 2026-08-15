@@ -13,7 +13,14 @@ import { BUILDINGS, PLANETS, UNITS, canBuildType, prereqsMet } from "../engine/i
 import { type BuildingPanelModel, buildingPanelModel } from "./building-panel.js";
 import { type Intent } from "../bridge/commands.js";
 import { colonyIncomeModel, colonyPolicyModel, policyPreview } from "./colony-panel.js";
+import { diplomacyPanelModel } from "./diplomacy-panel.js";
 import { doctrinePanelModel } from "./doctrine-panel.js";
+import { gatePanelModel } from "./gate-panel.js";
+import { milestoneLabel, milestonesPanelModel } from "./milestones-panel.js";
+import { type OnboardingModel, onboardingModel, settingsModel } from "./onboarding.js";
+import { reliefPanelModel } from "./relief-panel.js";
+import { type SaveCatalog, savePanelModel } from "./save-panel.js";
+import { scorePanelModel } from "./score-panel.js";
 import { jumpPanelModel } from "./jump-panel.js";
 import { landingPanelModel } from "./landing-panel.js";
 import { lanePanelModel } from "./lane-panel.js";
@@ -23,6 +30,8 @@ import { repairPanelModel } from "./repair-panel.js";
 import { researchPanelModel } from "./research-panel.js";
 import { rigSurveyModel, rigYieldModel } from "./rig-panel.js";
 import { type ApproachBrief, type GroundPoint, type LandingSite } from "../view/landing.js";
+import { type Settings } from "../app/settings.js";
+import { type Tier } from "../view/renderer/port.js";
 import { FLAG_BUILDING_KIND, engineId, type Snapshot } from "../bridge/snapshot.js";
 
 export interface SelectionEntry {
@@ -69,7 +78,19 @@ export type HudCommand =
   // open and the keyboard could not would be exactly half a control.
   | { readonly kind: "screen"; readonly screen: "world" | "starmap" }
   /** Open the approach view on a destination — the landing picker, which is per-world. */
-  | { readonly kind: "approach"; readonly destId: string };
+  | { readonly kind: "approach"; readonly destId: string }
+  // --- Phase 5's long game (P5-T12) --------------------------------------------------------------
+  //
+  // Five more that are not orders. The first is view state like `screen`; the rest write to the
+  // BROWSER rather than to the simulation — storage and preferences — which is the same reason they
+  // cannot be intents: `applyIntent` is what a determinism replay feeds, and a replay that wrote a
+  // save slot would be a replay that changed the machine it ran on.
+  | { readonly kind: "galaxyBoard"; readonly board: GalaxyBoard | null }
+  | { readonly kind: "save"; readonly name: string }
+  | { readonly kind: "loadSave"; readonly id: string }
+  | { readonly kind: "deleteSave"; readonly id: string }
+  | { readonly kind: "settings"; readonly settings: Settings }
+  | { readonly kind: "dismissOnboarding" };
 
 /**
  * One button the HUD is showing.
@@ -372,6 +393,8 @@ export interface EconomyInput {
   readonly board: EconomyBoard | null;
   /** Where the build ghost stands, when one is up — the Rig survey is a PLACEMENT reading (P2-T16). */
   readonly ghost: { readonly buildingType: string; readonly x: number; readonly y: number } | null;
+  /** `loadOnboardingSeen()`, held by the shell. The card is gone for good once this is true. */
+  readonly onboardingSeen: boolean;
 }
 
 export interface EconomyModel {
@@ -410,6 +433,7 @@ function cacheKeyOf(input: EconomyInput): string {
   return [
     input.snap.version,
     input.board ?? "-",
+    input.onboardingSeen ? "seen" : "new",
     input.hud.buildingDetail.building?.id ?? "-",
     // The ghost is quantised. A survey reading does not change between two pixels of mouse travel,
     // and rebuilding on every pointer move would undo the point of the cache — the pointer moves far
@@ -429,6 +453,12 @@ const PLASMA_RIG = "plasmarig";
 export function economyModel(input: EconomyInput): EconomyModel {
   const { hud, state, snap, credits, board, ghost } = input;
   const sections: EconomySection[] = [];
+
+  // First, because it is for someone who has not worked out that there is a drawer yet (P5-T10).
+  // It retires itself twice over — on dismissal, and the moment the player has a base — so this is
+  // not a section that lives at the top of the screen for a ten-hour campaign.
+  const onboarding = onboardingModel({ snap, seen: input.onboardingSeen });
+  if (onboarding.visible) sections.push(onboardingSection(onboarding));
 
   const detail = hud.buildingDetail;
   const building = detail.building ? state.buildings.get(detail.building.id) : undefined;
@@ -778,12 +808,34 @@ export interface ApproachState {
   readonly site: LandingSite;
 }
 
+/**
+ * The campaign boards (P5-T12), toggled from the starmap's own drawer.
+ *
+ * `EconomyBoard`'s idea one screen up, and for the same reason: these are the panels that are NOT
+ * about the thing under the cursor, so they need a control of their own. They take BUTTONS rather
+ * than letters — the positional row (Z/C/V/B/N) already addresses the galaxy drawer, so a board
+ * costs no key, and Phase 4 had already spent every letter this keyboard had left.
+ *
+ * Only one is open at a time. Nine sections at once is a wall, and every one of these is a thing a
+ * player goes to look at deliberately rather than something they need beside the jump board.
+ */
+export type GalaxyBoard = "diplomacy" | "gate" | "records" | "system";
+
 export interface GalaxyInput {
   readonly galaxy: Galaxy;
   /** The app's fixed step. `lanePanelModel` turns tick counts into seconds with it, never assumes it. */
   readonly stepSeconds: number;
   /** The open approach view, or null while the starmap is up. */
   readonly approach: ApproachState | null;
+  /** Which campaign board is open, if any. View state, exactly like `EconomyInput.board`. */
+  readonly board: GalaxyBoard | null;
+  /** The save catalog, read by the shell — `readCatalog()` touches storage and this model may not. */
+  readonly saves: SaveCatalog;
+  /** Wall-clock ms, passed in so every string the save panel produces stays a pure function. */
+  readonly now: number;
+  readonly settings: Settings;
+  /** The tier actually running, which is not necessarily the one chosen (see `settingsModel`). */
+  readonly currentTier: Tier;
 }
 
 /**
@@ -796,14 +848,42 @@ export interface GalaxyInput {
 export function galaxyModel(input: GalaxyInput): EconomyModel {
   const sections = input.approach
     ? [approachSection(input.approach)]
-    : [
-      jumpSection(input.galaxy),
-      colonySection(input.galaxy),
-      laneSection(input.galaxy, input.stepSeconds),
-    ];
+    : galaxySections(input);
   const actions: HudAction[] = [];
   for (const s of sections) actions.push(...s.actions);
   return { sections, actions };
+}
+
+function galaxySections(input: GalaxyInput): EconomySection[] {
+  const galaxy = input.galaxy;
+  const sections: EconomySection[] = [
+    jumpSection(galaxy),
+    colonySection(galaxy),
+    laneSection(galaxy, input.stepSeconds),
+    campaignSection(input.board),
+  ];
+
+  // The relief board is the one that is NOT behind a button, because it is the one a player needs
+  // when they have just lost everything and are not in a mood to go looking. It appears exactly
+  // when the engine's own rescue clock is doing something — and stays hidden the rest of the run.
+  const relief = reliefPanelModel(galaxy);
+  if (relief.status !== "held") sections.push(reliefSection(relief));
+
+  switch (input.board) {
+    case "diplomacy": sections.push(diplomacySection(galaxy)); break;
+    case "gate": sections.push(gateSection(galaxy)); break;
+    case "records":
+      sections.push(milestonesSection(galaxy), scoreSection(galaxy, relief));
+      break;
+    case "system":
+      sections.push(
+        savesSection(input.galaxy, input.saves, input.now),
+        settingsSection(input.settings, input.currentTier),
+      );
+      break;
+    case null: break;
+  }
+  return sections;
 }
 
 /**
@@ -838,6 +918,13 @@ function galaxyCacheKeyOf(input: GalaxyInput): string {
     input.galaxy.tick,
     a ? a.brief.destId : "-",
     pick ? `${Math.round(pick.x)}:${Math.round(pick.y)}` : "-",
+    input.board ?? "-",
+    // Only the system board reads either of these, and `now` is a wall clock: keyed on raw
+    // milliseconds it would rebuild the whole galaxy drawer every frame, which is the exact
+    // opposite of what this cache is for. Quantised to five seconds, so "12 minutes ago" still
+    // becomes "13 minutes ago" on its own, and nothing else pays for it.
+    input.board === "system" ? `${Math.floor(input.now / 5000)}:${input.saves.saves.length}` : "-",
+    input.board === "system" ? `${input.settings.tierOverride ?? "auto"}:${input.currentTier}` : "-",
   ].join("|");
 }
 
@@ -1056,6 +1143,305 @@ function laneSection(galaxy: Galaxy, stepSeconds: number): EconomySection {
   }
 
   return { id: "lanes", title: "Freight lanes", lines, actions, warning: null };
+}
+
+// ---------------------------------------------------------------------------
+// The long game (P5-T12). Still a model; still no DOM.
+// ---------------------------------------------------------------------------
+//
+// Seven panels, wired the way Phase 2's and Phase 4's were: every judgement stays in the panel that
+// asks the engine, and nothing below decides a rule. This layer picks WHICH panel is on screen and
+// turns its answers into rows.
+//
+// The composition itself is the row P4-T13 wrote the reachability scan for. Three phases running,
+// this project built panels nothing could open — Phase 2 shipped six of seven orphaned, Phase 4 did
+// it again with five, and Phase 5's four parallel agents produced seven more in one afternoon. The
+// scan is what turns "wire it up" from a thing someone remembers into a red test, and this layer is
+// what makes it green.
+
+/** The board switcher. Always on the starmap, so every campaign panel is two clicks from anywhere. */
+function campaignSection(open: GalaxyBoard | null): EconomySection {
+  const boards: readonly { readonly id: GalaxyBoard; readonly label: string; readonly detail: string }[] = [
+    { id: "diplomacy", label: "Diplomacy", detail: "your neighbour's stance, and the three ways to move it" },
+    { id: "gate", label: "Antimatter Gate", detail: "both sides of the race" },
+    { id: "records", label: "Records", detail: "milestones, score, and the one terminal choice" },
+    { id: "system", label: "Saves & settings", detail: "this browser's storage" },
+  ];
+  return {
+    id: "campaign",
+    title: "Campaign",
+    lines: [],
+    // A board's own button CLOSES it, so the control that opened it is the control that gets rid of
+    // it — the same rule M and L follow on the battlefield.
+    actions: boards.map(({ id, label, detail }) => ({
+      id: `board:${id}`,
+      label: open === id ? `▾ ${label}` : label,
+      detail,
+      enabled: true,
+      command: { kind: "galaxyBoard", board: open === id ? null : id },
+    })),
+    warning: null,
+  };
+}
+
+/**
+ * The rescue clock (P5-T07).
+ *
+ * `reliefWouldFollow` is the line that matters and it is the panel's, not this layer's: at the
+ * moment surrender looks obligatory — nothing held anywhere — the engine's own answer is a ship,
+ * not a defeat. Saying so is the difference between a player waiting twenty seconds and a player
+ * quitting a run they had not lost.
+ */
+function reliefSection(model: ReturnType<typeof reliefPanelModel>): EconomySection {
+  const lines: string[] = [];
+  if (model.status === "ended") {
+    lines.push(model.surrender.state === "surrendered" ? "You surrendered this run." : "This run is over.");
+  } else if (model.surrender.reliefWouldFollow) {
+    lines.push("You hold nothing anywhere — but the run is not lost.");
+    lines.push(model.status === "due"
+      ? "A colony ship is on its way to your landing zone."
+      : `A colony ship is dispatched in ${Math.ceil(model.secondsUntilEligible)}s.`);
+  } else {
+    lines.push(`Relief is on cooldown for ${Math.ceil(model.secondsUntilEligible)}s.`);
+  }
+  for (const f of model.footholds) {
+    const bits = [`${f.commandCenters} base${f.commandCenters === 1 ? "" : "s"}`];
+    if (f.underConstruction > 0) bits.push(`${f.underConstruction} building`);
+    if (f.colonyShip) bits.push("colony ship");
+    lines.push(`${planetName(f.planetId)} — ${bits.join(", ")}`);
+  }
+  return { id: "relief", title: "Relief", lines, actions: [], warning: null };
+}
+
+/** The neighbour, and the three levers (P5-T04). Read for the SEAT — the world you are standing on. */
+function diplomacySection(galaxy: Galaxy): EconomySection {
+  const model = diplomacyPanelModel(galaxy, galaxy.activeId);
+  const planetId = galaxy.activeId;
+  const lines: string[] = [];
+  const actions: HudAction[] = [];
+
+  if (!model.known) {
+    lines.push("This world has no neighbour on record.");
+    return { id: "diplomacy", title: "Diplomacy", lines, actions, warning: null };
+  }
+
+  lines.push(`${model.label} — ${model.atPeace ? "at peace" : "at war"}`);
+  lines.push(`Peace rests on: ${model.peaceRestsOn}`);
+  if (model.goodwill > 0) lines.push(`Goodwill ${Math.round(model.goodwill)} of ${model.goodwillCap}`);
+  if (model.provoked) lines.push("They have been provoked by something you did.");
+
+  // The price, never `TRIBUTE_BASE_COST`: it escalates 1.55x a payment, so the constant is right
+  // once and wrong for the rest of the run.
+  actions.push({
+    id: "tribute",
+    label: "Offer tribute",
+    detail: `${model.tributeCost} credits`,
+    enabled: model.canAffordTribute,
+    command: { kind: "intent", intent: { kind: "tribute", planetId } },
+  });
+
+  const favor = model.favor;
+  if (favor) {
+    lines.push(
+      `They want ${favor.qty} ${favor.com} — ${Math.ceil(favor.secondsLeft)}s left`
+      + (favor.shortfall > 0 ? ` (${Math.ceil(favor.shortfall)} short)` : ""),
+    );
+    actions.push({
+      id: "fulfilFavor",
+      label: "Fulfil the request",
+      detail: favor.canFulfill ? `hand over ${favor.qty} ${favor.com}` : "not enough in the stockpile",
+      enabled: favor.canFulfill,
+      command: { kind: "intent", intent: { kind: "fulfilFavor", planetId } },
+    });
+  }
+
+  return { id: "diplomacy", title: "Diplomacy", lines, actions, warning: null };
+}
+
+/**
+ * Both sides of the Gate race (P5-T05).
+ *
+ * The status line is the panel's four-way answer, not `chargingWonderOf`'s — the engine returns one
+ * identical `null` for "no Gate", "still building", "never charged" and "already online", and calls
+ * a Gate starved for minutes "charging" because it never looks at the feed.
+ */
+function gateSection(galaxy: Galaxy): EconomySection {
+  const model = gatePanelModel(galaxy);
+  const lines: string[] = [];
+
+  if (model.ours.length === 0) {
+    lines.push(model.seatPrereqsMet
+      ? `No ${model.gateName} yet. It needs ${Object.entries(model.cost).map(([c, n]) => `${n} ${c}`).join(", ")}.`
+      : `No ${model.gateName}. Still missing: ${model.requires.join(", ")}.`);
+  }
+  for (const gate of model.ours) {
+    const pct = Math.floor(gate.charge * 100);
+    const head = `${planetName(gate.worldId)} — ${gate.status} ${pct}%`;
+    lines.push(gate.secondsRemaining === null ? head : `${head}, ${Math.ceil(gate.secondsRemaining)}s left`);
+    if (gate.status === "stalled") {
+      const binding = gate.feed.find((f) => f.binding);
+      lines.push(binding
+        ? `Stalled: ${binding.com} runs out at ${Math.floor(gate.reachableCharge * 100)}%`
+        : "Stalled: the feed cannot carry it further");
+    }
+  }
+
+  // `null` covers two opposite situations and the latch is the only thing that separates them.
+  if (model.rival) {
+    const left = model.rival.secondsRemaining;
+    lines.push(`A rival Gate on ${planetName(model.rival.worldId)} — ${Math.floor(model.rival.charge * 100)}%`
+      + (left === null ? "" : `, ${Math.ceil(left)}s left`));
+  } else if (model.rivalAscended) {
+    lines.push(`A rival Gate has completed on ${model.ascendedWorlds.map(planetName).join(", ")}.`);
+  } else {
+    lines.push("No rival is racing you.");
+  }
+
+  return {
+    id: "gate",
+    title: "Antimatter Gate",
+    lines,
+    actions: [],
+    warning: model.rivalAscended ? "A rival has already ascended." : null,
+  };
+}
+
+/** What the galaxy has celebrated (P5-T06). The engine raises these; this only reports them. */
+function milestonesSection(galaxy: Galaxy): EconomySection {
+  const model = milestonesPanelModel(galaxy);
+  const d = model.domination;
+  const lines: string[] = [
+    `${model.reachedCount} of ${model.namedTotal} milestones`,
+    `Pacified ${d.pacified} of ${d.target}`
+    + (d.pendingScan ? " — the engine has not raised it yet" : d.milestoneReached ? " — reached" : ""),
+  ];
+  for (const row of model.named) lines.push(`${row.reached ? "✓" : "·"} ${row.label}`);
+  if (model.worlds.length) lines.push(`Worlds settled: ${model.worlds.map((w) => w.label).join(", ")}`);
+  if (model.unknown.length) lines.push(`Unrecognised: ${model.unknown.map(milestoneLabel).join(", ")}`);
+  return { id: "milestones", title: "Milestones", lines, actions: [], warning: null };
+}
+
+/**
+ * The score, and the one button that ends a run (P5-T08).
+ *
+ * Surrender lives here rather than beside the relief clock on purpose: it is a decision about the
+ * whole run, and putting it next to "you have lost everything" is putting it exactly where a player
+ * should not be offered it — the engine's answer there is a rescue ship.
+ */
+function scoreSection(galaxy: Galaxy, relief: ReturnType<typeof reliefPanelModel>): EconomySection {
+  const model = scorePanelModel(galaxy);
+  const lines: string[] = [];
+  for (const line of model.lines) {
+    lines.push(`${line.owner}: ${Math.round(line.total)}`
+      + ` (army ${Math.round(line.army)}, structures ${Math.round(line.structures)},`
+      + ` bank ${Math.round(line.bank)})`);
+  }
+  // Every galaxy world is created `endless`, so `rules.clock` is null for the Odyssey and a
+  // countdown here would be inventing one.
+  lines.push(model.rules.clock === null
+    ? "No time limit — this run ends when you or a rival ends it."
+    : `Time limit ${formatClock(model.rules.clock.remainingSeconds)} left`);
+
+  const surrender = relief.surrender;
+  return {
+    id: "score",
+    title: "Score",
+    lines,
+    actions: [{
+      id: "surrender",
+      label: "Surrender the run",
+      detail: surrender.state === "surrendered" ? "already surrendered" : `ends the run on ${planetName(surrender.seatId)}`,
+      enabled: surrender.canSurrender,
+      command: { kind: "intent", intent: { kind: "surrender" } },
+    }],
+    // The one thing that cannot be undone, said before it happens (P2-T12) — and the second line is
+    // the whole reason the warning is worth the space.
+    warning: surrender.canSurrender
+      ? "Surrender cannot be undone."
+        + (surrender.reliefWouldFollow ? " You hold nothing — but a relief ship is coming." : "")
+      : null,
+  };
+}
+
+/** Saved games (P5-T09). The panel describes; the shell writes. */
+function savesSection(galaxy: Galaxy, catalog: SaveCatalog, now: number): EconomySection {
+  const model = savePanelModel({ catalog, galaxy, now });
+  const lines: string[] = [];
+  if (model.storageProblem) lines.push(model.storageProblem);
+  if (!model.rows.length && !model.storageProblem) lines.push("No saved games in this browser.");
+  for (const row of model.rows) lines.push(`${row.name} — ${row.detail} · ${row.ageText}`);
+
+  const actions: HudAction[] = [{
+    id: "save",
+    label: "Save",
+    detail: model.suggestedName,
+    enabled: model.canSave,
+    command: { kind: "save", name: model.suggestedName },
+  }];
+  for (const row of model.rows) {
+    // A row that cannot be loaded still gets its button, disabled and struck through, because the
+    // failure to avoid is the silent one — a live button whose click returns false into nothing.
+    actions.push({
+      id: `load:${row.id}`,
+      label: `Load ${row.name}`,
+      detail: row.canLoad ? row.description.summary : row.detail,
+      enabled: row.canLoad,
+      command: { kind: "loadSave", id: row.id },
+    });
+    actions.push({
+      id: `delete:${row.id}`,
+      label: `Delete ${row.name}`,
+      detail: "frees this slot",
+      enabled: true,
+      command: { kind: "deleteSave", id: row.id },
+    });
+  }
+  return { id: "saves", title: "Saved games", lines, actions, warning: model.warning };
+}
+
+/** Preferences (P5-T10). Each option carries a WHOLE `Settings`, so the shell never merges. */
+function settingsSection(settings: Settings, currentTier: Tier): EconomySection {
+  const model = settingsModel({ settings, currentTier });
+  const lines: string[] = [];
+  const actions: HudAction[] = [];
+  for (const row of model.rows) {
+    lines.push(`${row.label} — ${row.detail}`);
+    for (const option of row.options) {
+      actions.push({
+        id: `set:${row.id}:${option.id}`,
+        label: option.active ? `● ${option.label}` : option.label,
+        detail: option.detail,
+        enabled: !option.active,
+        command: { kind: "settings", settings: option.settings },
+      });
+    }
+  }
+  return { id: "settings", title: "Settings", lines, actions, warning: null };
+}
+
+/** The first sixty seconds (P5-T10), on the world screen and nowhere else. */
+function onboardingSection(model: OnboardingModel): EconomySection {
+  const lines = model.steps.map((step) => {
+    // `null` is not `false`. A step the snapshot cannot honestly answer for — did you rotate the
+    // camera? — gets a neutral mark, because an empty checkbox against something nobody measured is
+    // the interface calling the player a failure.
+    const mark = step.done === true ? "✓" : step.done === false ? "·" : " ";
+    const lead = step.id === model.nextStepId ? "▸" : mark;
+    return `${lead} ${step.text}`;
+  });
+  return {
+    id: "onboarding",
+    title: model.title,
+    lines,
+    actions: [{
+      id: "dismissOnboarding",
+      label: model.dismissLabel,
+      detail: "for good — this card does not come back",
+      enabled: true,
+      command: { kind: "dismissOnboarding" },
+    }],
+    warning: null,
+  };
 }
 
 /**

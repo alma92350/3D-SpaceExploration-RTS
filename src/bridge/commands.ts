@@ -18,6 +18,7 @@ import {
   createLane, deleteLane, assignShipToLane, unassignShipFromLane, setColonyPolicy,
   issueSetLogiPriority, issueSetRally, issueStop, prereqsMet, queueProduction, researchTech,
   sampleTerrain, sell, tradeables,
+  offerTribute, offerGift, fulfillRequest, tributeCost, surrenderGalaxy,
 } from "../engine/index.js";
 
 export type Intent =
@@ -64,7 +65,17 @@ export type Intent =
   | { kind: "deleteLane"; laneId: string }
   | { kind: "assignLane"; laneId: string; unitId: string }
   | { kind: "unassignLane"; laneId: string; unitId: string }
-  | { kind: "colonyPolicy"; planetId: string; patch: Record<string, unknown> };
+  | { kind: "colonyPolicy"; planetId: string; patch: Record<string, unknown> }
+  // --- Phase 5 (P5-T04, P5-T07) -----------------------------------------------------------------
+  //
+  // The three diplomacy levers carry a `planetId` for the reason `colonyPolicy` does: a colony's
+  // stance with its neighbour is as real as the seat's, and a player looking at the starmap is
+  // deciding about a world they are not standing on.
+  | { kind: "tribute"; planetId: string }
+  | { kind: "gift"; planetId: string; com: string; qty: number }
+  | { kind: "fulfilFavor"; planetId: string }
+  /** The one terminal choice. Galaxy-scoped, so it takes nothing. */
+  | { kind: "surrender" };
 
 /**
  * Apply one intent. Returns a player-facing reason when the engine refused, or null on success.
@@ -226,6 +237,52 @@ export function applyIntent(state: State, intent: Intent, galaxy: Galaxy): strin
       // here would put a second opinion beside it — and `MAX_WORKER_TARGET` is a clamp a UI must
       // SHOW rather than silently apply, which is a panel's job, not this module's.
       setColonyPolicy(galaxy, intent.planetId, intent.patch);
+      return null;
+
+    // --- Phase 5 -------------------------------------------------------------------------------
+    //
+    // All four ask the engine and report its answer. The refusals are worth reading together,
+    // because the engine says `false` for several different reasons and a player needs the right
+    // one: `offerTribute` refuses on price, `offerGift` on an empty stockpile (an over-ask is a
+    // SMALLER gift, never a refusal — the engine clamps to `floor(held)`), and `fulfillRequest` on
+    // three separate things the diplomacy panel already distinguishes.
+    case "tribute": {
+      const world = worldOrNull(galaxy, intent.planetId);
+      if (!world) return "That world has no record to appease";
+      if (offerTribute(galaxy, world)) return null;
+      const dip = (world as unknown as { diplomacy?: object }).diplomacy;
+      // The price, not "it failed" — tribute escalates 1.55x a payment, so the number is the whole
+      // explanation and `tributeCost` is the only thing that knows it.
+      return dip
+        ? `Not enough credits — this tribute costs ${tributeCost(dip)}`
+        : "This world has no neighbour to appease";
+    }
+
+    case "gift": {
+      const world = worldOrNull(galaxy, intent.planetId);
+      if (!world) return "That world has no record to give to";
+      return offerGift(world, intent.com, intent.qty)
+        ? null
+        : `No ${intent.com} in the stockpile to give`;
+    }
+
+    case "fulfilFavor": {
+      const world = worldOrNull(galaxy, intent.planetId);
+      if (!world) return "That world has no record to answer";
+      return fulfillRequest(galaxy, world) ? null : "That request has lapsed, or the stock is short";
+    }
+
+    case "surrender":
+      // `surrenderGalaxy` returns NOTHING — not even P2-T12's bare `false` — and refuses silently on
+      // a seat that is already over. So this asks the question the engine will not answer.
+      //
+      // It matters because of the HUD's own rule: a struck-through button still enqueues, "so the
+      // engine's own refusal is what explains it" (`HudAction`). For every other command that
+      // holds. For this one the engine says nothing, and a click on a struck-through Surrender
+      // would produce no message at all — which is the silent failure `relief-panel.ts`'s
+      // three-valued `surrender` state was written to name.
+      if (state.over === true) return "This run has already ended";
+      surrenderGalaxy(galaxy);
       return null;
 
     case "stop":
@@ -446,6 +503,17 @@ function bombOrNull(state: State, id: string): Unit | null {
   const u = state.units.get(id);
   if (!u || u.owner !== "player") return null;
   return UNITS[u.type]?.role === "bomb" ? u : null;
+}
+
+/**
+ * One world's state by id, or null if the galaxy has never instantiated it.
+ *
+ * An unvisited world in `ODYSSEY_WORLDS` has no `State` at all until `addPlanet` makes one, so this
+ * is a real case rather than defensive padding: the starmap draws every world in the roster and a
+ * diplomacy control on one the player has never reached must refuse rather than throw.
+ */
+function worldOrNull(galaxy: Galaxy, planetId: string): State | null {
+  return galaxy.planets.get(planetId) ?? null;
 }
 
 function selectedUnits(state: State): Unit[] {

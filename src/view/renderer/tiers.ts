@@ -151,6 +151,19 @@ export class TierMonitor {
     this.reset();
   }
 
+  /**
+   * Hand the tier back to measurement (P5-T10).
+   *
+   * `setManual` was a one-way door: a player who had ever forced a tier could not get detection back
+   * without clearing the site's storage, which is what the settings row's "Auto" option exists to
+   * undo. The window is reset with it because the samples in it were taken under a tier the PLAYER
+   * chose — judging automatic correction on them would drop a tier on evidence from a different one.
+   */
+  clearManual(): void {
+    this.manual = false;
+    this.reset();
+  }
+
   sample(frameMs: number): TierCorrection {
     if (this.manual) return { tier: this.current, dropped: false, notice: null };
 

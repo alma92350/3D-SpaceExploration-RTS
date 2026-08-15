@@ -53,6 +53,7 @@ function intentOf(action: HudAction): Intent {
 
 function model(bridge: WorldBridge, board: "market" | "logistics" | null = null): EconomyModel {
   return economyModel({
+    onboardingSeen: true,
     hud: hudModel(bridge.snapshot),
     state: bridge.state,
     snap: bridge.snapshot,
@@ -82,6 +83,7 @@ describe("reading the economy panels cannot move the simulation", () => {
       const before = hashState(bridge.state);
       for (const board of [null, "market", "logistics"] as const) {
         economyModel({
+    onboardingSeen: true,
           hud: hudModel(bridge.snapshot), state: bridge.state, snap: bridge.snapshot,
           credits: bridge.galaxyCredits, board,
           ghost: { buildingType: "plasmarig", x: 700, y: 700 },
@@ -124,7 +126,7 @@ describe("the economy model is a function of a tick, not of a frame", () => {
   function inputOf(bridge: WorldBridge, over: Partial<EconomyInput> = {}): EconomyInput {
     return {
       hud: hudModel(bridge.snapshot), state: bridge.state, snap: bridge.snapshot,
-      credits: bridge.galaxyCredits, board: null, ghost: null, ...over,
+      credits: bridge.galaxyCredits, board: null, ghost: null, onboardingSeen: true, ...over,
     };
   }
 

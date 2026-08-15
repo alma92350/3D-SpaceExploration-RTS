@@ -28,9 +28,11 @@ import { SceneComposer, type GhostState } from "../view/scene.js";
 import { type FogField, type Renderer, type TerrainMesh, type Tier } from "../view/renderer/port.js";
 import { TIERS, TierMonitor } from "../view/renderer/tiers.js";
 import {
-  type EconomyBoard, type EconomyModel, type HudAction, type HudCommand, type HudModel,
-  EconomyCache, GalaxyCache, HudView, hudModel,
+  type EconomyBoard, type EconomyModel, type GalaxyBoard, type HudAction, type HudCommand,
+  type HudModel, EconomyCache, GalaxyCache, HudView, hudModel,
 } from "../ui/hud.js";
+import { loadOnboardingSeen, markOnboardingSeen } from "../ui/onboarding.js";
+import { type SaveCatalog, deleteSave, newSaveId, readCatalog, writeSave } from "../ui/save-panel.js";
 import { MinimapView, minimapToWorld } from "../ui/minimap.js";
 
 export interface GameElements {
@@ -124,6 +126,21 @@ export class Game {
   private showPower = false;
   /** Which base-wide economy board is open, if any (P4-T01). View state, like `showPower`. */
   private board: EconomyBoard | null = null;
+  /** Which campaign board is open on the galaxy screen (P5-T12). View state, like `board`. */
+  private galaxyBoard: GalaxyBoard | null = null;
+  /**
+   * Whether the onboarding card has been dismissed, read ONCE at construction.
+   *
+   * `loadOnboardingSeen` touches `localStorage`, and the model that reads this is built per tick.
+   * Held here so the drawer never asks storage a question it has already answered.
+   */
+  private onboardingSeen = loadOnboardingSeen();
+  /**
+   * The save catalog, refreshed only when it can have changed — when the board opens, and after a
+   * write or a delete. `readCatalog` walks every key in storage and parses every payload, which is
+   * not a thing to do on a tick.
+   */
+  private savesCatalog: SaveCatalog = { available: false, saves: [] };
   /**
    * The buttons the HUD is currently showing, in order — what a positional key press indexes into.
    *
@@ -391,6 +408,11 @@ export class Game {
         approach: screen.kind === "approach"
           ? { brief: screen.view.brief, pick: screen.view.pick, site: screen.view.site }
           : null,
+        board: this.galaxyBoard,
+        saves: this.savesCatalog,
+        now: this.wallClock(),
+        settings: this.settings,
+        currentTier: this.tier,
       });
     // The world's own action row is emptied on a galaxy screen. The positional keys must address
     // what the player is LOOKING at, and a Deploy button from the world behind the starmap would
@@ -837,6 +859,57 @@ export class Game {
       this.openApproach(command.destId);
       return;
     }
+    // --- Phase 5's non-order commands (P5-T12) ---------------------------------------------------
+    if (command.kind === "galaxyBoard") {
+      this.galaxyBoard = command.board;
+      // Storage is read when the board OPENS, not per tick: `readCatalog` walks every key and parses
+      // every payload, and the answer cannot change while nothing in this tab has written one.
+      if (command.board === "system") this.savesCatalog = readCatalog();
+      return;
+    }
+    if (command.kind === "save") {
+      const result = writeSave({
+        id: newSaveId(this.wallClock(), this.savesCatalog),
+        name: command.name,
+        // `bridge.save()`, so the round trip is P4-T09's and this shell never touches
+        // `serializeGalaxy` — which is also what stops it rewinding the engine's entity-id counter.
+        payload: this.bridge.save(),
+        now: this.wallClock(),
+      });
+      this.savesCatalog = readCatalog();
+      this.hud.notice(result.problem ?? `Saved as “${command.name}”`);
+      return;
+    }
+    if (command.kind === "loadSave") {
+      const save = this.savesCatalog.saves.find((s) => s.id === command.id);
+      // The panel already disabled the button for a payload this build cannot open; this is the
+      // second half of the same rule, so a load that fails says so instead of doing nothing.
+      const ok = save ? this.bridge.load(save.payload) : false;
+      if (!ok) { this.hud.notice("That save could not be loaded."); return; }
+      this.adoptSeat();
+      this.setScreen({ kind: "world" });
+      return;
+    }
+    if (command.kind === "deleteSave") {
+      const result = deleteSave(command.id);
+      this.savesCatalog = readCatalog();
+      if (result.problem) this.hud.notice(result.problem);
+      return;
+    }
+    if (command.kind === "settings") {
+      // Each option carries a WHOLE `Settings`, so there is nothing to merge here — which is what
+      // keeps the decision in the panel that made it.
+      Object.assign(this.settings, command.settings);
+      saveSettings(this.settings);
+      if (command.settings.tierOverride) this.setTier(command.settings.tierOverride, true);
+      else this.tierMonitor.clearManual();
+      return;
+    }
+    if (command.kind === "dismissOnboarding") {
+      this.onboardingSeen = true;
+      markOnboardingSeen();
+      return;
+    }
     this.bridge.enqueue(command.intent);
     // A confirmed jump ends the screen that confirmed it. The intent is queued, not applied, so the
     // seat is still the old world for one more tick — `adoptSeat` handles the arrival, and going
@@ -857,7 +930,19 @@ export class Game {
       ghost: this.mode.kind === "build" && this.ghost
         ? { buildingType: this.mode.buildingType, x: this.ghost.x, y: this.ghost.y }
         : null,
+      onboardingSeen: this.onboardingSeen,
     });
+  }
+
+  /**
+   * Wall-clock milliseconds, for the save panel's "12 minutes ago" and a save slot's timestamp.
+   *
+   * The one place in the app that reads a real clock, and it is deliberately NOT inside any model:
+   * every string those produce stays a pure function of its inputs, which is what makes them
+   * testable without freezing time. Nothing in the simulation ever sees this.
+   */
+  private wallClock(): number {
+    return Date.now();
   }
 
   /** Nearest entity whose footprint contains the point. Buildings win ties — they are bigger. */

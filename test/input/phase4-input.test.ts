@@ -100,9 +100,25 @@ function settled(): { bridge: WorldBridge; colonyId: string; laneId: string } {
   return { bridge, colonyId, laneId: lane.id };
 }
 
+/**
+ * The Phase 5 half of `GalaxyInput`, which this file is not about.
+ *
+ * Every field here is view state or a browser reading — which campaign board is open, what is in
+ * `localStorage`, what the wall clock says. Named once so the galaxy tests stay about the galaxy,
+ * and pinned to "no board open" so none of Phase 5's sections is on screen while Phase 4's controls
+ * are being counted.
+ */
+const NO_CAMPAIGN = {
+  board: null,
+  saves: { available: false, saves: [] },
+  now: 0,
+  settings: { tierOverride: null, edgeScroll: true },
+  currentTier: "T1",
+} as const;
+
 /** Everything the galaxy screens are showing, in the order the shell concatenates it. */
 function starmapActions(bridge: WorldBridge): readonly HudAction[] {
-  return galaxyModel({ galaxy: bridge.galaxy, stepSeconds: STEP_SECONDS, approach: null }).actions;
+  return galaxyModel({ ...NO_CAMPAIGN, galaxy: bridge.galaxy, stepSeconds: STEP_SECONDS, approach: null }).actions;
 }
 
 /** The approach view's state for `destId`, with `pick` put through the engine's own landing rules. */
@@ -112,7 +128,7 @@ function approachOn(bridge: WorldBridge, destId: string, pick: GroundPoint | nul
 }
 
 function actionsOnApproach(bridge: WorldBridge, approach: ApproachState): readonly HudAction[] {
-  return galaxyModel({ galaxy: bridge.galaxy, stepSeconds: STEP_SECONDS, approach }).actions;
+  return galaxyModel({ ...NO_CAMPAIGN, galaxy: bridge.galaxy, stepSeconds: STEP_SECONDS, approach }).actions;
 }
 
 function findIntent(actions: readonly HudAction[], kind: string): HudAction | undefined {
@@ -766,7 +782,7 @@ describe("the galaxy drawer is built on a tick, not on a frame", () => {
   it("returns the very same model until the galaxy moves", () => {
     const { bridge } = settled();
     const cache = new GalaxyCache();
-    const input = { galaxy: bridge.galaxy, stepSeconds: STEP_SECONDS, approach: null };
+    const input = { ...NO_CAMPAIGN, galaxy: bridge.galaxy, stepSeconds: STEP_SECONDS, approach: null };
 
     const first = cache.get(input);
     expect(cache.get(input), "the drawer was rebuilt inside one tick").toBe(first);
@@ -781,6 +797,7 @@ describe("the galaxy drawer is built on a tick, not on a frame", () => {
     const dest = [...bridge.galaxy.planets.keys()].find((id) => id !== SEAT)!;
     const cache = new GalaxyCache();
     const at = (x: number, y: number) => ({
+      ...NO_CAMPAIGN,
       galaxy: bridge.galaxy, stepSeconds: STEP_SECONDS, approach: approachOn(bridge, dest, { x, y }),
     });
 
