@@ -17,7 +17,10 @@
     "check:adr": "node scripts/check-adr-index.mjs",
     "check:size": "node scripts/check-bundle-size.mjs",
     "perf": "node perf/run.mjs",
-    "smoke": "playwright test"
+    "smoke": "playwright test",
+    "smoke:chromium": "playwright test --project=chromium-software",
+    "smoke:firefox": "playwright test --project=firefox-software",
+    "smoke:webkit": "playwright test --project=webkit"
   },
   "dependencies": {
     "three": "0.185.1"

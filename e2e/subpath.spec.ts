@@ -10,6 +10,7 @@
 // to test a different path prefix than everything else uses.
 
 import { createServer, type Server } from "node:http";
+import { type AddressInfo } from "node:net";
 import { readFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,7 +18,14 @@ import { expect, test } from "@playwright/test";
 
 const DIST = fileURLToPath(new URL("../dist", import.meta.url));
 const PREFIX = "/3D-SpaceExploration-RTS";
-const PORT = 4199;
+
+// An EPHEMERAL port, not a fixed one, and the browser matrix is what made that necessary (P7-T01).
+// With one project this file bound 4199, released it, and nobody noticed. With three projects the
+// same file runs three times in one process, and `server.close()` waits for keep-alive sockets the
+// previous browser left open — so the next project's `beforeAll` can land on a port that is still
+// bound and fail with EADDRINUSE. That failure would look like a cross-browser bug in the built
+// site, which is precisely the wrong conclusion. Asking the OS for a free port removes the class.
+let port = 0;
 
 const MIME: Record<string, string> = {
   ".html": "text/html",
@@ -51,7 +59,8 @@ test.beforeAll(async () => {
       res.writeHead(404).end("not found");
     }
   });
-  await new Promise<void>((resolve) => server.listen(PORT, "127.0.0.1", resolve));
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  port = (server.address() as AddressInfo).port;
 });
 
 test.afterAll(async () => {
@@ -66,7 +75,7 @@ test("the built site boots when served from a subpath, as GitHub Pages serves it
   page.on("requestfailed", (r) => failed.push(`${r.url()} — ${r.failure()?.errorText ?? "failed"}`));
   page.on("response", (r) => { if (r.status() >= 400) failed.push(`${r.url()} — HTTP ${r.status()}`); });
 
-  await page.goto(`http://127.0.0.1:${PORT}${PREFIX}/`);
+  await page.goto(`http://127.0.0.1:${port}${PREFIX}/`);
   await page.waitForFunction(() => (window as unknown as { __odyssey?: unknown }).__odyssey !== undefined, null, { timeout: 30_000 });
   await page.waitForFunction(
     () => (window as unknown as { __odyssey: { bridge: { snapshot: { tick: number } } } }).__odyssey.bridge.snapshot.tick > 3,

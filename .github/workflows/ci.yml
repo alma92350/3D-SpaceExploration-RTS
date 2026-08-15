@@ -7,7 +7,7 @@
 #   vendor   — the vendored simulation is byte-identical to upstream (ADR-0003)
 #   perf     — the CPU-side frame budget against the committed baseline (ADR-0006)
 #   browser  — smoke, no-WebGL fallback, renderer conformance, and the T0 budget under a software
-#              rasteriser, which IS persona P2's hardware
+#              rasteriser, which IS persona P2's hardware. THREE jobs since P7-T01, one per engine
 #   size     — the 3 MB payload budget and the three.js import surface (N-03, ADR-0005)
 #   docs     — every ADR is in the index with a status
 #
@@ -76,8 +76,37 @@ jobs:
       - run: npm run perf
 
   browser:
-    name: browser smoke + conformance + T0 budget
+    # P7-T01 — N-04 promises Chrome, Edge, Firefox and Safari. Until now this job ran Chromium and
+    # `RELEASE.md` recorded the rest as "covered by the renderer port's conformance suite and by
+    # there being no browser-specific code, not by execution. That is a real gap and it is the one a
+    # release should close first."
+    #
+    # A MATRIX rather than one job running three projects, for two reasons and both are about what a
+    # red build tells you:
+    #
+    #   • **Wall clock does not regress.** The three engines run on three runners at the same time,
+    #     so a pull request waits about as long as it did for one. Sequential projects in one job
+    #     would have tripled the time a human waits, which is the cost that actually gets coverage
+    #     deleted later.
+    #   • **A failure names its engine.** `browser (webkit)` red with `browser (chromium)` green is
+    #     a WebKit finding on sight. That is this file's stated reason for having six jobs instead
+    #     of one, applied one level down.
+    #
+    # `fail-fast: false` is load-bearing: with the default, the first engine to go red CANCELS the
+    # other two, and a cross-browser matrix whose whole job is to compare engines would report one
+    # engine's result and destroy the comparison.
+    name: browser ${{ matrix.engine.install }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        engine:
+          # Kept in step with `projects` in playwright.config.ts and `ENGINES` in
+          # e2e/capabilities.ts — and that is not on trust: `capability.spec.ts` fails if the config
+          # and the declaration disagree, and an undeclared project throws from `expectationFor`.
+          - { install: chromium, project: chromium-software }
+          - { install: firefox, project: firefox-software }
+          - { install: webkit, project: webkit }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -85,17 +114,21 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - run: npm ci
-      - name: Install Chromium
-        # Only Chromium: the tiers are measured against a software rasteriser, and Firefox/WebKit
-        # add ten minutes for a signal this job is not looking for. Cross-browser support (N-04) is
-        # a Phase 6 concern with its own matrix.
-        run: npx playwright install --with-deps chromium
-      - name: Smoke, conformance and the T0 perf budget
-        run: npm run smoke
+      - name: Install ${{ matrix.engine.install }}
+        # One engine per job, so no job pays for browsers it will not launch.
+        run: npx playwright install --with-deps ${{ matrix.engine.install }}
+      - name: Smoke, conformance, capabilities (and on Chromium, cold load and the T0 budget)
+        # `--project=` rather than a second config: every engine runs the SAME specs, and the two
+        # that are Chromium-only skip visibly with a reason attached (see the headers of
+        # e2e/coldload.spec.ts and e2e/perf.spec.ts). A project-level file filter would make those
+        # tests vanish from the report on Firefox and WebKit, which reads exactly like a pass.
+        run: npm run smoke -- --project=${{ matrix.engine.project }}
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: playwright-traces
+          # Unique per engine: upload-artifact@v4 rejects a name a sibling job already used, so a
+          # shared name would lose two of the three trace bundles at the moment they are needed.
+          name: playwright-traces-${{ matrix.engine.install }}
           path: test-results/
           retention-days: 7
 

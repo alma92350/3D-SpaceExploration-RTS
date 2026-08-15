@@ -3,6 +3,17 @@
 // Everything here runs under a software rasteriser (see playwright.config.ts), which is persona
 // P2's actual machine. A smoke test on a GPU proves the app works somewhere we were never worried
 // about.
+//
+// **Every test in this file runs on all three engines and none of them skips** (P7-T01). That is
+// deliberate: these are the assertions with no engine-specific machinery behind them — a boot, a
+// button, a right-click, a pixel and an empty console — so there is no honest reason for any of
+// them to be Chromium-only, and the two files that ARE Chromium-only (`coldload`, `perf`) each say
+// why in their own header.
+//
+// The thresholds below are NOT relaxed for the new engines. `> 3000` player-coloured pixels and
+// `> 1000` lit pixels are absolute floors on a 1280×720 CSS viewport; WebKit renders that at
+// deviceScaleFactor 2 and so clears them by more, not less. If an engine misses one, that is a
+// finding to measure, not a number to lower.
 
 import { expect, test } from "@playwright/test";
 
