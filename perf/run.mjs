@@ -109,4 +109,25 @@ function print(r) {
     `  triangles      ${r.maxTriangles}`,
     `  terrain uploads ${r.terrainUploads}   fog uploads ${r.fogUploads}`,
   ].join("\n"));
+  if (r.background) printBackground(r.background, r.budgetMs);
+}
+
+// P4-T10. Printed whether or not the scene is anywhere near its budget: the row asks for a NUMBER
+// the next phase can plan against ("N settled worlds cost X ms/frame"), and a gate that only speaks
+// up when it fails never produces one.
+function printBackground(b, budgetMs) {
+  const ms = (v) => (v === null ? "n/a" : `${v.toFixed(2)} ms`);
+  console.log([
+    `  background galaxy (P4-T10)`,
+    `    settled worlds ${b.worlds}   entities ${b.entitiesAtStart} -> ${b.entitiesAtEnd}`,
+    `    round-robin    period ${b.period} galaxy ticks (measured), ${b.galaxyTicks} ticks sampled`,
+    // The distribution, not the mean. `stepGalaxy` spreads the roster round-robin, so this is the
+    // line that shows frame N and frame N+1 doing different amounts of work — the thing an average
+    // would have flattened into a load no frame ever carries.
+    ...b.phases.map((p) =>
+      `      phase ${p.phase}: ${p.worlds} world(s)  p50 ${p.p50.toFixed(2)} ms  p95 ${p.p95.toFixed(2)} ms  (${p.ticks} ticks)`),
+    `    per world      ${ms(b.perWorldStepMs)} / step, ${ms(b.perWorldFrameMs)} / frame amortised`,
+    `    all ${String(b.worlds).padStart(2)} worlds  ${ms(b.allWorldsFrameMs)} / frame amortised, `
+      + `${ms(b.peakFrameMs)} on the frame the busiest phase lands (budget ${budgetMs} ms)`,
+  ].join("\n"));
 }
