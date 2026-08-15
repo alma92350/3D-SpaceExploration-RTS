@@ -6,10 +6,13 @@ client, and not written from the PRD's prose — both of those have been wrong a
 before (Phase 2 found the recipe chain is nine, not seven; Phase 3 found the PRD listing veterancy
 chevrons that Phase 1 had already built).
 
-**The count is [104 rows: 62 present, 30 absent, 12 out of scope](#4-the-count).** A checklist that
-came out mostly ticked on its first draft would be evidence that it had been written by optimism
-rather than by enumeration, so the number below is the point of the document, not an embarrassment
-in it.
+**The count is [117 rows: 85 present, 20 absent, 12 out of scope](#4-the-count)** — 76/29/12 when
+this document was drafted, moved by Phase 5 closing nine of §5.6's eleven. A checklist that came out
+mostly ticked on its first draft would be evidence that it had been written by optimism rather than
+by enumeration, so the number is the point of the document, not an embarrassment in it. **§4 also
+records that its own first draft reported three mutually inconsistent totals and now carries the
+command that counts it**, which is the more useful lesson. The number that still matters most is
+**§5.2's 18 of 28** — ten of the engine's own orders with no way in — and Phase 5 did not move it.
 
 ---
 
@@ -110,24 +113,38 @@ qualification is what the deferred playtests are for. Nothing is counted present
 
 ## 4. The count
 
+**This section was wrong in its first draft, and the way it was wrong is the argument for the rest
+of the document.** It reported *104 rows: 62 present, 30 absent, 12 out of scope* — a total that
+matched neither the by-area table beneath it (which summed to 114 with 72 present) nor the checklist
+itself (117 rows, 76 present, at the time). Three numbers, none of them equal, in the one section of
+the one document whose whole premise is that it is **derived rather than remembered**. Nobody had
+counted; the header had been written and then edited.
+
+So it is now counted, and here is the command that counts it — run it rather than trusting the table:
+
+```sh
+grep -cE '^\| [0-9]+ \|.*\| PRESENT \|$' docs/planning/PARITY.md   # and ABSENT, and OUT
+```
+
 | | Rows |
 |---|---|
-| **PRESENT** | **62** |
-| **ABSENT** | **30** |
+| **PRESENT** | **85** |
+| **ABSENT** | **20** |
 | **OUT of scope** | **12** |
-| **Total** | **104** |
+| **Total** | **117** |
 
-By area, so the shape is visible rather than the total:
+By area, so the shape is visible rather than the total. The **Was** column is where each section
+stood when this document was first written, at the start of Phase 5:
 
-| Area | Present | Absent | Out | Reads |
-|---|---|---|---|---|
-| §5.1 The world and the view | 11 | 1 | — | Phase 1 is essentially complete |
-| §5.2 Orders | 18 | 10 | — | **Ten of the engine's own orders have no way in** |
-| §5.3 The economy | 18 | 2 | — | Phase 2 is complete; both gaps are in the *menus*, not the systems |
-| §5.4 Combat | 14 | 4 | — | Three of the four are payload fields on an event the client does not read |
-| §5.5 The galaxy | 11 | 2 | — | Phase 4 is complete except for two things nothing opens |
-| §5.6 The long game | — | 11 | — | **Phase 5 has not started. This is the honest answer** |
-| §5.7 Out of scope | — | — | 12 | Each cites the decision that made it out |
+| Area | Present | Absent | Out | Was | Reads |
+|---|---|---|---|---|---|
+| §5.1 The world and the view | 11 | 1 | — | 11 / 1 | Phase 1 is essentially complete |
+| §5.2 Orders | 18 | 10 | — | 18 / 10 | **Ten of the engine's own orders still have no way in — Phase 5 did not move this at all** |
+| §5.3 The economy | 20 | 2 | — | 20 / 2 | Phase 2 is complete; both gaps are in the *menus*, not the systems |
+| §5.4 Combat | 16 | 3 | — | 16 / 3 | Three of the four are payload fields on an event the client does not read |
+| §5.5 The galaxy | 11 | 2 | — | 11 / 2 | Phase 4 is complete except for two things nothing opens |
+| §5.6 The long game | 9 | 2 | — | 0 / 11 | **Phase 5's nine. The two left are a new-game screen and audio** |
+| §5.7 Out of scope | — | — | 12 | — | Each cites the decision that made it out |
 
 **The interesting number is not 62/104, it is §5.2's 18/28.** Ten engine orders — a third of the
 verb list the 2D game gives a player — have no gesture, no button and no intent. Two of them
@@ -264,20 +281,23 @@ This is the table that decides the phase. Each row is one verb the 2D game gives
 
 ### 5.6 The long game — Phase 5's own scope
 
-Every row here is ABSENT. That is not a defect report; it is what "Phase 5 has not started" looks
-like when it is written down honestly instead of left to be inferred.
+**Nine of eleven now PRESENT** — this section was entirely ABSENT when the document was drafted,
+which is what "Phase 5 has not started" looked like written down honestly rather than left to be
+inferred. Each of the nine meets §8's three conditions: an engine trace, a control a player can
+press, and a test that goes red when the control is removed (`test/ui/phase5-wiring.test.ts`,
+mutation-checked). The two that remain are named rather than quietly dropped.
 
 | # | Capability | Engine trace | Client trace | Mark |
 |---|---|---|---|---|
-| 95 | **Diplomacy: tribute, gifts, favours, goodwill** | `diplomacy.js` — **31 exports**: `offerTribute`, `offerGift`, `fulfillRequest`, `tributeCost`, `TRIBUTE_BASE_COST`, `FAVOR_WINDOW` (90 s), `FAVOR_GOODWILL`, `APPEASE_TIME`, `GRACE_TIME`, `hostility`, `provoked`, `atPeace`, `stanceLabel`… | **Zero of the 31 cross the façade.** The raw stance number reaches the starmap through `galaxyStatus` and is drawn monotone; nothing else. `FAVOR_WINDOW` is the legibility risk P5-T04 names: an ask that expires with no clock is indistinguishable from one never offered | ABSENT |
-| 96 | **Save / load as something a player can press** | `serializeGalaxy`, `GALAXY_SAVE_VERSION` | The round-trip is proved (row 92) and **`bridge.save()` / `bridge.load()` have no caller in `src/app` or `src/ui`.** P4-T09's market price-book defect must be surfaced by this UI, not hidden by it | ABSENT |
-| 97 | **The Antimatter Gate's charge** | `updateWonder`, `chargingWonderOf`, `chargingPlayerWonder`; `BUILDINGS.antimatter_gate.wonder` | The Gate is buildable (row 49) and `updateWonder` charges it every tick. **`building.charge` does not appear anywhere in `bridge/snapshot.ts`** — a 150-second charge the match bends around, invisible on both sides | ABSENT |
-| 98 | **The rival Gate race** | `checkRivalGate`, `rivalGateComplete` event | Half-crossed and unfinished: `GalaxySnapshot.rivalGateIndex` and `rivalGateCharge` both cross, and `view/starmap.ts:262` uses **only the index**, as an alert marker. The charge — the number that says how long you have — is carried and never drawn | ABSENT |
-| 99 | **Milestones** | `checkGalaxyProgress`, `MILESTONE_IDS` (`capital`, `gate`, `domination`, `domination:all`, `rival-gate`), `isMilestoneId` | `stepGalaxy` raises them ~1/s into `galaxy.milestones`. Nothing reads it (row 94). Five milestones, zero fireworks | ABSENT |
-| 100 | **Domination progress** | `checkDomination`, `DOMINATION_TARGET` (4) | `GalaxySnapshot.pacifiedCount` and `dominationTarget` both cross the bridge and **neither is drawn**. The conquest scoreboard is one line of HUD away and is not there | ABSENT |
-| 101 | **Relief after a total wipeout** | `checkGalaxyRescue`, `RELIEF_COOLDOWN` (20 s) | Runs every second and is silent. The engine's own comment: "NEVER auto-defeat — a total wipeout sends a relief colony ship so life goes on." A player who loses everything gets a ship and no explanation, and the cooldown is what makes relief look broken rather than rate-limited | ABSENT |
-| 102 | **Surrender** | `surrenderGalaxy` | Not in the façade. **The only terminal state the Odyssey has**, and there is no way to reach it | ABSENT |
-| 103 | **The score breakdown** | `scoreBreakdown` (bank / army / structures), `playerScore` | Not in the façade. Upstream's own comment says it is "broken out instead of collapsed into one total — so a HUD can show WHY". See §6.2 for what it may and may not be used for here | ABSENT |
+| 95 | **Diplomacy: tribute, gifts, favours, goodwill** | `diplomacy.js` — **31 exports**: `offerTribute`, `offerGift`, `fulfillRequest`, `tributeCost`, `TRIBUTE_BASE_COST`, `FAVOR_WINDOW` (90 s), `FAVOR_GOODWILL`, `APPEASE_TIME`, `GRACE_TIME`, `hostility`, `provoked`, `atPeace`, `stanceLabel`… | `src/ui/diplomacy-panel.ts` + three intents (`tribute`, `gift`, `fulfilFavor`), on the starmap's Diplomacy board. `tributeCost` is asked of the engine so the escalation shows; `FAVOR_WINDOW` counts down against the tick `updateDiplomacy` really withdraws on, including the one tick where the clock reads zero and `fulfillRequest` already refuses. `stanceLabel`'s bands are bisected out of the engine rather than typed in, which is what lets P4-T03's unbanded stance bar finally be banded | PRESENT |
+| 96 | **Save / load as something a player can press** | `serializeGalaxy`, `GALAXY_SAVE_VERSION` | `src/ui/save-panel.ts` on the Saves & settings board — save, list, load, delete. The round trip is P4-T09's: a source scan proves the panel calls neither `serializeGalaxy` nor `deserializeGalaxy`. **The price-book defect this row demanded be surfaced no longer exists** — issue #92, fixed upstream in `50ceb88`, synced, and `galaxy-save.test.ts` now asserts prices survive; a warning about it would teach players to distrust a correct save | PRESENT |
+| 97 | **The Antimatter Gate's charge** | `updateWonder`, `chargingWonderOf`, `chargingPlayerWonder`; `BUILDINGS.antimatter_gate.wonder` | `src/ui/gate-panel.ts` on the Antimatter Gate board: charge, seconds remaining, the per-good feed and where a starved Gate will stop. `chargingWonderOf` answers `null` four different ways and calls a starved Gate "charging", so `status` adds the distinction the engine does not have while `chargingId` reports its verdict unchanged | PRESENT |
+| 98 | **The rival Gate race** | `checkRivalGate`, `rivalGateComplete` event | The rival's charge and countdown are on the same board, read from `galaxyStatus().rivalGate` — the identical call the bridge makes. **And the enumeration's own complaint was the smaller half**: `checkRivalGate` nulls its record on ascension, so the starmap mark clears exactly when the race is lost. `rivalAscended` is the only thing separating that from "nobody is racing you", and `longgame.md` task 9 is written to fail it | PRESENT |
+| 99 | **Milestones** | `checkGalaxyProgress`, `MILESTONE_IDS` (`capital`, `gate`, `domination`, `domination:all`, `rival-gate`), `isMilestoneId` | `src/ui/milestones-panel.ts` on the Records board: `MILESTONE_IDS` in the engine's own order, the `world:N` family, and `galaxy.milestones`' undrained queue. Nothing here runs a scan — opening a panel must not raise a firework, and a test proves it | PRESENT |
+| 100 | **Domination progress** | `checkDomination`, `DOMINATION_TARGET` (4) | Same board. `milestoneReached` is `reached.has("domination")` and never `pacified >= target`; `pendingScan` names the second-or-so where the count says yes and the engine has raised nothing, rather than smoothing it over | PRESENT |
+| 101 | **Relief after a total wipeout** | `checkGalaxyRescue`, `RELIEF_COOLDOWN` (20 s) | `src/ui/relief-panel.ts`, and it is the one panel NOT behind a button — it appears whenever the rescue clock is doing something, because a player who has just lost everything should not have to go looking. `footholds` lists every world still held where the engine returns on the first hit. `longgame.md` G1 is set at 5 of 5 on it | PRESENT |
+| 102 | **Surrender** | `surrenderGalaxy` | A `surrender` intent and a button on the Records board. `surrenderGalaxy` returns **no value at all** and refuses silently on a seat already over, so `applyIntent` asks the question the engine will not answer — otherwise a second press on a struck-through button would say nothing, and this HUD keeps struck-through buttons clickable on purpose | PRESENT |
+| 103 | **The score breakdown** | `scoreBreakdown` (bank / army / structures), `playerScore` | `src/ui/score-panel.ts` on the Records board, bank / army / structures shown separately because upstream's comment says the breakdown exists "so a HUD can show WHY". §6.2's ruling holds: it is a readout, never a win condition | PRESENT |
 | 104 | **New-game setup: faction and difficulty** | `PLAYABLE_FACTIONS` (3), `factionTrait`, `DIFFICULTY_OPTIONS` (3, each with ~12 tuning fields) | `WorldOptions` accepts `difficulty` and `playerFaction`; **`main.ts` passes neither**, so every session is `medium` / `frontier`. There is no new-game screen at all | ABSENT |
 | 105 | **Audio** | **none — `grep -ri audiocontext src/engine` finds nothing** | Not an engine capability. See §6.3: upstream *does* have a `sound.js`, it simply was not vendored, which is the evidence Q-06 (P5-T02) has been waiting for | ABSENT |
 
@@ -455,6 +475,14 @@ tests green** including all three enumeration files. The work is in; the status 
 Worth fixing before someone re-does a finished row — but this file does not edit `TASKS.md`.
 
 ### 7.4 The reachability gap has recurred a fifth time, one level below where it was last caught
+
+> **And a sixth, in Phase 5 itself.** Four parallel agents produced seven panels in one afternoon,
+> every one tested and reachable by nobody — the same shape, at the same scale, one phase after the
+> scan was built to stop it. The scan caught it this time, which is the point; P5-T12 is the row
+> that closed it and `test/ui/phase5-wiring.test.ts` is the human-side check the scan cannot make.
+> **The pattern is not that people forget to wire panels. It is that building the panel and wiring
+> the panel are separate pieces of work, and only one of them has ever been in a row's title.**
+> P5-T12 has it in the title. That is the actual fix, and it is worth more than the scan.
 
 `TASKS.md` records the pattern four times: Phase 2's panels, Phase 3's orders, Phase 4's screens,
 then P4-T14's build menu ("reachability assumed the *content* was reachable; it is not"). This

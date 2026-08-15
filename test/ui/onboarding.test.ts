@@ -310,18 +310,22 @@ describe("the card names controls the app actually has (P5-T10)", () => {
   });
 
   /* -------------------------------------------------------------------------------------------
-     THE PIN — the sidebar hint is already wrong, and it is wrong in a way nothing could catch.
+     THE PIN, INVERTED — every key the sidebar advertises is live.
 
-     `index.html`'s hint paragraph advertises `WASD` to pan. `app/game.ts` `applyContinuousPan`
-     reads `arrowleft`/`a`, `arrowright`/`d`, `arrowup`/`w` and `arrowdown` — **`s` is bound to
-     nothing, anywhere.** A player who learns to pan with WASD finds three of the four directions
-     work and concludes the camera is broken.
+     This was written the other way up, asserting `["s"]`. `index.html`'s hint paragraph advertised
+     `WASD` to pan while `applyContinuousPan` read `arrowleft`/`a`, `arrowright`/`d`, `arrowup`/`w`
+     and `arrowdown` — **`s` was bound to nothing, anywhere, from Phase 1 until this row found it.**
+     A player who learned to pan with WASD found three of the four directions worked and concluded
+     the camera was broken. Pinned as an equality rather than fixed here, because the fix was one
+     line in `src/app/game.ts` and that file was not this row's.
 
-     Pinned rather than fixed: the fix is one line in `src/app/game.ts` (or one word in
-     `index.html`), and neither file is this row's. Asserted as an EQUALITY so it cannot rot in
-     either direction — fix the pan and this goes red telling you to empty the list.
+     It was then fixed, this went red saying to empty the list, and it is inverted rather than
+     deleted — because the interesting assertion was never "`s` is dead". It is **"the hint and the
+     app agree"**, which is a property worth holding for the next twenty-four bindings and the next
+     five phases. The hint is hand-written prose in an HTML file that no compiler reads; this is the
+     only thing in the project that can tell when it starts lying.
      ------------------------------------------------------------------------------------------- */
-  it("pins the sidebar hint's one dead key", () => {
+  it("finds no key in the sidebar hint that the app does not bind", () => {
     const hint = readFileSync(join(ROOT, "index.html"), "utf8");
     const paragraphs = [...hint.matchAll(/<p class="hint">([\s\S]*?)<\/p>/g)].map((m) => m[1]!);
     expect(paragraphs.length, "index.html no longer has a hint paragraph to check").toBeGreaterThan(0);
@@ -337,10 +341,10 @@ describe("the card names controls the app actually has (P5-T10)", () => {
     }
     expect(
       dead,
-      "The sidebar hint's key list and the app disagree. `s` is the known one: `index.html` says " +
-      "WASD pans and `applyContinuousPan` never reads it. If this list is now EMPTY, the pan was " +
-      "fixed — delete the pin. If it grew, a binding was removed and the hint was not updated.",
-    ).toEqual(["s"]);
+      "The sidebar hint advertises a key the app does not bind. Either the binding was removed and " +
+      "the hint was not updated, or the hint gained a control that was never wired. `s` was the " +
+      "original offender — index.html said WASD pans and `applyContinuousPan` never read it.",
+    ).toEqual([]);
   });
 });
 

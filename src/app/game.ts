@@ -675,7 +675,15 @@ export class Game {
     if (this.keys.has("arrowleft") || this.keys.has("a")) dx -= 1;
     if (this.keys.has("arrowright") || this.keys.has("d")) dx += 1;
     if (this.keys.has("arrowup") || this.keys.has("w")) dy -= 1;
-    if (this.keys.has("arrowdown")) dy += 1;
+    // `s` was missing from this line from Phase 1 until P5-T10 found it. Three of the four WASD keys
+    // were bound and the fourth was not, `index.html` advertised all four, and nothing could catch
+    // it because the sidebar's list is hand-written prose. It is the reason the onboarding card
+    // names every key as DATA and puts each one through `translateKey` or this set.
+    //
+    // The fix belongs here rather than in the paragraph, because `src/input/intents.ts`'s own header
+    // records why stop is X and not S — "W/A/S/D pan the camera (PRD §5) and upstream gave the pan
+    // keys priority". S was already spent on panning by that decision; it just never arrived.
+    if (this.keys.has("arrowdown") || this.keys.has("s")) dy += 1;
 
     if (this.settings.edgeScroll && this.pointerInside) {
       const [w, h] = this.viewportSize();
