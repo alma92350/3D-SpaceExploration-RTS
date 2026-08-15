@@ -168,3 +168,40 @@ export { runColonyPolicies } from "@engine/engine/colonyPolicy.js";
 export {
   MAX_WORKER_TARGET, sanitizePolicy, getColonyPolicy, setColonyPolicy,
 } from "@engine/engine/colonyPolicy.js";
+
+// ---------------------------------------------------------------------------------------------
+// Phase 5 — the long game.
+//
+// Same shape as Phases 3 and 4: every one is a query the engine already answers or a command it
+// validates. Two are worth naming because the client has already been caught wanting them:
+//
+//   • `stanceLabel` is the engine's own banding of the −1..1 stance. P4-T03 drew the starmap's
+//     stance bar with NO bands precisely because this stopped at the engine, and inventing a
+//     threshold above the bridge would be a second answer to a question the simulation answers
+//     (ADR-0012 §5). Now it crosses, that bar can be labelled from the engine's own words.
+//   • `scoreBreakdown` is broken out rather than collapsed into a total, and upstream's own comment
+//     says why: "so a HUD can show WHY". A score recomputed above the bridge disagrees with it the
+//     first time a weight moves.
+// ---------------------------------------------------------------------------------------------
+
+export {
+  PEACE_THRESHOLD, APPEASE_TIME, TRIBUTE_BASE_COST, GOODWILL_CAP,
+  FAVOR_INTERVAL, FAVOR_WINDOW, FAVOR_GOODWILL, GRACE_TIME,
+  tributeCost, offerTribute, offerGift, fulfillRequest, atPeace, hostility, stanceLabel, provoked,
+} from "@engine/engine/diplomacy.js";
+
+export { updateWonder, chargingWonderOf, chargingPlayerWonder } from "@engine/engine/wonder.js";
+
+export {
+  DEFAULT_MATCH_TIME_LIMIT, checkWinCondition, checkEndlessLoss, checkEndlessWin,
+  scoreBreakdown, playerScore,
+} from "@engine/engine/victory.js";
+
+export {
+  RELIEF_COOLDOWN, MILESTONE_IDS, DOMINATION_TARGET, CLAIM_DEV, EXPAND_DEV,
+  CAPITAL_UPGRADE_COST, CAPITAL_HP_MULT, upgradeToCapital,
+  checkGalaxyRescue, surrenderGalaxy, checkGalaxyProgress, checkDomination, isMilestoneId,
+  updateFactionWarmth, checkRivalGate,
+} from "@engine/engine/galaxy.js";
+
+export { FACTIONS, PLAYABLE_FACTIONS, factionTrait } from "@engine/engine/factions.js";
