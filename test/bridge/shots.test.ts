@@ -644,7 +644,7 @@ describe("shots reach the view", () => {
   });
 });
 
-describe("the one shot ADR-0023 knowingly gives up", () => {
+describe("the one shot ADR-0023 knowingly gives up — REPORTED UPSTREAM (P7-T02)", () => {
   it("draws nothing for the shell that sets off an armed Helium Bomb", () => {
     // Pinned rather than hidden, because it is a real regression against the diff and the diff drew
     // this one (measured: 1 tracer before, 0 after). `detonateIfAttacked` runs first in
@@ -655,6 +655,22 @@ describe("the one shot ADR-0023 knowingly gives up", () => {
     // The trade is argued in ADR-0023 §4. This test's job is to make the day it stops being one
     // shot a red build: the source sweep above catches a new early return, and this catches the
     // behaviour changing under it.
+    //
+    // **P7-T02 REOPENED IT, AND THIS TEST IS NOW A PIN ON A DEFECT RATHER THAN ON A DECISION.**
+    // ADR-0023 §4 named this shot and closed the row; naming it is not closing it. The bridge cannot
+    // fix it — `bombDetonated` carries the BOMB's position and owner and never the shooter's, so
+    // there is no second source for the tracer's origin short of resurrecting the per-entity
+    // `attackTimer` diff ADR-0023 deleted, which its own alternatives section rejects. The defect is
+    // in the engine and it hits upstream's renderer too, so it went where ADR-0003 says it goes:
+    // upstream issue #96, staged as
+    // `docs/upstream/0002-a-shot-that-sets-off-a-helium-bomb-announces-nothing.patch` — one hunk that
+    // hoists the existing push above the fuze branch, verified at 735/735 identical events on a
+    // packed fight and 1 487/1 487 vendored engine tests.
+    //
+    // **So when the fix lands and `npm run sync:engine` bumps the ref, THIS TEST MUST GO RED.** That
+    // is by design — it is how the four pins in `docs/upstream/README.md` behaved on the last sync.
+    // Invert it into a regression guard then; do not delete it. The scenario is expensive to build
+    // and is exactly what a regression would need.
     const bridge = new WorldBridge({ seed: SEED, worldId: "helix" });
     const st = bridge.state;
     const base = st.map.bases.player;
@@ -685,6 +701,12 @@ describe("the one shot ADR-0023 knowingly gives up", () => {
     let prev = gun.attackTimer;
     let tracers = 0;
     let deaths = 0;
+    // `dropped` SUMMED over every tick, not read once at the end. ADR-0023 §2 found that reading it
+    // after the loop only ever observes the final tick, because it is reset per extraction — which
+    // is how the old obligation reported zero while shots were being lost. This test had the same
+    // bug and P7-T02's mutation run found it: a mutant that counted the bomb's own detonation onto
+    // `dropped` survived, because by tick 90 the counter had been reset 89 times.
+    let dropped = 0;
     for (let t = 0; t < 90; t++) {
       bridge.step(STEP_SECONDS);
       const now = st.units.get(gun.id)?.attackTimer ?? 0;
@@ -692,6 +714,7 @@ describe("the one shot ADR-0023 knowingly gives up", () => {
       prev = now;
       tracers += bridge.snapshot.shots.count;
       deaths += bridge.snapshot.deaths.count;
+      dropped += bridge.snapshot.shots.dropped;
     }
 
     expect(fired, "the Lancer never fired at the bomb").toBe(1);
@@ -700,7 +723,8 @@ describe("the one shot ADR-0023 knowingly gives up", () => {
     expect(tracers, "a tracer was drawn for a shot the engine never announced").toBe(0);
     expect(deaths, "the blast produced no death cue either, which would make this shot truly silent")
       .toBeGreaterThan(0);
-    expect(bridge.snapshot.shots.dropped, "an unannounced shot must not land on the payload counter")
+    expect(dropped, "an unannounced shot must not land on the payload counter — `dropped` is for an "
+      + "`attackHit` whose four coordinates are not all finite (ADR-0023 §5), and nothing else")
       .toBe(0);
   });
 });

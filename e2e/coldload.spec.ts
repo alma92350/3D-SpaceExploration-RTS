@@ -9,8 +9,30 @@
 // **The second test is the one that matters.** A throttling harness that silently fails open is
 // worth less than no harness: it reports a comfortable number forever while measuring an
 // unthrottled localhost load. So the emulation is proven to bite before its number is trusted.
+//
+// **This file is Chromium-only, and the reason is a hard boundary rather than a preference**
+// (P7-T01). Both measurements are built on `Network.emulateNetworkConditions`, which arrives
+// through `context.newCDPSession` — the Chrome DevTools Protocol. Playwright exposes CDP on
+// Chromium and on nothing else; `newCDPSession` throws on Firefox and WebKit. There is no
+// equivalent, and the obvious substitute is worse than nothing: throttling with `page.route` and a
+// timer would measure a delay this test file wrote itself, so the "the throttling actually bites"
+// check above would be asserting that our own `setTimeout` works. That is exactly the harness that
+// reports a comfortable number forever.
+//
+// So S5's 5-second budget is measured on one engine, that is stated here and in `RELEASE.md`'s N-04
+// row rather than implied by an absent file, and the skip is a `test.skip` with its reason attached
+// so it is COUNTED in the report on Firefox and WebKit instead of quietly not existing. What those
+// two engines do still prove about cold load is that the app reaches a playable frame at all, which
+// is `e2e/smoke.spec.ts` and `e2e/capability.spec.ts`, and both run everywhere.
 
 import { expect, test } from "@playwright/test";
+
+const CDP_ONLY =
+  "cold-load throttling needs CDP's Network.emulateNetworkConditions, which Playwright exposes on "
+  + "Chromium only. S5's budget is therefore measured on chromium-software; boot on this engine is "
+  + "covered by smoke.spec.ts and capability.spec.ts, which do not skip.";
+
+test.skip(({ browserName }) => browserName !== "chromium", CDP_ONLY);
 
 /** S5's connection. 10 Mbit ⇒ 1.25 MB/s, plus an RTT a real link would have. */
 const MBIT = 10;

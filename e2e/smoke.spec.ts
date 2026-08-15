@@ -3,6 +3,17 @@
 // Everything here runs under a software rasteriser (see playwright.config.ts), which is persona
 // P2's actual machine. A smoke test on a GPU proves the app works somewhere we were never worried
 // about.
+//
+// **Every test in this file runs on all three engines and none of them skips** (P7-T01). That is
+// deliberate: these are the assertions with no engine-specific machinery behind them — a boot, a
+// button, a right-click, a pixel and an empty console — so there is no honest reason for any of
+// them to be Chromium-only, and the two files that ARE Chromium-only (`coldload`, `perf`) each say
+// why in their own header.
+//
+// The thresholds below are NOT relaxed for the new engines. `> 3000` player-coloured pixels and
+// `> 1000` lit pixels are absolute floors on a 1280×720 CSS viewport; WebKit renders that at
+// deviceScaleFactor 2 and so clears them by more, not less. If an engine misses one, that is a
+// finding to measure, not a number to lower.
 
 import { expect, test } from "@playwright/test";
 
@@ -18,7 +29,18 @@ test("boots to a playable frame with a clean console", async ({ page }) => {
   const errors = watchConsole(page);
   await page.goto("/");
 
-  await expect(page.locator("#scene")).toBeVisible();
+  // **Whichever canvas the chosen renderer draws to — not `#scene` specifically.** This asserted
+  // `#scene` from Phase 1 until P7-T01 ran it on a second engine, and it was an assumption nobody
+  // could see: `main.ts` HIDES the GL canvas when the app falls back to Canvas2D (`glCanvas.style
+  // .display = "none"`, line 36), because the 2D path draws the whole world onto the overlay
+  // instead. Under Chromium-with-SwiftShader the fallback never fires, so the assumption held for
+  // six phases; the first Firefox run in CI has no WebGL2, took the fallback exactly as designed,
+  // and this line failed on the app working correctly.
+  //
+  // The honest assertion is that SOMETHING is drawing. Which canvas that is, is the fallback's
+  // business, and `falls back to the Canvas2D renderer when WebGL is unavailable` below is the test
+  // that owns which one it should be.
+  await expect(page.locator("#scene, #overlay").locator("visible=true").first()).toBeVisible();
   await expect(page.locator("#boot")).toHaveCount(0);
 
   // Not just "a canvas exists" — the loop must actually be advancing the simulation.

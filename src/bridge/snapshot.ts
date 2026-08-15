@@ -753,10 +753,21 @@ const BAND_OPAQUE = 3 * ID_BAND;
  * `wreck-…` / `crater-…` ids, interned in first-seen order — the one namespace with no counter to
  * read. Hashing them would reintroduce exactly the collision this exists to remove.
  *
- * It only grows, which is deliberate and cheap: the entries are the strings the engine already
- * holds, and a match makes hundreds, not millions. Two worlds can mint the same `wreck-u12-ore`,
- * and that is fine — a snapshot only ever holds the active seat, so they never coexist in one
- * table, and the same string mapping to the same integer is the correct answer anyway.
+ * It only grows, and P7-T06's soak turned that from an assurance into a measurement. **One entry
+ * per distinct deposit this session has packed, exactly** — the 20-minute run holds interned-ids
+ * and deposits-ever-seen equal at every sample, which is the invariant `perf/soak.ts` now asserts
+ * rather than the plateau it first (wrongly) demanded.
+ *
+ * It is never reclaimed: a deposit that is mined out and removed from the map keeps its entry for
+ * the life of the page. So the table is bounded by **deposits created, not by the scene** — about
+ * 15 a minute under sustained combat, a few hundred across a full match, and a multi-hour session
+ * would accumulate thousands of ~120-byte entries. That is accepted rather than fixed, and the
+ * reason is that the alternative is worse: reclaiming would mean knowing which ids are still live,
+ * which is precisely the question this table exists so the hot path never has to ask.
+ *
+ * Two worlds can mint the same `wreck-u12-ore`, and that is fine — a snapshot only ever holds the
+ * active seat, so they never coexist in one table, and the same string mapping to the same integer
+ * is the correct answer anyway.
  */
 const opaqueIds: string[] = [];
 const opaqueIndex = new Map<string, number>();
@@ -800,6 +811,19 @@ export function engineId(numeric: number): string {
   // Zero is not a packed id — nothing encodes to it now that NaN cannot. Naming it beats returning
   // the confident lie `u-1`.
   return numeric === 0 ? "" : `u${numeric - 1}`;
+}
+
+/**
+ * How many opaque ids have been interned, for a soak to hold the comment above to its word.
+ *
+ * That comment says the table "only grows, which is deliberate and cheap: the entries are the
+ * strings the engine already holds, and a match makes hundreds, not millions". Nothing could check
+ * that: the table is module-private and every run this project makes is ten seconds long, while
+ * wreck and crater deposits are minted continuously by combat. `perf/soak.mjs` is the first thing
+ * that can falsify the sentence, so this is the smallest surface that lets it try.
+ */
+export function internedIdCount(): number {
+  return opaqueIds.length;
 }
 
 function intern(id: string): number {

@@ -431,11 +431,43 @@ function node(): MeshData {
   return b.finish("node");
 }
 
+/**
+ * How far the imposter quad LEANS AWAY from the camera, in radians from vertical (P7-T02).
+ *
+ * **This is the camera rig's own mid-pitch, not a shape preference.** `input/camera.ts` ramps pitch
+ * between `PITCH_NEAR` 0.62 and `PITCH_FAR` 1.30 as a pure function of zoom; the midpoint is 0.96 rad
+ * (55.0°). It is written here rather than imported because `input/` already imports `view/` and the
+ * arrow must not turn around — `test/view/lod-imposter.test.ts` asserts the equality instead, so the
+ * derivation is checked rather than remembered.
+ *
+ * **What the lean buys, and why a renderer change is not needed to buy it.** `drawInstances` applies
+ * one Y rotation and a uniform scale in both implementations, so a quad standing upright is
+ * foreshortened by `cos(pitch)` — 0.27 of its height at the far zoom, which is where imposters
+ * mostly live. `scene.ts` recorded that as "a full billboard needs a renderer change". It does not:
+ * a quad that is built already leaning back by θ projects its height by `cos(pitch − θ)`, so baking
+ * θ at the middle of the rig's own ramp makes it a billboard to within ±19.5° at EVERY zoom the game
+ * has — a projected-height factor of 0.94 at both ends of the ramp and 1.00 in the middle, against
+ * 0.27–0.81 upright. Measured worst-case screen-height error over the whole roster × every zoom ×
+ * all eight yaw snaps: 5.60× upright, 2.20× leaning (`perf/imposter-probe.mjs`).
+ *
+ * The lean also survives back-face culling by construction: the quad's outward normal rotates up
+ * with it to `(0, sin θ, cos θ)`, and the eye sits at elevation `pitch`, so the facing dot product is
+ * `cos(pitch − θ) > 0` at every zoom rather than merely at most of them.
+ */
+export const IMPOSTER_LEAN = 0.96;
+
 function imposter(): MeshData {
   const b = new Builder();
-  // The LOD fallback: one camera-facing quad. The renderer billboards it; the geometry only has to
-  // be a unit square standing on the ground.
-  b.quad(-0.5, 0, 0, 0.5, 0, 0, 0.5, 1, 0, -0.5, 1, 0, 1, 1, 1, 1);
+  // The LOD fallback: one quad, two triangles, turned toward the camera in yaw by `scene.ts` and
+  // already leaning back in pitch by `IMPOSTER_LEAN` here. Its base still sits at y = 0, because the
+  // entity it replaces stands on the ground and the imposter has to stand in the same place.
+  b.quad(
+    -0.5, 0, 0,
+    0.5, 0, 0,
+    0.5, Math.cos(IMPOSTER_LEAN), -Math.sin(IMPOSTER_LEAN),
+    -0.5, Math.cos(IMPOSTER_LEAN), -Math.sin(IMPOSTER_LEAN),
+    1, 1, 1, 1,
+  );
   return b.finish("imposter");
 }
 
@@ -689,6 +721,55 @@ const GENERATORS: Record<MeshId, () => MeshData> = {
 export function buildMeshes(): MeshData[] {
   return MVP_MESHES.map((id) => GENERATORS[id]());
 }
+
+/** How many directions the mean below is sampled over. 90 is within 0.1% of the exact integral. */
+const FOOTPRINT_SAMPLES = 90;
+
+/**
+ * The mean width of a mesh's FOOTPRINT, averaged over every direction it can be viewed from.
+ *
+ * Not `MeshData.radius × 2`, which is the widest the footprint ever projects and therefore the
+ * wrong number for something that has to stand in for the mesh at ALL facings: over the roster it
+ * overstates the on-screen width by a median 24% and by up to 2.17× (`perf/imposter-probe.mjs`).
+ * This is the support width `max(p·d) − min(p·d)` averaged over d — Cauchy's mean width, which for
+ * a convex footprint is its perimeter over π — and it is what a shape's silhouette is worth on
+ * average when nothing rotates it. Rotation-invariant by construction, so a mesh modelled on the
+ * diagonal measures the same as one modelled on an axis.
+ */
+function meanFootprintWidth(mesh: MeshData): number {
+  let total = 0;
+  for (let k = 0; k < FOOTPRINT_SAMPLES; k++) {
+    const angle = (k / FOOTPRINT_SAMPLES) * Math.PI;
+    const dx = Math.cos(angle);
+    const dz = Math.sin(angle);
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (let i = 0; i < mesh.positions.length; i += 3) {
+      const p = mesh.positions[i]! * dx + mesh.positions[i + 2]! * dz;
+      if (p < lo) lo = p;
+      if (p > hi) hi = p;
+    }
+    total += hi - lo;
+  }
+  return total / FOOTPRINT_SAMPLES;
+}
+
+/**
+ * The world-space size of the imposter that stands in for each mesh (P7-T02).
+ *
+ * **Keyed on the MESH, not on the entity's radius, and that is the whole correction.** The imposter
+ * replaces a mesh, so the only size that cannot pop is the size of the thing it replaces. `scene.ts`
+ * used `entityRadius × 2.2` — the engine's COLLISION circle, scaled by a constant that arrived in
+ * the Phase 1 MVP commit with no working — and the two disagree badly wherever ADR-0014's families
+ * merged types of different radii onto one hull: a Bulk Freighter's collision circle is 15 where the
+ * hull it actually draws is 7.7, so its imposter was drawn at 2× the mesh and covered **10.35×** its
+ * screen area. That single case is P6-T07's worst measurement.
+ *
+ * Computed once at module load, read once per imposter per frame: a property lookup on a frozen
+ * record, no allocation, and cheaper than the `meshIdForType` call already in that loop.
+ */
+export const IMPOSTER_SIZE: Readonly<Record<MeshId, number>> =
+  Object.fromEntries(buildMeshes().map((m) => [m.id, meanFootprintWidth(m)])) as Record<MeshId, number>;
 
 /**
  * Which mesh draws a given engine type.

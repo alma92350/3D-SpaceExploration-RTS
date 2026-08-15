@@ -48,7 +48,11 @@ describe("mesh winding", () => {
   });
 
   for (const mesh of meshes) {
-    if (mesh.id === "imposter") continue;   // a single billboard quad; the renderer faces it
+    // A single open quad: it has no cap and encloses no volume, so neither check below applies. It
+    // used to be skipped here as "a billboard the renderer faces", which was false — no renderer
+    // ever faced it (P6-T07) — and its facing is now pinned by `lod-imposter.test.ts` instead,
+    // which checks the same outward-normal definition this file uses.
+    if (mesh.id === "imposter") continue;
 
     it(`${mesh.id}: no cap above the ground faces straight down`, () => {
       // An upward-facing surface wound backwards is the most common way to break a procedural

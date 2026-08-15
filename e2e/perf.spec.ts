@@ -17,9 +17,34 @@
 //
 // The CPU-side gate (`npm run perf`) is the companion to this one: it covers the batching path
 // against a committed baseline, in seconds, on any machine. Neither substitutes for the other.
+//
+// **This file is Chromium-only, and it is the one place in the matrix where that is a judgement
+// rather than a capability** (P7-T01). Firefox and WebKit can run it; the question is what the
+// number would mean. T0's 33 ms budget is not a claim about "a browser" — ADR-0006 §4 defines the
+// target hardware as a software rasteriser, and `chromium-software` forces SwiftShader BY NAME so
+// the gate measures that and not the runner's luck. Firefox rasterises through llvmpipe and WebKit
+// through whatever its Linux build was given; asserting one engine's calibrated ceiling against a
+// different rasteriser produces a number that is either flaky or meaningless, and the failure mode
+// is the worst kind — a red gate nobody can act on, which ADR-0006 already warns about by name
+// ("a required CI check that nobody had to pass was walked past for four days of red builds").
+//
+// The cost of running it anyway is measured, not guessed: two 20-second scenes plus warm-up is
+// ~46 s of the Chromium job's ~87 s. Tripling that buys three incomparable numbers.
+//
+// What the other two engines DO prove about the renderer is the part that is hardware-independent —
+// that the port's three implementations agree, through a real GL context — and that is
+// `conformance.spec.ts`, which runs on all three.
 
 import { expect, test } from "@playwright/test";
 import type { PerfResult } from "../perf/harness.js";
+
+test.skip(
+  ({ browserName }) => browserName !== "chromium",
+  "T0's 33 ms budget is calibrated against SwiftShader specifically (ADR-0006 §4), so it is gated "
+  + "on chromium-software. Running it against llvmpipe or WebKit's rasteriser would assert one "
+  + "engine's ceiling on another's hardware. The renderer's cross-engine behaviour is covered by "
+  + "conformance.spec.ts, which does not skip.",
+);
 
 interface HarnessPerf {
   perf(scene: string, seconds: number): { result: PerfResult; problems: string[] };

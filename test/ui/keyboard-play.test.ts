@@ -32,14 +32,34 @@
 // describe registers a capture-phase recorder for every mouse and pointer event type on all three
 // and asserts after each test that not one arrived, so "keyboard-only" is checked rather than
 // promised and a test that reached for `button.click()` to get unstuck fails.
+//
+// ================================================================================================
+// P7-T03 — the two controls this row named as still pointer-only, played the same way
+// ================================================================================================
+//
+// The third describe is the remainder, under the same guard and to the same standard. Neither claim
+// is "a key produced an event": **zoom is asserted as a distance that moved, by the notch the wheel
+// moves and all the way to both stops**, and the landing mark as a jump that put the colony ship
+// down on the point the player flew to — a hundred and sixty units from the engine's own default,
+// which is where every keyboard jump landed before this row.
+//
+// The fourth is the trap the row was filed with: `landingZone` DISCARDS a landing point whenever a
+// pad stands on the destination, so a control that promised one there would be a promise the
+// recorded stream keeps and the game does not. The panel decides and the control obeys — checked by
+// marking a padded world from the keyboard and reading the intent that comes out.
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Game } from "../../src/app/game.js";
 import { RecordingRenderer } from "../../src/view/renderer/recording.js";
-import { type HudAction } from "../../src/ui/hud.js";
+import { type HudAction, type HudCommand } from "../../src/ui/hud.js";
 import { FOCUS_CLASS } from "../../src/ui/hud-focus.js";
 import { POSITIONAL_KEYS } from "../../src/input/intents.js";
-import { makeUnit } from "../../src/engine/index.js";
+import {
+  CameraRig, MAX_DISTANCE, MIN_DISTANCE, PITCH_FAR, PITCH_NEAR,
+} from "../../src/input/camera.js";
+import { type ApproachView } from "../../src/view/landing.js";
+import { AUTHORED_VIEW } from "../../src/view/starmap.js";
+import { makeBuilding, makeUnit } from "../../src/engine/index.js";
 
 const SEED = 20260815;
 const VIEW_W = 1280;
@@ -175,10 +195,79 @@ function driver(game: Game) {
     (game as unknown as { ghost: { x: number; y: number } | null }).ghost;
   const mode = (): string => (game as unknown as { mode: { kind: string } }).mode.kind;
 
+  /* --- P7-T03's two subjects, as the shell holds them ------------------------------------------ */
+
+  /** Which screen is up, and — on the approach screen — the picker itself. */
+  const screen = (): { kind: string; destId?: string; view?: ApproachView } =>
+    (game as unknown as { screen: { kind: string; destId?: string; view?: ApproachView } }).screen;
+
+  /** The approach view, or a failure that says which screen is up instead. */
+  const approach = (): ApproachView => {
+    const s = screen();
+    expect(s.view, `the approach screen is not open — the shell is showing "${s.kind}"`).toBeDefined();
+    return s.view!;
+  };
+
+  /** The starmap's own rig. Separate from the battlefield's, and priced at one distance. */
+  const plate = (): CameraRig => (game as unknown as { starmapCamera: CameraRig }).starmapCamera;
+
+  /** The command behind an action id, so an intent can be read without pressing anything. */
+  const commandFor = (id: string): HudCommand => {
+    const action = actions().find((a) => a.id === id);
+    expect(action, `"${id}" is not on the row: ${actions().map((a) => a.id).join(", ")}`).toBeDefined();
+    return action!.command;
+  };
+
+  const enabled = (id: string): boolean => {
+    const action = actions().find((a) => a.id === id);
+    expect(action, `"${id}" is not on the row: ${actions().map((a) => a.id).join(", ")}`).toBeDefined();
+    return action!.enabled;
+  };
+
+  /**
+   * Fly the approach screen's rig with the arrow keys, and nothing else.
+   *
+   * `panTo` above walks the BATTLEFIELD's rig; this walks the picker's, which until P7-T03 no key
+   * touched at all. Deliberately a separate helper rather than a parameter on `panTo`: the two are
+   * different rigs on different screens, and a helper that silently drove whichever one happened to
+   * be up is how a test comes to prove nothing.
+   */
+  const flyApproach = (dx: number, dy: number): void => {
+    const rig = approach().rig;
+    const to = { x: rig.targetX + dx, y: rig.targetY + dy };
+    for (let i = 0; i < 500 && Math.abs(rig.targetX - to.x) > 6; i++) {
+      holdFrame(rig.targetX < to.x ? "ArrowRight" : "ArrowLeft");
+    }
+    for (let i = 0; i < 500 && Math.abs(rig.targetY - to.y) > 6; i++) {
+      holdFrame(rig.targetY < to.y ? "ArrowDown" : "ArrowUp");
+    }
+    expect(Math.hypot(rig.targetX - to.x, rig.targetY - to.y),
+      "the arrow keys could not fly the approach screen's own camera").toBeLessThan(10);
+  };
+
   return {
     frame, step, press, holdFrame, panTo, actions, fire, until,
     selection, selectedTypes, units, buildings, myBuilding, cycleTo, foundBase, ghost, mode,
+    screen, approach, plate, commandFor, enabled, flyApproach,
   };
+}
+
+/**
+ * A finished Spaceport on the seat, and the credits to leave through it.
+ *
+ * `jumpCapital` refuses outright with no pad and no foothold, and `jumpManifestAll` stages every
+ * player unit within `JUMP_LOAD_RADIUS` of one — so this is both what makes a destination reachable
+ * and what puts a RIDER on the ship, which is the only way the engine records where a jump came
+ * down. Placed beside the base, where the opening colony ship already is.
+ */
+function padAndFuel(game: Game): void {
+  const state = game.bridge.state;
+  const base = state.map.bases.player;
+  const pad = makeBuilding("spaceport", "player", base.x + 70, base.y + 70);
+  pad.constructing = false;
+  pad.buildProgress = 1;
+  state.buildings.set(pad.id, pad);
+  game.bridge.galaxy.credits = 20_000;
 }
 
 describe("a player can play from a cold start with no mouse at all (P6-T11)", () => {
@@ -643,5 +732,514 @@ describe("the crosshair never contradicts the picture (P6-T11)", () => {
       .toBeLessThan(2);
     expect(Math.hypot(barracks.x - game.camera.targetX, barracks.y - game.camera.targetY),
       "the two cases are indistinguishable here, so this test proves nothing").toBeGreaterThan(20);
+  });
+});
+
+/* =================================================================================================
+   THE TWO CONTROLS P6-T11 LEFT WITH A POINTER AND NOTHING ELSE (P7-T03)
+
+   Same guard, same standard. A key that "produced an event" proves nothing here either: zoom is a
+   distance that moved and the landing mark is a colony ship standing somewhere it would not
+   otherwise be standing.
+   ================================================================================================= */
+
+describe("zoom and the landing mark, from the keyboard alone (P7-T03)", () => {
+  let restore: () => void;
+  let game: Game;
+  let els: ReturnType<typeof elements>;
+  let mouse: string[];
+  let d: ReturnType<typeof driver>;
+
+  beforeEach(() => {
+    restore = stubCanvas();
+    localStorage.clear();
+    els = elements();
+    game = new Game(els, new RecordingRenderer(), "T0",
+      { tierOverride: null, edgeScroll: false, newGame: null, motion: "auto" },
+      { seed: SEED, worldId: "helix" });
+    d = driver(game);
+
+    mouse = [];
+    for (const [name, el] of Object.entries(els)) {
+      for (const type of MOUSE_EVENTS) {
+        el.addEventListener(type, (e) => { mouse.push(`${name}:${e.type}`); }, true);
+      }
+    }
+  });
+
+  afterEach(() => {
+    expect(mouse, `a mouse event reached the interface: ${mouse.join(", ")}`).toEqual([]);
+    game.stop();
+    document.body.replaceChildren();
+    localStorage.clear();
+    restore();
+  });
+
+  /* --- ZOOM: the wheel was the only one in the app --------------------------------------------- */
+
+  it("moves the camera by exactly the notch the wheel moves", () => {
+    // **The notch is measured from `CameraRig` rather than written down here.** The wheel passes
+    // `Math.sign(e.deltaY)` and a key press passes ±1 — literally the same argument through the
+    // same `zoomBy` — so this ratio is what would change if the keyboard ever grew a feel of its
+    // own, and the assertion needs no copy of 1.15 to notice.
+    const probe = new CameraRig({ mapWidth: 1000, mapHeight: 1000 });
+    const before = probe.distance;
+    probe.zoom(1);
+    const notch = probe.distance / before;
+    expect(notch, "the rig's own zoom moves nothing, so this measures nothing").not.toBe(1);
+
+    d.frame();
+    const start = game.camera.distance;
+    expect(start, "the camera opens at a stop, so a press could not be seen moving it")
+      .toBeGreaterThan(MIN_DISTANCE);
+
+    d.press("-");
+    expect(game.camera.distance / start, "one press out is not one wheel notch")
+      .toBeCloseTo(notch, 6);
+    d.press("+", { shiftKey: true });               // the Shift a player holds to reach the + cap
+    expect(game.camera.distance, "in and out do not undo each other").toBeCloseTo(start, 6);
+
+    // …and the same two physical keys, pressed the other way round. `=` is `+` without Shift and
+    // `_` is `-` with it; a build that bound only half of each would work for half its players.
+    d.press("=");
+    expect(game.camera.distance / start, "= is not the unshifted +").toBeCloseTo(1 / notch, 6);
+    d.press("_", { shiftKey: true });
+    expect(game.camera.distance, "_ is not the shifted -").toBeCloseTo(start, 6);
+  });
+
+  it("travels the whole range, which is the view a wheel-less player could not have", () => {
+    // Not "it moved" — **it moved everywhere**. A player without a wheel was locked at whatever
+    // distance the camera happened to be, and on this rig that is not only a framing: `pitch` is a
+    // pure function of `distance` (`input/camera.ts`), so the same control decides the ANGLE the
+    // world is read at. Both ends are asserted in pitch as well as in distance, because the pitch
+    // ramp is the half of the loss that a distance figure hides.
+    d.frame();
+    for (let i = 0; i < 40; i++) d.press("-");
+    expect(game.camera.distance, "the keys cannot reach the far stop").toBe(MAX_DISTANCE);
+    expect(game.camera.pitch, "the overhead angle a battlefield is read from is unreachable")
+      .toBeCloseTo(PITCH_FAR, 6);
+
+    for (let i = 0; i < 60; i++) d.press("+", { shiftKey: true });
+    expect(game.camera.distance, "the keys cannot reach the near stop").toBe(MIN_DISTANCE);
+    expect(game.camera.pitch, "the low angle that shows a mesh is unreachable")
+      .toBeCloseTo(PITCH_NEAR, 6);
+  });
+
+  it("leaves the plate alone, because a diagram is priced at one distance", () => {
+    // ADR-0019 §3's constraint, and the wheel's own rule (`attachListeners` never zoomed the
+    // starmap either). The battlefield rig must not move either — a zoom that fell through to the
+    // screen behind would be the camera commands' oldest bug in a new place.
+    d.frame();
+    const battlefield = game.camera.distance;
+    d.press("y");
+    d.frame();
+    expect(d.screen().kind, "the starmap did not open").toBe("starmap");
+
+    for (const k of ["-", "=", "-", "_"]) d.press(k);
+    expect(d.plate().distance, "the starmap zoomed").toBe(AUTHORED_VIEW.distance);
+    expect(game.camera.distance, "a zoom on the starmap reached the battlefield behind it")
+      .toBe(battlefield);
+  });
+
+  /* --- THE LANDING MARK: a jump that lands where the player chose ------------------------------ */
+
+  it("marks the landing with the keys, and the colony ship comes down on the mark", () => {
+    padAndFuel(game);
+    d.step();
+
+    // 1. OPEN THE PICKER. `Y` is the starmap and the destination list is the first thing on its
+    //    row, so the positional keys reach it without a pointer anywhere.
+    d.press("y");
+    d.frame();
+    const destAction = d.actions().find((a) => a.id.startsWith("approach:"))!;
+    expect(destAction, "the starmap offered no destination at all").toBeDefined();
+    d.fire(destAction.id);
+    d.frame();
+    const destId = destAction.id.slice("approach:".length);
+    expect(d.screen().kind, "the positional key did not open the approach view").toBe("approach");
+
+    // 2. THE PREMISE, MEASURED — this is what a keyboard player met before this row. The picker is
+    //    open, it is showing the engine's own default, and the confirm is refused because nothing
+    //    has been chosen. `pointAt` took screen pixels and there was no key that produced any.
+    const view = d.approach();
+    expect(view.pick, "something had already marked the landing").toBeNull();
+    expect(view.site.source, "the picker did not open on the world's own answer").toBe("anchor");
+    expect(d.enabled(`jump:${destId}`), "an unmarked approach offered a jump to confirm").toBe(false);
+    expect(els.hudRoot.textContent, "the panel no longer says the landing is unchosen")
+      .toMatch(/No landing site chosen/);
+    const fallback = { x: view.site.x, y: view.site.y };
+
+    // 3. FLY. The arrow keys drove nothing on this screen at all until P7-T03 — `applyContinuousPan`
+    //    ran on the battlefield alone — so this is the binding under test as much as `K` is.
+    const opened = { x: view.rig.targetX, y: view.rig.targetY };
+    d.flyApproach(170, -20);
+    expect(Math.hypot(view.rig.targetX - opened.x, view.rig.targetY - opened.y),
+      "the arrow keys did not move the approach screen's camera").toBeGreaterThan(100);
+
+    // 4. MARK. `K` is P6-T11's "here", and here is the middle of this screen.
+    d.press("k");
+    const pick = view.pick;
+    expect(pick, "K marked nothing on the approach screen").not.toBeNull();
+    expect(Math.hypot(pick!.x - view.rig.targetX, pick!.y - view.rig.targetY),
+      "the mark landed somewhere other than the middle of the screen").toBeLessThan(2);
+    const site = view.site;
+    expect(site.source, "the engine did not take the mark").toBe("picked");
+    expect(site.honoured, "the mark was placed and then overruled").toBe(true);
+    expect(Math.hypot(site.x - fallback.x, site.y - fallback.y),
+      "the mark is where the jump would have landed anyway, so this proves nothing")
+      .toBeGreaterThan(100);
+
+    // 5. THE INTENT CARRIES IT. The RAW point, not the snapped one — `ui/landing-panel.ts`'s rule,
+    //    because `snapLandingPoint` is not idempotent at the map edge.
+    d.frame();
+    const command = d.commandFor(`jump:${destId}`);
+    expect(command.kind).toBe("intent");
+    const jump = (command as Extract<HudCommand, { kind: "intent" }>).intent as
+      { kind: string; destId: string; landingX?: number; landingY?: number };
+    expect(jump.kind).toBe("jump");
+    expect(jump.landingX, "the jump carried no landing point").toBeCloseTo(pick!.x, 6);
+    expect(jump.landingY).toBeCloseTo(pick!.y, 6);
+    expect(d.enabled(`jump:${destId}`), "a marked approach still refused to confirm").toBe(true);
+
+    // 6. AND THE GAME AGREES. Not "an intent was produced": the seat moves, and the colony ship
+    //    that rode the jump is standing on the mark — inside `jumpCapital`'s own landing ring, and
+    //    a long way from the world's anchor, which is where every keyboard jump landed before this.
+    d.fire(`jump:${destId}`);
+    d.step();
+    expect(game.bridge.worldId, "the jump the keyboard confirmed was refused").toBe(destId);
+    const rider = [...game.bridge.state.units.values()].find((u) => u.owner === "player");
+    expect(rider, "nothing rode the jump, so where it landed cannot be asked").toBeDefined();
+    expect(Math.hypot(rider!.x - site.x, rider!.y - site.y),
+      "the rider did not come down on the marked site").toBeLessThan(90);
+    const anchor = game.bridge.state.map.bases.player;
+    expect(Math.hypot(rider!.x - anchor.x, rider!.y - anchor.y),
+      "the rider came down on the world's default anchor after all").toBeGreaterThan(150);
+  });
+
+  it("never destroys the mark it has, wherever on the world the crosshair is", () => {
+    // **A press must never leave the player with no mark at all.** `pointAt` REFUSES a ray that has
+    // left the map rather than clamping it, and the crosshair can reach that: at the northern and
+    // southern edges the centre ray is the rig's own look-at line, and at yaw 0 it approaches the
+    // target from the south — so at the boundary it can cross out of the world before it meets the
+    // ground. Refusing is right (clamping would be a second opinion about where the edge is, and
+    // `snapLandingPoint` already owns that), and refusing must KEEP what the player chose.
+    //
+    // Asserted as a property over the whole boundary rather than as a coordinate at one edge,
+    // deliberately: whether a given edge refuses or accepts comes down to the sign of a
+    // sub-thousandth float against that world's own terrain, and a test that pinned one would be
+    // pinning a coin flip. What is worth holding is the invariant — a chosen mark survives every
+    // press, everywhere — and it is the same invariant a player would phrase as "pressing K at the
+    // top of the map lost my landing site".
+    padAndFuel(game);
+    d.step();
+    d.press("y");
+    d.frame();
+    d.fire(d.actions().find((a) => a.id.startsWith("approach:"))!.id);
+    d.frame();
+
+    const view = d.approach();
+    d.flyApproach(170, 0);
+    d.press("k");
+    expect(view.pick, "nothing was marked, so there is no mark to keep").not.toBeNull();
+    expect(view.site.source, "the mark was not taken in the first place").toBe("picked");
+
+    const corners: readonly [string, string][] = [
+      ["north", "ArrowUp"], ["west", "ArrowLeft"], ["south", "ArrowDown"], ["east", "ArrowRight"],
+    ];
+    for (const [edge, key] of corners) {
+      for (let i = 0; i < 320; i++) d.holdFrame(key);
+      expect(() => d.press("k"), `a crosshair press at the ${edge} edge threw`).not.toThrow();
+      expect(view.pick, `a crosshair press at the ${edge} edge threw the mark away`).not.toBeNull();
+      expect(view.site.source, `the ${edge} edge left the jump with no chosen site`).toBe("picked");
+      d.frame();
+      expect(d.enabled(`jump:${d.screen().destId}`),
+        `the jump stopped being committable after a press at the ${edge} edge`).toBe(true);
+    }
+  });
+
+  it("zooms the picker's own rig too, because it is a rig and not a pose", () => {
+    // P4-T05 made the approach view a full `CameraRig` precisely so that looking into a valley
+    // before committing is the same two controls it is on the battlefield. The wheel already turned
+    // it; a keyboard that stopped at the world screen would be the smaller half of one control.
+    padAndFuel(game);
+    d.step();
+    d.press("y");
+    d.frame();
+    d.fire(d.actions().find((a) => a.id.startsWith("approach:"))!.id);
+    d.frame();
+
+    const rig = d.approach().rig;
+    expect(rig.distance, "the picker did not open at its far stop").toBe(MAX_DISTANCE);
+    d.press("+", { shiftKey: true });
+    expect(rig.distance, "the approach screen's camera does not zoom from the keyboard")
+      .toBeLessThan(MAX_DISTANCE);
+    for (let i = 0; i < 40; i++) d.press("+");
+    expect(rig.distance, "the picker cannot be flown in far enough to read a valley")
+      .toBe(MIN_DISTANCE);
+    d.press("-");
+    expect(rig.distance, "the picker zooms one way only").toBeGreaterThan(MIN_DISTANCE);
+  });
+
+  it("gives Q nothing to do on a picker, and leaves the battlefield where it was", () => {
+    // The rule P6-T11 set and this row narrowed rather than broke: the CYCLE moves the battlefield
+    // camera and reads a roster, and a picker has neither. Only the crosshair gained a second
+    // meaning, because only the crosshair has one to gain.
+    padAndFuel(game);
+    d.foundBase();
+    d.cycleTo("worker");
+    const held = [...d.selection()];
+    d.press("y");
+    d.frame();
+    d.fire(d.actions().find((a) => a.id.startsWith("approach:"))!.id);
+    d.frame();
+    const battlefield = { x: game.camera.targetX, y: game.camera.targetY };
+
+    d.press("q");
+    d.press("q", { shiftKey: true });
+    d.step();
+    expect(d.selection(), "the cycle ran on the approach screen").toEqual(held);
+    expect(game.camera.targetX, "the picker moved the battlefield camera").toBe(battlefield.x);
+    expect(game.camera.targetY).toBe(battlefield.y);
+    // …and the arrow keys reached the picker rather than the battlefield behind it, which is the
+    // other half of the same rule: one screen, one rig.
+    d.flyApproach(120, 0);
+    expect(game.camera.targetX, "flying the picker panned the battlefield too").toBe(battlefield.x);
+    expect(game.camera.targetY).toBe(battlefield.y);
+  });
+});
+
+/* =================================================================================================
+   THE PANEL DECIDES AND THE CONTROL OBEYS (P7-T03)
+
+   `landingZone` ignores `opts.landingPoint` outright whenever a player Spaceport already stands on
+   the destination — the jump homes in on the pad. So a keyboard control that shipped a point there
+   would be exactly the class of lie P4-T05 built this screen to prevent: an intent carrying a number
+   the engine throws away, which a recorded stream replays and a game does not honour.
+
+   `ui/landing-panel.ts` already returns `landingX`/`landingY` as null in that case and `hud.ts`'s
+   `approachSection` omits the fields when it does. The claim here is that the keyboard changed
+   nothing about who decides — it places a mark, exactly as the pointer does, and the panel keeps the
+   last word over both.
+   ================================================================================================= */
+
+describe("a keyboard mark on a padded world promises nothing (P7-T03)", () => {
+  let restore: () => void;
+  let game: Game;
+  let els: ReturnType<typeof elements>;
+  let mouse: string[];
+  let d: ReturnType<typeof driver>;
+
+  beforeEach(() => {
+    restore = stubCanvas();
+    localStorage.clear();
+    els = elements();
+    game = new Game(els, new RecordingRenderer(), "T0",
+      { tierOverride: null, edgeScroll: false, newGame: null, motion: "auto" },
+      { seed: SEED, worldId: "helix" });
+    d = driver(game);
+    mouse = [];
+    for (const [name, el] of Object.entries(els)) {
+      for (const type of MOUSE_EVENTS) {
+        el.addEventListener(type, (e) => { mouse.push(`${name}:${e.type}`); }, true);
+      }
+    }
+  });
+
+  afterEach(() => {
+    expect(mouse, `a mouse event reached the interface: ${mouse.join(", ")}`).toEqual([]);
+    game.stop();
+    document.body.replaceChildren();
+    localStorage.clear();
+    restore();
+  });
+
+  it("marks, is overruled by the pad, and sends a jump with no landing point at all", () => {
+    padAndFuel(game);
+    d.step();
+    d.press("y");
+    d.frame();
+
+    // A Spaceport of the player's own, already standing on the destination — the case the engine
+    // refuses to honour a pick in. Built on a LIVE background world, so `previewPlanet` returns it
+    // as it stands rather than generating a throwaway copy without the pad in it.
+    const destAction = d.actions()
+      .find((a) => a.id.startsWith("approach:") && game.bridge.galaxy.planets.has(a.id.slice(9)))!;
+    expect(destAction, "no destination in this galaxy is live enough to stand a pad on")
+      .toBeDefined();
+    const destId = destAction.id.slice("approach:".length);
+    const dest = game.bridge.galaxy.planets.get(destId)!;
+    const theirs = dest.map.bases.player;
+    const pad = makeBuilding("spaceport", "player", theirs.x + 200, theirs.y + 120);
+    pad.constructing = false;
+    pad.buildProgress = 1;
+    dest.buildings.set(pad.id, pad);
+
+    d.fire(destAction.id);
+    d.frame();
+    const view = d.approach();
+    expect(view.site.source, "the pad on the destination did not win the landing").toBe("pad");
+
+    // The mark is still PLACED — the control does its job and the screen shows the disagreement —
+    // and then the panel overrules it in the player's own words, before the button is pressed.
+    d.flyApproach(180, 100);
+    d.press("k");
+    d.frame();
+    expect(view.pick, "the keyboard refused to mark at all, which is not the rule").not.toBeNull();
+    expect(view.site.source, "a keyboard mark overrode the pad the engine prefers").toBe("pad");
+    expect(view.site.honoured, "the picker claimed a mark that the engine discards").toBe(false);
+    expect(els.hudRoot.textContent, "the player is not told their mark will be ignored")
+      .toMatch(/Your mark is ignored/);
+
+    // …and the intent carries no landing fields. Not zero, not the pad's coordinates — ABSENT, so
+    // the recorded stream says exactly what the engine will do with it.
+    const command = d.commandFor(`jump:${destId}`);
+    const jump = (command as Extract<HudCommand, { kind: "intent" }>).intent as
+      Record<string, unknown>;
+    expect(jump.kind).toBe("jump");
+    expect("landingX" in jump, "the jump shipped a landing point the engine will throw away")
+      .toBe(false);
+    expect("landingY" in jump).toBe(false);
+
+    // And the game does what the panel said: the rider comes down at the pad, not at the mark.
+    d.fire(`jump:${destId}`);
+    d.step();
+    expect(game.bridge.worldId, "the jump was refused").toBe(destId);
+    const rider = [...game.bridge.state.units.values()].find((u) => u.owner === "player" && u.type === "colonyship");
+    expect(rider, "nothing rode the jump").toBeDefined();
+    expect(Math.hypot(rider!.x - pad.x, rider!.y - pad.y),
+      "the rider did not come down at the Spaceport the panel promised").toBeLessThan(90);
+    expect(Math.hypot(rider!.x - view.pick!.x, rider!.y - view.pick!.y),
+      "the rider came down on the mark, so the pad case is not being exercised").toBeGreaterThan(100);
+  });
+});
+
+/* =================================================================================================
+   THE POINTER'S HALF OF THE SAME TWO CONTROLS (P7-T03)
+
+   Two claims that need a mouse, so they sit outside the guard.
+
+   **The wheel.** P7-T03 made the keys and the wheel one call (`Game.zoomBy`) rather than two
+   matched implementations, which is what lets `keyboard-play`'s "one press is one wheel notch"
+   above be a fact about the code. That refactor deserves the check the wheel never had: nothing in
+   this repository dispatched a `wheel` event before this row, so the only zoom control the app
+   shipped with was also the only one nothing tested.
+
+   **Edge scrolling.** `applyContinuousPan` now takes the rig it flies, and the approach screen asks
+   for it with edge scrolling OFF. That is a decision rather than an omission — the picker's pointer
+   already marks the landing at every pixel of the window, so an edge that also panned would move
+   the mark and the ground under it in one gesture — and a decision nothing holds is a comment.
+   ================================================================================================= */
+
+describe("the wheel and the window edge, which are the pointer's half (P7-T03)", () => {
+  let restore: () => void;
+  let game: Game;
+  let els: ReturnType<typeof elements>;
+  let d: ReturnType<typeof driver>;
+
+  beforeEach(() => {
+    restore = stubCanvas();
+    localStorage.clear();
+    els = elements();
+    game = new Game(els, new RecordingRenderer(), "T0",
+      // Edge scrolling ON, which no other test in this file has: it is half of what is under test.
+      { tierOverride: null, edgeScroll: true, newGame: null, motion: "auto" },
+      { seed: SEED, worldId: "helix" });
+    d = driver(game);
+  });
+
+  afterEach(() => {
+    game.stop();
+    document.body.replaceChildren();
+    localStorage.clear();
+    restore();
+  });
+
+  /** One wheel notch, where a browser delivers it. */
+  const wheel = (deltaY: number): void => {
+    els.viewport.dispatchEvent(new WheelEvent("wheel", { deltaY, bubbles: true, cancelable: true }));
+  };
+
+  /** Open the picker with keys, so the screen under test is reached the way a player reaches it. */
+  const openApproach = (): void => {
+    padAndFuel(game);
+    d.step();
+    d.press("y");
+    d.frame();
+    d.fire(d.actions().find((a) => a.id.startsWith("approach:"))!.id);
+    d.frame();
+  };
+
+  it("still zooms on the wheel, and by the same notch the key moves", () => {
+    d.frame();
+    const start = game.camera.distance;
+    wheel(120);
+    const afterWheel = game.camera.distance;
+    expect(afterWheel, "the wheel no longer zooms at all").toBeGreaterThan(start);
+
+    // The two controls are one call now, so this is the assertion that says so: a wheel notch out
+    // and a key press out land on the same distance from the same start.
+    game.camera.distance = start;
+    d.press("-");
+    expect(game.camera.distance, "the wheel and the key have drifted into two different steps")
+      .toBeCloseTo(afterWheel, 6);
+
+    // …and in, which is the direction a sign error would flip while leaving the step alone.
+    game.camera.distance = start;
+    wheel(-120);
+    const inByWheel = game.camera.distance;
+    expect(inByWheel, "the wheel zooms out in both directions").toBeLessThan(start);
+    game.camera.distance = start;
+    d.press("+", { shiftKey: true });
+    expect(game.camera.distance, "the key and the wheel disagree about which way is closer")
+      .toBeCloseTo(inByWheel, 6);
+  });
+
+  it("sends the wheel to whichever rig is on screen, and never to the plate", () => {
+    d.frame();
+    const battlefield = game.camera.distance;
+    d.press("y");
+    d.frame();
+    wheel(120);
+    wheel(-120);
+    expect(d.plate().distance, "the wheel zoomed the starmap").toBe(AUTHORED_VIEW.distance);
+    expect(game.camera.distance, "the wheel reached the battlefield behind the starmap")
+      .toBe(battlefield);
+
+    d.press("y");                                  // back to the world, then into the picker
+    d.frame();
+    openApproach();
+    const rig = d.approach().rig;
+    wheel(-120);
+    expect(rig.distance, "the wheel no longer zooms the approach screen").toBeLessThan(MAX_DISTANCE);
+    expect(game.camera.distance, "a wheel on the picker reached the battlefield's own rig")
+      .toBe(battlefield);
+  });
+
+  it("edge-scrolls the battlefield and deliberately not the picker", () => {
+    // The battlefield first, so the probe is known to work before it is used to prove an absence.
+    d.frame();
+    const before = { x: game.camera.targetX, y: game.camera.targetY };
+    els.viewport.dispatchEvent(new MouseEvent("pointermove", {
+      bubbles: true, clientX: 4, clientY: VIEW_H / 2, buttons: 0,
+    }));
+    d.frame();
+    expect(game.camera.targetX, "the pointer at the edge did not scroll the battlefield")
+      .toBeLessThan(before.x);
+
+    // The same pointer, on the picker. It marks the landing — that is what a pointer does on this
+    // screen, at every pixel — and it must not also fly the camera out from under the mark.
+    openApproach();
+    const rig = d.approach().rig;
+    const opened = { x: rig.targetX, y: rig.targetY };
+    for (let i = 0; i < 5; i++) {
+      els.viewport.dispatchEvent(new MouseEvent("pointermove", {
+        bubbles: true, clientX: 4, clientY: VIEW_H / 2, buttons: 0,
+      }));
+      d.frame();
+    }
+    expect(d.approach().pick, "the pointer did not mark, so it is not really on this screen")
+      .not.toBeNull();
+    expect(rig.targetX, "the window edge flew the approach screen's camera").toBe(opened.x);
+    expect(rig.targetY).toBe(opened.y);
   });
 });

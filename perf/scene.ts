@@ -9,6 +9,7 @@
 // loads the gate runs.
 
 import { WorldBridge, MVP_WORLD } from "../src/bridge/world.js";
+import { type Snapshot } from "../src/bridge/snapshot.js";
 import { STEP_SECONDS } from "../src/app/loop.js";
 import {
   BUILD_REACH, BUILDINGS, ODYSSEY_WORLDS, UNITS, addPlanet, makeBuilding, makeUnit,
@@ -701,6 +702,36 @@ export class PerfScene {
     g.y = hit.y;
     g.valid = checkPlacement(this.bridge.state, type, hit.x, hit.y).valid;
     return g;
+  }
+
+  /**
+   * The live snapshot and unit map, for `perf/soak.ts` (P7-T06).
+   *
+   * A soak asks a different question from a gate — not "how fast is this frame" but "is anything
+   * growing" — and it cannot ask it without seeing the structures. These are reads, and they exist
+   * so the soak does not have to build a second world of its own: the first draft of `soak.ts` did
+   * exactly that and measured an empty one.
+   */
+  get snapshot(): Snapshot {
+    return this.bridge.snapshot;
+  }
+
+  get units(): ReadonlyMap<string, Unit> {
+    return this.bridge.state.units;
+  }
+
+  /** The ids of every wreck/crater deposit currently on the map — the opaque-id family (P7-T06). */
+  opaqueNodeIds(): string[] {
+    const out: string[] = [];
+    for (const node of this.bridge.state.map.nodes) if (node.wreck || node.crater) out.push(node.id);
+    return out;
+  }
+
+  /** Wreck and crater deposits on the map — what combat has left behind (ADR-0018). */
+  get wreckNodeCount(): number {
+    let n = 0;
+    for (const node of this.bridge.state.map.nodes) if (node.wreck || node.crater) n++;
+    return n;
   }
 
   setup(renderer: Renderer): void {

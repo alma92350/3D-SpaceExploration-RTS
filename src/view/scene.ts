@@ -19,7 +19,7 @@ import {
 } from "../bridge/snapshot.js";
 import { type ElevationField, elevation } from "./terrain/elevation.js";
 import { interpolatePositions } from "./interpolate.js";
-import { type MeshId, meshIdForNode, meshIdForType } from "./meshes/generators.js";
+import { IMPOSTER_SIZE, type MeshId, meshIdForNode, meshIdForType } from "./meshes/generators.js";
 import {
   type CameraState, type FrameStats, LOD_IMPOSTER, LOD_MESH, type LodLevel, OVERLAY_STRIDE,
   type OwnerSlot, type Renderer, type TerrainMesh,
@@ -248,10 +248,35 @@ export class SceneComposer {
           : 1;
 
       if (lod === LOD_IMPOSTER) {
-        // The imposter is a unit quad; its scale carries the entity's real size so a distant
-        // Command Center still reads as bigger than a distant Skiff.
+        // The imposter is one quad, and its scale is the size of THE MESH IT REPLACES (P7-T02).
+        //
+        // This used to be `e.radius[i] * 2.2` — the engine's collision circle, times a constant that
+        // arrived in the Phase 1 MVP commit with no working — used for the quad's HEIGHT as well as
+        // its width. P6-T07 measured what that cost by projecting every mesh vertex and every quad
+        // corner through the same camera: the quad covered **0.73× to 10.35×** the mesh's screen
+        // area, and binary-searching the distance at which the two bounding boxes agree within one
+        // rasterised pixel gave 7 151 to 43 858 world units against a cull distance of 1 100. There
+        // is no threshold that fixes a size, which is why `tiers.ts` refused to move `lodDistance`
+        // and named the quad instead.
+        //
+        // Two changes, and the measurement says the first one is the big half:
+        //   • The size comes from `IMPOSTER_SIZE`, the mean width of the mesh's own footprint over
+        //     every facing, rather than from the entity's radius. An imposter replaces a mesh, so
+        //     the only size that cannot pop is that mesh's — and where ADR-0014's families put four
+        //     freighters of different collision radii on one hull, the entity's radius is not even
+        //     one number.
+        //   • The quad itself leans back by the camera rig's mid-pitch (`IMPOSTER_LEAN`), which is
+        //     what turns a Y-rotation-only renderer into a billboard to within ±19.5° at every zoom.
+        //
+        // Measured after, over the whole roster × every zoom the rig allows × all eight yaw snaps,
+        // against the mesh's own screen box (`perf/imposter-probe.mjs`): screen WIDTH 0.88–2.99× →
+        // **0.95–1.13×**, screen HEIGHT 0.34–5.60× → **0.48–2.20×**, screen AREA 0.30–14.68× →
+        // **0.49–2.23×**. What is left is not a size error: it is the roster's own aspect spread —
+        // a Skiff 2.4 units high and a Plasma Rig 26 cannot both be a square — and closing that
+        // needs a non-uniform per-instance scale, which is a `Renderer` port change and is argued
+        // in ADR-0024 rather than hidden here.
         this.batchFor("imposter", owner, lod)
-          .push(x, height, y, imposterYaw, e.radius[i]! * 2.2 * scale, shade);
+          .push(x, height, y, imposterYaw, IMPOSTER_SIZE[mesh] * scale, shade);
       } else {
         this.batchFor(mesh, owner, lod).push(x, height, y, e.facing[i]!, scale, shade);
       }
