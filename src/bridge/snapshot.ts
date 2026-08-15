@@ -255,6 +255,22 @@ export class ProductionTable {
   concern: Uint8Array;
   /** One of the `ACTIVITY_*` codes. Ours, not the engine's — see `ACTIVITY_IDLE`. */
   activity: Uint8Array;
+  /**
+   * How far along the unit currently being trained is, 0..1 — and 0 when nothing is (PT-04).
+   *
+   * The engine has carried this per job since Phase 0 (`production.js` advances `job.progress`
+   * every tick) and the bridge dropped it, so the only thing that crossed was the BINARY
+   * `activity`. The first tester's words were *"cannot see any progression"*, and the reason
+   * research already shows a percentage while units never did is that `hud.ts` reads research off
+   * the raw `State` and units off this table.
+   *
+   * The head of the queue, not the whole queue: what a player is asking is "when does the next one
+   * arrive", and a per-job array would cost a variable-length structure on the hot path for a
+   * number nobody displays.
+   */
+  trainProgress: Float32Array;
+  /** How many jobs are queued behind and including the one training. 0 when idle. */
+  trainQueued: Uint16Array;
 
   constructor(capacity: number) {
     this.capacity = capacity;
@@ -263,6 +279,8 @@ export class ProductionTable {
     this.output = new Float32Array(capacity);
     this.concern = new Uint8Array(capacity);
     this.activity = new Uint8Array(capacity);
+    this.trainProgress = new Float32Array(capacity);
+    this.trainQueued = new Uint16Array(capacity);
   }
 
   ensure(needed: number): void {
@@ -276,6 +294,8 @@ export class ProductionTable {
     this.output = grown.output;
     this.concern = grown.concern;
     this.activity = grown.activity;
+    this.trainProgress = grown.trainProgress;
+    this.trainQueued = grown.trainQueued;
   }
 }
 
@@ -551,8 +571,12 @@ export class ImpactTable {
  *
  * That default is not a null and is not treated as one: `updateProduction` really does send new
  * units to it, so the stub is where they will really walk. Drawing it is how a player learns the
- * rally point exists at all — which matters here more than usual, since the order that MOVES it
- * (`issueSetRally`) has had an intent and no producer since Phase 1 (PARITY row 31).
+ * rally point exists at all — and **the first playtest proved that argument right and only half
+ * sufficient** (PT-05): the tester saw the line, correctly deduced it was a setting, and had
+ * nothing anywhere in the interface to tell them how to move it. `issueSetRally` gained its
+ * producer in P5-T13 (`U`, then a left click) — the sentence that used to end this paragraph said
+ * it "has had an intent and no producer since Phase 1", which stopped being true two phases before
+ * anyone read it aloud.
  *
  * `nodeId` deliberately does not cross. Rally-to-node makes a new worker spawn already mining, and
  * it is a difference in what happens on arrival rather than in where the line goes; carrying it
@@ -1121,6 +1145,11 @@ export class SnapshotExtractor {
         : (CONCERN_CODES[concern.code ?? ""] ?? CONCERN_NONE);
     p.concern[n] = code;
     p.activity[n] = activityOf(b, !!recipe, code);
+    // The training queue (PT-04). `queue[0]` is the job actually advancing; the rest are waiting,
+    // and `production.js` only ever advances the head.
+    const queue = b.queue ?? [];
+    p.trainQueued[n] = Math.min(queue.length, 0xffff);
+    p.trainProgress[n] = queue.length > 0 ? clamp01(queue[0]!.progress ?? 0) : 0;
   }
 
   /**

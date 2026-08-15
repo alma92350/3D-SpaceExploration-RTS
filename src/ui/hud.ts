@@ -1827,6 +1827,20 @@ export class HudView {
       .map((b) => `${b.com} ${Math.floor(b.qty)}/${Math.round(b.cap)}`)
       .join(" · ");
     this.setText("buffers", buffers);
+
+    // PT-04. The bar is hidden rather than emptied when nothing is training: a zero-width bar and a
+    // bar at 0% look identical, and one of them is a claim about the building.
+    this.setText("training-text", detail.trainingText ?? "");
+    const bar = this.root.querySelector<HTMLElement>('[data-hud="training-bar"]');
+    if (bar) {
+      const pct = detail.trainingText ? `${Math.round(detail.trainingProgress * 100)}%` : "";
+      if (bar.style.width !== pct) bar.style.width = pct;
+    }
+    const barWrap = bar?.parentElement;
+    if (barWrap) {
+      const shown = detail.trainingText ? "" : "none";
+      if (barWrap.style.display !== shown) barWrap.style.display = shown;
+    }
   }
 
   private setText(key: string, value: string): void {
@@ -1855,6 +1869,11 @@ const TEMPLATE = `
       <div class="hud-recipe" data-hud="recipe"></div>
       <div class="hud-status" data-hud="status"></div>
       <div class="hud-buffers" data-hud="buffers"></div>
+      <!-- PT-04: what is being trained, and how far along. Text carries the percentage as well as
+           the bar, because a bar alone is information by width — the same rule N-05 applies to
+           colour, and the reason the research rows have always read "47% done" in words. -->
+      <div class="hud-training" data-hud="training-text"></div>
+      <div class="hud-training-bar"><i data-hud="training-bar"></i></div>
     </div>
     <div class="hud-actions">
       <div class="hud-row" data-hud="actions"></div>

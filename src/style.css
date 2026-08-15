@@ -151,6 +151,13 @@ html, body {
 .hud-status[data-severity="bad"] { color: #e87a6b; }
 .hud-status[data-severity="paused"] { color: var(--muted); }
 .hud-buffers { color: var(--muted); font-size: 11px; margin-top: 2px; font-variant-numeric: tabular-nums; }
+
+/* PT-04 — what is being trained. The percentage is in the TEXT as well as the bar's width, because
+   a bar alone is information by width, which is the same failure mode N-05 names for colour. The
+   bar's colour is `--accent`, already used for progress elsewhere, so it is not a new meaning. */
+.hud-training { color: var(--fg); font-size: 11px; margin-top: 4px; font-variant-numeric: tabular-nums; }
+.hud-training-bar { height: 3px; margin-top: 3px; background: var(--panel-2, rgba(255,255,255,0.12)); border-radius: 2px; overflow: hidden; }
+.hud-training-bar > i { display: block; height: 100%; width: 0; background: var(--accent); }
 .hud-actions { display: flex; flex-direction: column; gap: 6px; }
 .hud-row { display: flex; flex-wrap: wrap; gap: 6px; }
 

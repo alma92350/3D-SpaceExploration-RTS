@@ -354,6 +354,50 @@ describe("the card names controls the app actually has (P5-T10)", () => {
       "original offender — index.html said WASD pans and `applyContinuousPan` never read it.",
     ).toEqual([]);
   });
+
+  /* THE OTHER DIRECTION, WHICH IS THE ONE THAT WAS MISSING (PT-03).
+   *
+   * The test above asks "is every key the hint NAMES real?". For five phases that was the only
+   * question asked, and it cannot fail when a binding is added and never advertised — so a control
+   * list could be arbitrarily incomplete and stay green. It was: P5-T13 bound ten orders to keys and
+   * updated neither place that teaches them, and the first tester reported the Ranger's scout mode
+   * as a MISSING FEATURE. It was `E`, and nothing on screen said so.
+   *
+   * This asks "is every key the app BINDS named?", which is the direction that catches that. The
+   * candidate set is swept rather than listed, so a binding on a key nobody thought of is still
+   * caught. */
+  it("finds no key the app binds that the sidebar hint never names", () => {
+    const hint = readFileSync(join(ROOT, "index.html"), "utf8");
+    const paragraphs = [...hint.matchAll(/<p class="hint">([\s\S]*?)<\/p>/g)].map((m) => m[1]!);
+    const named = new Set(
+      paragraphs
+        .flatMap((p) => [...p.matchAll(/<b>([^<]+)<\/b>/g)].map((m) => m[1]!.trim()))
+        .flatMap((t) => keysOf(t)),
+    );
+
+    // `=` IS Shift+`=` on a US layout and `_` is Shift+`-`, so they are the same two controls the
+    // hint names as `+` and `-` (P7-T03's reasoning, recorded there). Naming all four would teach a
+    // player two keys that do one thing.
+    const ALIASED: Record<string, string> = { "=": "+", _: "-" };
+
+    const candidates = [
+      ..."abcdefghijklmnopqrstuvwxyz",
+      ..."0123456789",
+      "escape", "home", "delete", " ", "+", "-", "=", "_", ",", ".",
+      "arrowup", "arrowdown", "arrowleft", "arrowright",
+    ];
+
+    const unadvertised = candidates
+      .filter((key) => translated(key) || moves(key))
+      .filter((key) => !named.has(key) && !named.has(ALIASED[key] ?? "\u0000"));
+
+    expect(
+      unadvertised,
+      "The app binds a key the sidebar hint never names, so the only way a player finds it is by " +
+      "reading the source. This is how the Ranger's scout mode (`E`) and the rally point (`U`) " +
+      "were reported as missing features by the first person to play the game.",
+    ).toEqual([]);
+  });
 });
 
 /**
@@ -368,7 +412,15 @@ function keysOf(token: string): string[] {
   if (NOT_KEYS.includes(token)) return [];
   const NAMED: Record<string, string[]> = {
     WASD: ["w", "a", "s", "d"],
-    "0-9": ["0", "9"],
+    // All ten, not the two endpoints. The reverse check below asks whether every BOUND key is
+    // named, and `["0", "9"]` would have reported 1–8 as unadvertised — a mapper that under-reports
+    // what the hint covers turns a correct hint into a failure.
+    "0-9": ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"],
+    arrows: ["arrowup", "arrowdown", "arrowleft", "arrowright"],
+    Delete: ["delete"],
+    // Shift is a modifier, not a key this check can press on its own. The Shift+letter orders are
+    // named in the hint as `Shift` + their letters, and each letter is separately bound unshifted.
+    Shift: [],
     "Z C V B N": ["z", "c", "v", "b", "n"],
     Space: [" "],
     Home: ["home"],
