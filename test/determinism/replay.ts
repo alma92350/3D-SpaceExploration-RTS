@@ -59,6 +59,18 @@ function buf(b: Resources | undefined): string {
 
 /** Run the fixture's script and return the end-state hash. */
 export function replay(fixture: Fixture): string {
+  return hashState(replayToState(fixture));
+}
+
+/**
+ * The same run, handing back the world instead of a digest.
+ *
+ * Here because a hash can say two runs differ and never say what the fixture actually DID. P3-T17
+ * needs both: the coverage check compares hashes, and then asks the end state whether the combat
+ * orders left the marks they claim to (`replay.test.ts`). An attack whose target is alive at the
+ * end is decoration no matter how much the hash moved around it.
+ */
+export function replayToState(fixture: Fixture): State {
   const bridge = new WorldBridge({ seed: fixture.seed, worldId: fixture.world });
   const byTick = new Map<number, Intent[]>();
   for (const [tick, intent] of fixture.script) {
@@ -70,5 +82,5 @@ export function replay(fixture: Fixture): string {
     for (const intent of byTick.get(tick) ?? []) bridge.enqueue(intent);
     bridge.step(STEP_SECONDS);
   }
-  return hashState(bridge.state);
+  return bridge.state;
 }
