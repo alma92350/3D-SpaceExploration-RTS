@@ -51,7 +51,7 @@ describe("the HUD's controls reach the bridge", () => {
     restore = stubCanvas();
     const els = elements();
     hudRoot = els.hudRoot;
-    game = new Game(els, new RecordingRenderer(), "T0", { tierOverride: null, edgeScroll: false },
+    game = new Game(els, new RecordingRenderer(), "T0", { tierOverride: null, edgeScroll: false, newGame: null },
       { seed: SEED, worldId: "helix" });
   });
 

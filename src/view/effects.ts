@@ -30,6 +30,32 @@ export const TRACER_SECONDS = 0.15;
 /** How long a death mark stays up. Longer than a tracer: a kill is worth looking back at. */
 export const BLAST_SECONDS = 0.5;
 
+/**
+ * How long a hit mark stays up (P5-T15).
+ *
+ * Between the two above, because a landed hit is more news than a shot and less than a death: six
+ * sim ticks, about eighteen frames at 60 fps. The ceiling is the weapon cycle rather than taste —
+ * the fastest cooldown in the roster is 0.85 s, so a mark this long can never still be up when the
+ * same weapon fires again, and a player never sees two marks and reads them as two hits.
+ */
+export const IMPACT_SECONDS = 0.3;
+
+/**
+ * Does this hit say anything a plain one does not?
+ *
+ * **The filter, and the whole reason the impact pool is small.** Every landed hit crosses the
+ * bridge — the bridge reports, it does not decide (ADR-0012 §5) — and the *view* decides what is
+ * worth drawing. A mark on every hit is not a mark: it would be one more flash per tracer, in a
+ * frame that already has tracers, teaching nothing. The three flags are what the engine bothered to
+ * say about a hit, so they are what earns one.
+ *
+ * It also makes the two cues that carry meaning legible by contrast rather than by hue: the plain
+ * hit draws nothing at all, so "this one was different" is the loudest thing the frame can say.
+ */
+export function impactReads(heavy: number, bonus: number, splashRadius: number): boolean {
+  return heavy !== 0 || bonus !== 0 || splashRadius > 0;
+}
+
 export class CombatEffects {
   // --- tracers: a line from shooter to target, fading out ---
   tracerCount = 0;
@@ -49,6 +75,19 @@ export class CombatEffects {
   bBig: Uint8Array;
   bAge: Float32Array;
 
+  // --- impacts: a hit that landed and had something to say about itself (P5-T15) ---
+  impactCount = 0;
+  ix: Float32Array;
+  iy: Float32Array;
+  iOwner: Uint8Array;
+  /** The engine's `attackHit.heavy` — a siege weapon on a structure. */
+  iHeavy: Uint8Array;
+  /** The engine's `attackHit.bonus` — the counter triangle, landing. */
+  iBonus: Uint8Array;
+  /** The engine's `attackHit.splashRadius`, world units, 0 for a weapon without one. */
+  iSplash: Float32Array;
+  iAge: Float32Array;
+
   constructor(capacity = 128) {
     this.tx0 = new Float32Array(capacity);
     this.ty0 = new Float32Array(capacity);
@@ -62,6 +101,14 @@ export class CombatEffects {
     this.bOwner = new Uint8Array(capacity);
     this.bBig = new Uint8Array(capacity);
     this.bAge = new Float32Array(capacity);
+
+    this.ix = new Float32Array(capacity);
+    this.iy = new Float32Array(capacity);
+    this.iOwner = new Uint8Array(capacity);
+    this.iHeavy = new Uint8Array(capacity);
+    this.iBonus = new Uint8Array(capacity);
+    this.iSplash = new Float32Array(capacity);
+    this.iAge = new Float32Array(capacity);
   }
 
   /**
@@ -92,6 +139,26 @@ export class CombatEffects {
       this.bBig[n] = deaths.isBuilding[i]!;
       this.bAge[n] = 0;
       this.blastCount = n + 1;
+    }
+
+    // Impacts are filtered on the way IN rather than at pack time, so the pool never holds an
+    // effect no frame will draw — and the filter runs once per tick instead of once per frame.
+    const impacts = snap.impacts;
+    this.ensureImpacts(this.impactCount + impacts.count);
+    for (let i = 0; i < impacts.count; i++) {
+      const heavy = impacts.heavy[i]!;
+      const bonus = impacts.bonus[i]!;
+      const splash = impacts.splashRadius[i]!;
+      if (!impactReads(heavy, bonus, splash)) continue;
+      const n = this.impactCount;
+      this.ix[n] = impacts.x[i]!;
+      this.iy[n] = impacts.y[i]!;
+      this.iOwner[n] = impacts.owner[i]!;
+      this.iHeavy[n] = heavy;
+      this.iBonus[n] = bonus;
+      this.iSplash[n] = splash;
+      this.iAge[n] = 0;
+      this.impactCount = n + 1;
     }
   }
 
@@ -125,6 +192,19 @@ export class CombatEffects {
       this.bBig[i] = this.bBig[last]!;
       this.bAge[i] = this.bAge[last]!;
     }
+
+    for (let i = 0; i < this.impactCount;) {
+      const t = (this.iAge[i]! += seconds);
+      if (t < IMPACT_SECONDS) { i++; continue; }
+      const last = --this.impactCount;
+      this.ix[i] = this.ix[last]!;
+      this.iy[i] = this.iy[last]!;
+      this.iOwner[i] = this.iOwner[last]!;
+      this.iHeavy[i] = this.iHeavy[last]!;
+      this.iBonus[i] = this.iBonus[last]!;
+      this.iSplash[i] = this.iSplash[last]!;
+      this.iAge[i] = this.iAge[last]!;
+    }
   }
 
   /** 1 when just fired, 0 at expiry. What the view fades on. */
@@ -137,10 +217,22 @@ export class CombatEffects {
     return this.bAge[i]! / BLAST_SECONDS;
   }
 
+  /**
+   * 0 at the moment of the hit, 1 at expiry. The mark's glyphs swell and fade on it.
+   *
+   * The SPLASH ring does not: it is drawn at the weapon's own radius for the whole of its life, so
+   * any single frame of it is the true reach. A ring that grew into its radius would be honest only
+   * on its last frame, which is the one nobody is looking at.
+   */
+  impactProgress(i: number): number {
+    return this.iAge[i]! / IMPACT_SECONDS;
+  }
+
   /** Drop everything. For a scene change, not for a frame. */
   clear(): void {
     this.tracerCount = 0;
     this.blastCount = 0;
+    this.impactCount = 0;
   }
 
   private ensureTracers(needed: number): void {
@@ -164,6 +256,19 @@ export class CombatEffects {
     this.bOwner = growU8(this.bOwner, next);
     this.bBig = growU8(this.bBig, next);
     this.bAge = grow(this.bAge, next);
+  }
+
+  private ensureImpacts(needed: number): void {
+    if (needed <= this.ix.length) return;
+    let next = this.ix.length || 64;
+    while (next < needed) next *= 2;
+    this.ix = grow(this.ix, next);
+    this.iy = grow(this.iy, next);
+    this.iOwner = growU8(this.iOwner, next);
+    this.iHeavy = growU8(this.iHeavy, next);
+    this.iBonus = growU8(this.iBonus, next);
+    this.iSplash = grow(this.iSplash, next);
+    this.iAge = grow(this.iAge, next);
   }
 }
 

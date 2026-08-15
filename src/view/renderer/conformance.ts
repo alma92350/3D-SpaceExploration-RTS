@@ -209,6 +209,53 @@ export function runConformance(opts: ConformanceOptions): ConformanceCase[] {
     return null;
   });
 
+  check("draws every combination of what an impact can carry, including the empty one", () => {
+    // P5-T15. The impact overlay has the same hole the status badge has: its payload is three
+    // FLAGS, and the generic stride sweep above packs 100, 107, 114… which makes every flag truthy
+    // and every splash radius enormous. An implementation that only ever drew the all-three case —
+    // or that threw on a row with nothing set — would pass that check and fail in a real fight,
+    // where the common row is one flag out of three.
+    //
+    // The empty row is in the list deliberately and must be a no-op rather than a throw, for the
+    // reason the badge case gives: `effects.ts` filters those out today, and an implementation that
+    // fell over on one would break the moment that filter moved.
+    const stride = OVERLAY_STRIDE.impact;
+    const combos: ReadonlyArray<readonly [number, number, number]> = [
+      [0, 0, 0],    // a plain hit — nothing to draw, and it must still be counted and not throw
+      [1, 0, 0],    // a siege hit on a structure
+      [0, 1, 0],    // a counter-triangle hit
+      [0, 0, 26],   // splash alone — the Colossus' own radius
+      [1, 0, 26],   // …and on a building, which is the Colossus' real case
+      [0, 1, 26],
+      [1, 1, 0],    // both flags at once: no unit has both today, nothing stops one having them
+      [1, 1, 26],
+    ];
+    const data = new Float32Array(combos.length * stride);
+    for (let i = 0; i < combos.length; i++) {
+      const off = i * stride;
+      const [heavy, bonus, splash] = combos[i]!;
+      data[off] = 400 + i * 12;
+      data[off + 1] = 1;
+      data[off + 2] = 500;
+      data[off + 3] = i / combos.length;   // progress, so the fade path runs for every row
+      data[off + 4] = heavy;
+      data[off + 5] = bonus;
+      data[off + 6] = splash;
+      data[off + 7] = i % 2;
+    }
+    const r = fresh();
+    r.setFog(stubFog());
+    r.beginFrame(stubCamera());
+    r.drawTerrain(stubTerrain());
+    r.drawOverlay({ kind: "impact", count: combos.length, stride, data });
+    const stats = r.endFrame();
+    r.dispose();
+    if (stats.overlayItems !== combos.length) {
+      return `expected ${combos.length} impact items, got ${stats.overlayItems}`;
+    }
+    return null;
+  });
+
   check("ignores an overlay with no items", () => {
     const r = fresh();
     r.beginFrame(stubCamera());

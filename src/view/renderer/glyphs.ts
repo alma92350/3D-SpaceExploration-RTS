@@ -99,6 +99,56 @@ export const GLYPHS: Readonly<Record<number, Glyph>> = {
 /** Idle is ours, not a concern, so it is keyed separately rather than squeezed into the enum. */
 export const IDLE_GLYPH: Glyph = { id: "idle", strokes: [ring(10, 0.5)], closed: true };
 
+/** A concave star: `points` outer vertices with a notch between each pair. */
+const star = (points: number, outer: number, inner: number): Stroke => {
+  const pts: number[] = [];
+  for (let i = 0; i < points * 2; i++) {
+    const a = (i / (points * 2)) * Math.PI * 2 - Math.PI / 2;
+    const r = i % 2 === 0 ? outer : inner;
+    pts.push(Math.cos(a) * r, Math.sin(a) * r);
+  }
+  return pts;
+};
+
+// --- The two hit marks (P5-T15, PARITY rows 66 and 67) -------------------------------------------
+//
+// PRD N-05 again, and this is the place it bites hardest in the whole client: `heavy` and `bonus`
+// are two booleans on the same event, arriving at the same moment, in the same place, in the same
+// owner colour. Tinting one red and one yellow is the obvious implementation and it is exactly the
+// failure the badge vocabulary above was built to avoid — so the two differ in SHAPE first, and
+// `overlays2d.ts` gives them different sizes and stroke weights on top of that.
+//
+// They are chosen to be as unlike each other as two small figures get: one is radial and symmetric,
+// the other is vertical and directional. They also have to stay clear of the badge vocabulary above,
+// which shares this glyph space — the nearest neighbour is `starved`, a CLOSED down-triangle, and
+// the wedge below is open and lands on a plate.
+
+/**
+ * A counter-triangle hit landing — the cue that teaches the counter system without a manual.
+ *
+ * A four-pointed spark. Radial, so it reads as "that went off" rather than as a direction, and the
+ * only concave star anywhere in this vocabulary: the badges are triangles, bars, a ring and a bolt,
+ * and the blast mark is a circle with a cross through it.
+ */
+export const IMPACT_BONUS: Glyph = { id: "bonusHit", strokes: [star(4, 0.62, 0.17)], closed: true };
+
+/**
+ * A siege hit landing on a structure — heavier than a normal one.
+ *
+ * A wedge driven DOWN into a plate: two strokes, vertical and directional, where the spark above is
+ * radial. The plate is what makes it a siege mark rather than an arrowhead — the thing being hit is
+ * a structure, and `bonusVsBuildings` is precisely a class-wide bonus against structures with no
+ * particular matchup to name (the engine's own comment says so).
+ */
+export const IMPACT_HEAVY: Glyph = {
+  id: "heavyHit",
+  strokes: [
+    [-0.5, -0.5, 0, 0.15, 0.5, -0.5],   // the wedge, pointing down (y is DOWN in glyph space)
+    [-0.62, 0.45, 0.62, 0.45],          // the plate it lands on
+  ],
+  closed: false,
+};
+
 /**
  * Which badge a building wears, from the two codes the snapshot carries (P2-T08).
  *

@@ -115,7 +115,19 @@ describe("the settled background galaxy (P4-T10)", () => {
     expect(settled.p95).toBeLessThan(settled.budgetMs);
     // …and the render is genuinely still happening: the same scene minus the settled roster is T0,
     // and T0's batch count is a structural number identical on every machine.
-    expect(settled.maxDrawCalls).toBe(22);
+    //
+    // MEASURED against T0 rather than written down. It used to be the literal `22`, which is the
+    // hand-written-constant failure this repo keeps finding: P5-T15 added the `impact` overlay and
+    // both scenes moved to 23 together, at which point a literal is a number someone edits rather
+    // than a claim someone checks. The claim was always "P4 draws exactly what T0 draws" — the
+    // background galaxy is simulated and never rendered, so any divergence means a colony has
+    // leaked into the seat's frame — and that is now what is asserted.
+    const flat = run(SCENES.T0!, "T0-control");
+    expect(
+      settled.maxDrawCalls,
+      "the settled roster changed the seat's batch count, which means a background world reached " +
+      "the rendered frame",
+    ).toBe(flat.maxDrawCalls);
   });
 
   it("costs materially more sim time than the same scene with the roster unsettled", () => {

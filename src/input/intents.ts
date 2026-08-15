@@ -16,6 +16,71 @@
 // that is upstream's own resolution, kept deliberately rather than "fixed" into a third dialect.
 // Camera rotation gets `,` and `.` because upstream has already spent Q and E on select-army and
 // scout; binding rotation to them now would collide the day Phase 3 adds those orders.
+//
+// ================================================================================================
+// P5-T13 — the ten orders with no way in (PARITY.md §5.2, rows 31–40)
+// ================================================================================================
+//
+// A third of the verb list the 2D game gives a player had no gesture, no button and no intent. Two
+// of them (`setRally`, `cancelTrain`) had an intent since Phase 1 with **no producer on either
+// end**. They arrive here as keys and gestures rather than as HUD buttons because that is what they
+// are in the 2D game, and because the reachability failure this project has now recorded six times
+// is specifically the failure of building a panel and never wiring it (PARITY §7.4).
+//
+// **Where the letters came from, and where upstream's letters ran out.** Upstream's `input.js` is
+// NOT vendored (PARITY §6.3 — half the parity surface never was), so for these ten there is no
+// upstream letter to copy the way X and H were copied. Only one of the ten has an upstream letter
+// at all, and this file has been holding it since the MVP: the paragraph above reserves **E for
+// scout**, and row 35 is `issueScout`. It is spent here exactly as it was reserved.
+//
+// For the other nine the board is what P4-T13 left it: **I, J, K, U** free, `J` deliberately
+// unbound (`test/input/intents.test.ts` uses it as its example of a key this module does not own,
+// and a guard worth having is worth not weakening), `Q` still held for upstream's select-army. Four
+// letters against nine orders, so the rest take **Shift on the letter the order is named for** —
+// the `Shift+O` = detonate idiom this file already has, one order per letter rather than nine more
+// letters this board does not have:
+//
+//   Shift+R  Repair (33)            bare R is patrol
+//   Shift+F  Ferry (37)             bare F cycles the formation shape
+//   Shift+H  Home base (38)         bare H is hold
+//   Shift+P  collection Point (39)  bare P is protect/escort
+//   Shift+L  ai Logistics (40)      bare L opens the logistics board — the same subject, one level
+//                                   down: the board reads the haulers, this hands a ship to them
+//
+// **Shift is never put on X.** `test/input/intents.test.ts`'s "caps lock does not disarm the army"
+// pins `Shift+X` to stop, and a key that stops the army is not one to overload.
+//
+// The two bare letters that are spent, and honestly:
+//
+//   I / Shift+I  Service a building (34) / Assist build (36). One letter for two orders because
+//                **the engine itself makes them exclusive**: `updateService` drops a service job on
+//                a `constructing` target on the very next tick, and a build order is the only thing
+//                that helps one. Bare I is the finished building, Shift+I the unfinished one.
+//   U            Set rally (31). Rally's own letters — R, A, L, Y — are patrol, pan/attack-move,
+//                the logistics board and the starmap. U carries no meaning and this file has a
+//                precedent for saying so: "a doomsday device ended up on O rather than on B".
+//
+// And one that is not a letter at all:
+//
+//   Delete       Cancel a queued unit (32). The letter board has none to spare, "remove the last
+//                thing I added" is what this key means everywhere else, and it costs the letters
+//                nothing. Not Backspace — that still navigates in some browsers.
+//
+// `K` is left free on purpose. A bare letter is the scarce thing here; a Shift slot is not.
+//
+// **Row 38's gesture is upstream's, and this client cannot have it.** `engine/gather.js`'s
+// `zoneFirst` names it out loud — a home base is set by "a right-click on a Command Center with
+// eligible units selected". This client's right-click is the single context order (move / attack /
+// gather) and its only modifier is the queue, so taking that gesture would cost every player the
+// ability to right-click their own base to walk there. Shift+H instead, and the reason recorded
+// here rather than left for someone to wonder about.
+//
+// **What these gestures deliberately do NOT do.** None of the six new modes inspects the snapshot
+// to decide whether the thing under the cursor is a legal target. That is not laziness: the legal
+// targets are the engine's business (`canLogisticsType`, `canBuildType`, `cargoHold`,
+// `isCommandCenter`, `constructing`), and the bridge is where the engine can be asked (ADR-0012
+// §5). A miss — a click that found no entity at all — cancels the mode rather than being swallowed,
+// which is `escort`'s rule and for `escort`'s reason.
 
 import { type Intent } from "../bridge/commands.js";
 import { type Snapshot, FLAG_BUILDING_KIND, engineId, numericId } from "../bridge/snapshot.js";
@@ -55,7 +120,20 @@ export type PendingMode =
   // this module pure. Pressing the key again while the mode is up advances the shape, so cycling and
   // arming are the same gesture and the player sees what they are about to get before committing.
   | { kind: "formation"; shape: string; leaderPos: string }
-  | { kind: "escort" };
+  | { kind: "escort" }
+  // Phase 5's parity close-out (P5-T13). Six more of the same thing: an order that is not complete
+  // until the next click has named its target. Five want an ENTITY (`escort`'s shape exactly) and
+  // `rally` wants a POINT — and, if the point happens to be a resource node, that node's id too,
+  // which is upstream's rally-to-node and the reason row 31 could not just be wired as it stood.
+  //
+  // None of them carries anything else. The actor is the selection, which lives in the simulation
+  // and is resolved at the bridge; this module has never been able to see it and must not start.
+  | { kind: "rally" }
+  | { kind: "repair" }
+  | { kind: "service" }
+  | { kind: "assist" }
+  | { kind: "ferry" }
+  | { kind: "homeBase" };
 
 export interface GestureResult {
   readonly intent: Intent | null;
@@ -104,6 +182,33 @@ export function translatePointer(
         return gesture.entityId
           ? { intent: { kind: "escort", targetId: gesture.entityId, queue: gesture.shift }, mode: { kind: "none" } }
           : NO_INTENT;
+      // --- Phase 5's parity close-out (P5-T13) ------------------------------------------------
+      case "rally":
+        // The only one of the six that resolves on a POINT, so it never misses. `nodeId` rides
+        // along when the click landed on a deposit: that is upstream's rally-to-node, and it is
+        // the difference between a worker that spawns already mining and one that walks to a spot
+        // beside the ore and stops. `null` rather than absent, so the recorded intent says which
+        // of the two it was rather than leaving it to be inferred.
+        return {
+          intent: {
+            kind: "setRally", x: gesture.worldX, y: gesture.worldY,
+            nodeId: gesture.nodeId ?? null,
+          },
+          mode: { kind: "none" },
+        };
+      case "repair":
+        return targetOrCancel(gesture, (id) => ({ kind: "repair", targetId: id, queue: gesture.shift }));
+      case "service":
+        return targetOrCancel(gesture, (id) => ({ kind: "serviceBuilding", buildingId: id, queue: gesture.shift }));
+      case "assist":
+        return targetOrCancel(gesture, (id) => ({ kind: "assistBuild", buildingId: id, queue: gesture.shift }));
+      case "ferry":
+        return targetOrCancel(gesture, (id) => ({ kind: "ferryFreighter", freighterId: id, queue: gesture.shift }));
+      case "homeBase":
+        // No `queue`: `issueSetHomeBase` takes none. It is passive — the engine's own comment says
+        // it "never touches whatever order the unit is already running" — so there is nothing for a
+        // waypoint to sit behind.
+        return targetOrCancel(gesture, (id) => ({ kind: "setHomeBase", ccId: id }));
       case "none":
         break;
     }
@@ -145,6 +250,23 @@ export function translatePointer(
   }
 
   return NO_INTENT;
+}
+
+/**
+ * The five entity-target modes, resolved: the intent the click makes, or a cancelled mode.
+ *
+ * Cancelling on a miss is `escort`'s rule and it is the right one for all five — swallowing the
+ * click AND staying armed means the player clicks again and the second click lands the order on
+ * whatever they happened to hit. Whether the entity is a LEGAL target for the order is not asked
+ * here at all: that is the engine's question and the bridge is where it can be asked (ADR-0012 §5).
+ */
+function targetOrCancel(
+  gesture: PointerGesture,
+  make: (entityId: string) => Intent,
+): GestureResult {
+  return gesture.entityId
+    ? { intent: make(gesture.entityId), mode: { kind: "none" } }
+    : NO_INTENT;
 }
 
 export interface KeyGesture {
@@ -260,6 +382,13 @@ export const POSITIONAL_KEYS: readonly string[] = ["z", "c", "v", "b", "n"];
  * the two boards that are not about the selection. That left I, J, K, U and Y genuinely free, and
  * **P4-T13 has spent Y on the starmap** — the whole galaxy, every panel Phase 4 built and the
  * approach view behind it, for one letter, because the positional row carries the rest.
+ *
+ * **P5-T13 spent E, I and U, and left K.** Ten orders arrived at once (PARITY.md §5.2) against
+ * four free letters, so only the ones with a claim took one: E because this file reserved it for
+ * upstream's scout in the MVP, I because it carries two orders the engine itself keeps exclusive,
+ * U because a rally point had nothing left to be named after. The other six went onto **Shift +
+ * the letter they are named for** — R, F, H, P, L — and one onto Delete, which is not a letter at
+ * all. The full table and the reasoning are in this module's header.
  */
 export function translateKey(gesture: KeyGesture, mode: PendingMode = { kind: "none" }): KeyResult {
   // Control groups: the digit row, as every RTS since the nineties. Ctrl assigns, Shift appends, a
@@ -278,9 +407,19 @@ export function translateKey(gesture: KeyGesture, mode: PendingMode = { kind: "n
 
   switch (gesture.key.toLowerCase()) {
     case "a": return { intent: null, mode: { kind: "attackMove" }, camera: null, cancel: false };
-    case "r": return { intent: null, mode: { kind: "patrol" }, camera: null, cancel: false };
+    // R patrols; Shift+R is **R**epair (P5-T13, row 33) — the explicit "go fix that" a player gives
+    // when the auto-repair picks wrong. The pair keeps both orders on the letter each is named for.
+    case "r": return {
+      intent: null,
+      mode: gesture.shift ? { kind: "repair" } : { kind: "patrol" },
+      camera: null, cancel: false,
+    };
     case "x": return { intent: { kind: "stop" }, mode: { kind: "none" }, camera: null, cancel: false };
-    case "h": return { intent: { kind: "hold" }, mode: { kind: "none" }, camera: null, cancel: false };
+    // H holds; Shift+H sets the **H**ome base (row 38) — see the header for why this is not
+    // upstream's own right-click-a-Command-Center.
+    case "h": return gesture.shift
+      ? { intent: null, mode: { kind: "homeBase" }, camera: null, cancel: false }
+      : { intent: { kind: "hold" }, mode: { kind: "none" }, camera: null, cancel: false };
     // The power grid overlay. `G` for grid — upstream has not spent it, and the alternatives
     // (`P` for power) collide with nothing today but read as "pause" to anyone coming from another
     // RTS. It is a toggle rather than a mode because the grid answers "where can I build this
@@ -289,9 +428,14 @@ export function translateKey(gesture: KeyGesture, mode: PendingMode = { kind: "n
     // --- Phase 3 ------------------------------------------------------------------------------
     // F arms a formation move and cycles its shape on repeat. The shape lives in the mode, so the
     // player can see what they are arming before they commit the click (see `PendingMode`).
+    //
+    // Shift+F is **F**erry (P5-T13, row 37): send workers to load a landed freighter's hold. It
+    // must not cycle, so it is checked before `nextShape` rather than after.
     case "f": return {
       intent: null,
-      mode: { kind: "formation", shape: nextShape(mode), leaderPos: DEFAULT_LEADER_POS },
+      mode: gesture.shift
+        ? { kind: "ferry" }
+        : { kind: "formation", shape: nextShape(mode), leaderPos: DEFAULT_LEADER_POS },
       camera: null, cancel: false,
     };
     // T holds the formation where the group already stands — no click, because there is no
@@ -305,7 +449,13 @@ export function translateKey(gesture: KeyGesture, mode: PendingMode = { kind: "n
       mode: { kind: "none" }, camera: null, cancel: false,
     };
     // P for protect. Not G (the power grid), not E (upstream's scout), not C or V (positional).
-    case "p": return { intent: null, mode: { kind: "escort" }, camera: null, cancel: false };
+    //
+    // Shift+P is the collection **P**oint (P5-T13, row 39): park a freighter where it stands and
+    // let it empty itself into the treasury whenever it fills. A toggle with no `on` — only the
+    // simulation knows which way the flag is pointing, so the bridge flips it.
+    case "p": return gesture.shift
+      ? { intent: { kind: "collectPoint" }, mode: { kind: "none" }, camera: null, cancel: false }
+      : { intent: null, mode: { kind: "escort" }, camera: null, cancel: false };
     // The Helium Bomb. O rather than B because B is one of upstream's positional action keys.
     // Arming and detonating are separate presses on purpose — `applyIntent` refuses to detonate an
     // unarmed bomb, so those two presses ARE the confirmation dialog this build does not have.
@@ -316,7 +466,34 @@ export function translateKey(gesture: KeyGesture, mode: PendingMode = { kind: "n
     // rest — pause, electrify, scrap, research, doctrine, haul priority — follow what the player has
     // clicked, so they cost no key at all and reach the keyboard through the positional row above.
     case "m": return { ...NO_KEY, board: "market" };
-    case "l": return { ...NO_KEY, board: "logistics" };
+    // L opens the haulage board; Shift+L hands the selected freighters to the **L**ogistics AI
+    // (P5-T13, row 40) — the same subject one level down, which is why they share the letter. The
+    // engine refuses this silently without `FREIGHTER_AI_TECH`, so the bridge asks before ordering.
+    case "l": return gesture.shift
+      ? { intent: { kind: "aiLogistics" }, mode: { kind: "none" }, camera: null, cancel: false }
+      : { ...NO_KEY, board: "logistics" };
+    // --- Phase 5's parity close-out (P5-T13, PARITY.md §5.2) -------------------------------------
+    //
+    // E is upstream's own scout letter and this file's header has held it since the MVP: "upstream
+    // has already spent Q and E on select-army and scout". Row 35 is that order, and this is the
+    // reservation being spent rather than a new letter being invented. A stance, not a
+    // destination — `scout.js` picks the ground itself — so it needs no click.
+    case "e": return { intent: { kind: "scout" }, mode: { kind: "none" }, camera: null, cancel: false };
+    // I services a FINISHED building (row 34); Shift+I helps finish an UNFINISHED one (row 36).
+    // One letter, because the engine makes the two exclusive rather than merely similar: a service
+    // job on a `constructing` target is dropped by `updateService` on the next tick, and a build
+    // order is the only thing that helps one along.
+    case "i": return {
+      intent: null,
+      mode: gesture.shift ? { kind: "assist" } : { kind: "service" },
+      camera: null, cancel: false,
+    };
+    // U arms the rally point (row 31) — an arbitrary letter, and the header says why.
+    case "u": return { intent: null, mode: { kind: "rally" }, camera: null, cancel: false };
+    // Delete cancels the newest queued unit (row 32). A production queue a player could fill and
+    // could not empty was the row; the bridge picks the last job and reports what `cancelProduction`
+    // — the one order in this group that answers at all — said about it.
+    case "delete": return { intent: { kind: "cancelTrain" }, mode: { kind: "none" }, camera: null, cancel: false };
     // --- Phase 4's galaxy, finally reachable (P4-T13) ---------------------------------------------
     // The starmap. One of the five letters this board still had (see `screen` above), and the only
     // Phase 4 control that needs a key at all: everything else on that screen is a button, and the

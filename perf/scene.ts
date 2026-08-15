@@ -70,6 +70,27 @@ export interface SceneSpec {
    */
   readonly armedBombs?: number;
   /**
+   * Producer buildings left SELECTED for the whole run, for the P5-T15 rally overlay (default none).
+   *
+   * The same hole `armedBombs` was added to close, one row later: a rally line is drawn only for a
+   * selected producer the viewer owns, and **no perf scene has ever selected anything at all** — so
+   * the layer would have shipped ungated, which is now the fourth time this harness has silently not
+   * measured what a task shipped.
+   *
+   * **It costs TWO draw calls, not one, and that is worth saying rather than hiding.** Selecting a
+   * building raises the `selection` ring as well as the rally line, and the ring is Phase 1's — so
+   * this flag also puts the oldest overlay in the client onto a gate for the first time. The
+   * armed-bomb entry could isolate its delta because the P3 scene already carried the bomb's mesh;
+   * there is no scene with a selection to hang this off, so the delta is two layers and the reason
+   * is stated instead of measured away.
+   *
+   * **On P2 rather than on T0/T2**, because P2 is the base-management scene: 300 buildings across
+   * all 29 types is the only gated scene where enough of the roster's three producers (`command`,
+   * `barracks`, `stardock`) exist for a realistic multi-building selection, and a rally line is a
+   * base-management cue rather than a combat one.
+   */
+  readonly selectedProducers?: number;
+  /**
    * Bring up the WHOLE world roster and give every world off the seat this same scene's economy,
    * so the background galaxy the bridge has been stepping since Phase 1 is finally loaded (P4-T10).
    *
@@ -103,7 +124,10 @@ export const SCENES: Readonly<Record<string, SceneSpec>> = {
   // tier, because CPU-only is the whole target (ADR-0011). Every one of the 29 building types is
   // present: the point is to measure what the six silhouette families actually cost, not to
   // measure 300 copies of one mesh.
-  P2: { tier: "T0", units: 200, buildings: 300, width: 1280, height: 720, buildingTypes: "all" },
+  P2: {
+    tier: "T0", units: 200, buildings: 300, width: 1280, height: 720, buildingTypes: "all",
+    selectedProducers: 8,
+  },
   // PRD §5's Phase 3 exit criterion, and the gate ADR-0016 named as its own supersede trigger
   // (P3-T16). Every unit type the engine defines, so all fifteen unit meshes are on the field at
   // once — the perf scenes above use the four-type MVP mix, which means none of ADR-0016's nine new
@@ -229,7 +253,7 @@ function settleRoster(galaxy: Galaxy, spec: SceneSpec): string[] {
     if (id === galaxy.activeId) continue;
     const state = galaxy.planets.get(id);
     if (!state) throw new Error(`perf scene: roster world ${id} did not come up`);
-    populate(state, { ...spec, packed: false, armedBombs: 0, settledRoster: false });
+    populate(state, { ...spec, packed: false, armedBombs: 0, selectedProducers: 0, settledRoster: false });
     background.push(id);
   }
   return background;
@@ -611,5 +635,26 @@ function populate(state: State, spec: SceneSpec, bombIds: string[] = []): void {
     const owner: OwnerId = i % 2 === 0 ? "player" : "ai";
     const b = makeBuilding(type, owner, 120 + ((i * 211) % (width - 240)), 120 + ((i * 157) % (height - 240)));
     state.buildings.set(b.id, b);
+  }
+  // A standing selection of the player's own producers (P5-T15) — see `selectedProducers`. Asked of
+  // the engine's `produces` table rather than listing the three types, on the same rule the bridge
+  // filter uses: a hand-written list here would keep passing after upstream added a fourth producer,
+  // and the scene would quietly stop covering it.
+  const wanted = spec.selectedProducers ?? 0;
+  if (wanted > 0) {
+    state.selection.length = 0;
+    for (const b of state.buildings.values()) {
+      if (state.selection.length >= wanted) break;
+      if (b.owner !== "player") continue;
+      if (!(BUILDINGS[b.type]?.produces?.length)) continue;
+      state.selection.push(b.id);
+    }
+    if (state.selection.length < wanted) {
+      throw new Error(
+        `perf scene: asked for ${wanted} selected producers and the ${spec.buildings}-building `
+        + `population only offered ${state.selection.length}. The rally overlay is drawn per selected `
+        + `producer, so the layer this flag exists to measure would not fire.`,
+      );
+    }
   }
 }
