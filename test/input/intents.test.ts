@@ -177,7 +177,19 @@ describe("hotkeys", () => {
     expect(translateKey({ key: "h", shift: false, ctrl: false }).intent).toEqual({ kind: "hold" });
     expect(translateKey({ key: "a", shift: false, ctrl: false }).mode).toEqual({ kind: "attackMove" });
     expect(translateKey({ key: "r", shift: false, ctrl: false }).mode).toEqual({ kind: "patrol" });
-    expect(translateKey({ key: "z", shift: false, ctrl: false }).intent).toEqual({ kind: "deploy" });
+  });
+
+  it("makes Z the FIRST positional action rather than a hard-coded deploy (P4-T01)", () => {
+    // Z returned `{kind:"deploy"}` until the HUD had an ordered button list to index into. The
+    // binding has not moved and a returning player's hands still work — Deploy is the first button
+    // a selected colony ship is shown — but the mechanism is now the positional rule this module
+    // has described since the MVP, which is what gives the economy panels a keyboard at all.
+    //
+    // That it still reaches `deploy` end to end is proved in `phase2-input.test.ts`, against a real
+    // `hudModel`; asserting it here would only re-assert this file's own constant.
+    expect(translateKey({ key: "z", shift: false, ctrl: false }).action).toEqual({ index: 0 });
+    expect(translateKey({ key: "z", shift: false, ctrl: false }).intent,
+      "a positional key cannot know which intent it fires — the HUD does").toBeNull();
   });
 
   it("leaves W/A/S/D free enough for the camera to keep panning (PRD §5)", () => {

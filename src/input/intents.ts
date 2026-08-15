@@ -185,9 +185,38 @@ export interface KeyResult {
    * accident — and this module cannot see the selection. So the caller resolves it.
    */
   readonly bomb?: "toggleArm" | "detonate";
+  /**
+   * A POSITIONAL action press (P4-T01) — fire the Nth button the HUD is showing.
+   *
+   * Z/C/V/B/N are upstream's own action keys and this module has described them that way since the
+   * MVP while having no button list to point at: the HUD offered three ad-hoc rows and the letters
+   * were left unbound rather than nailed to fixed orders. `HudModel.actions` is that list now, so
+   * the convention is finally implementable — and it is what gives the economy panels a keyboard,
+   * without inventing five more letters on a board that has none left.
+   *
+   * An INDEX, not an intent, for exactly the reason `group` and `bomb` are: this layer cannot see
+   * the HUD. The caller resolves it against the buttons it is actually drawing.
+   */
+  readonly action?: { readonly index: number };
+  /**
+   * Open or close one of the base-wide economy boards (P4-T01).
+   *
+   * Not an intent — nothing in the simulation knows a panel is open, the same reason `togglePower`
+   * is not one. The two boards that need a key are the two that are NOT about the selection: the
+   * market and the haulage/repair board. Everything else follows what the player has clicked.
+   */
+  readonly board?: "market" | "logistics";
 }
 
 const NO_KEY: KeyResult = { intent: null, mode: null, camera: null, cancel: false };
+
+/**
+ * The positional action keys, in order. Upstream's letters and upstream's order.
+ *
+ * Five, because that is what upstream binds; a HUD row longer than five is reachable by mouse and
+ * by nothing else, which is a real limit rather than a bug to paper over with more letters.
+ */
+export const POSITIONAL_KEYS: readonly string[] = ["z", "c", "v", "b", "n"];
 
 /**
  * Hotkeys. Upstream's letters, so muscle memory carries over (persona P1).
@@ -199,8 +228,13 @@ const NO_KEY: KeyResult = { intent: null, mode: null, camera: null, cancel: fals
  * **The free letters are scarcer than they look**, which is what decided these bindings. W/A/S/D pan
  * (PRD §5), upstream spends Q and E on select-army and scout, and Z/C/V/B/N are upstream's
  * POSITIONAL action keys — they fire the Nth button the HUD is showing, so binding a fixed order to
- * one would break that rule the moment the HUD has buttons. That leaves F, T and P, which is why a
+ * one would break that rule the moment the HUD has buttons. That left F, T and P, which is why a
  * doomsday device ended up on O rather than on B for "bomb".
+ *
+ * **P4-T01 made the positional rule real rather than a reservation.** The HUD now has an ordered
+ * button list (`HudModel.actions`), so Z/C/V/B/N return an INDEX into it and Phase 2's economy
+ * controls get a keyboard without spending five more letters this board does not have. M and L open
+ * the two boards that are not about the selection. That leaves I, J, K, U and Y genuinely free.
  */
 export function translateKey(gesture: KeyGesture, mode: PendingMode = { kind: "none" }): KeyResult {
   // Control groups: the digit row, as every RTS since the nineties. Ctrl assigns, Shift appends, a
@@ -211,15 +245,17 @@ export function translateKey(gesture: KeyGesture, mode: PendingMode = { kind: "n
     return { ...NO_KEY, group: { n: digit, op } };
   }
 
+  // The positional row, before the letter switch — Z used to return a hard-coded `deploy` intent,
+  // and it still deploys, because Deploy is the first button the HUD shows a selected colony ship.
+  // That was always the stated reason for the binding; it is now the actual mechanism.
+  const positional = POSITIONAL_KEYS.indexOf(gesture.key.toLowerCase());
+  if (positional >= 0) return { ...NO_KEY, action: { index: positional } };
+
   switch (gesture.key.toLowerCase()) {
     case "a": return { intent: null, mode: { kind: "attackMove" }, camera: null, cancel: false };
     case "r": return { intent: null, mode: { kind: "patrol" }, camera: null, cancel: false };
     case "x": return { intent: { kind: "stop" }, mode: { kind: "none" }, camera: null, cancel: false };
     case "h": return { intent: { kind: "hold" }, mode: { kind: "none" }, camera: null, cancel: false };
-    // Z is upstream's first POSITIONAL action key (Z/C/V/B/N fire the Nth button the HUD is
-    // showing). Deploy is the only action button a selected colony ship has, so Z lands on it by
-    // the same rule a returning player already has in their fingers.
-    case "z": return { intent: { kind: "deploy" }, mode: { kind: "none" }, camera: null, cancel: false };
     // The power grid overlay. `G` for grid — upstream has not spent it, and the alternatives
     // (`P` for power) collide with nothing today but read as "pause" to anyone coming from another
     // RTS. It is a toggle rather than a mode because the grid answers "where can I build this
@@ -249,6 +285,13 @@ export function translateKey(gesture: KeyGesture, mode: PendingMode = { kind: "n
     // Arming and detonating are separate presses on purpose — `applyIntent` refuses to detonate an
     // unarmed bomb, so those two presses ARE the confirmation dialog this build does not have.
     case "o": return { ...NO_KEY, bomb: gesture.shift ? "detonate" : "toggleArm" };
+    // --- Phase 2's economy, finally reachable (P4-T01) -------------------------------------------
+    // Two boards, two letters, and they are the only two economy panels that need one: the market
+    // and the haulage/repair board are the panels that are NOT about the current selection. The
+    // rest — pause, electrify, scrap, research, doctrine, haul priority — follow what the player has
+    // clicked, so they cost no key at all and reach the keyboard through the positional row above.
+    case "m": return { ...NO_KEY, board: "market" };
+    case "l": return { ...NO_KEY, board: "logistics" };
     case "escape": return { intent: null, mode: { kind: "none" }, camera: null, cancel: true };
     // Space jumps to the newest live alert and Home goes to the base — the two were one binding
     // until P3-T14 gave the first one something to jump to. Space is the alert key in most of the

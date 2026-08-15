@@ -7,7 +7,7 @@
 import { BUILD_REACH, BUILDINGS, NODE_RADIUS, UNITS } from "../engine/index.js";
 import { WorldBridge, type WorldOptions } from "../bridge/world.js";
 import { checkPlacement } from "../bridge/commands.js";
-import { FLAG_BUILDING_KIND } from "../bridge/snapshot.js";
+import { FLAG_BUILDING_KIND, type Snapshot } from "../bridge/snapshot.js";
 import { FixedStepLoop } from "./loop.js";
 import { type Settings, saveSettings } from "./settings.js";
 import { CameraRig, clamp } from "../input/camera.js";
@@ -21,7 +21,10 @@ import { buildMeshes, meshIdForType } from "../view/meshes/generators.js";
 import { SceneComposer, type GhostState } from "../view/scene.js";
 import { type Renderer, type TerrainMesh, type Tier } from "../view/renderer/port.js";
 import { TIERS, TierMonitor } from "../view/renderer/tiers.js";
-import { HudView, hudModel } from "../ui/hud.js";
+import {
+  type EconomyBoard, type EconomyModel, type HudAction, type HudCommand, type HudModel,
+  EconomyCache, HudView, hudModel,
+} from "../ui/hud.js";
 import { MinimapView, minimapToWorld } from "../ui/minimap.js";
 
 export interface GameElements {
@@ -65,6 +68,25 @@ export class Game {
   private ghost: GhostState | null = null;
   /** Power-grid overlay, toggled with `G`. View state: nothing in the simulation knows about it. */
   private showPower = false;
+  /** Which base-wide economy board is open, if any (P4-T01). View state, like `showPower`. */
+  private board: EconomyBoard | null = null;
+  /**
+   * The buttons the HUD is currently showing, in order — what a positional key press indexes into.
+   *
+   * Held rather than recomputed on the key press, and that is deliberate: the answer must be the
+   * row the player is LOOKING at. Rebuilding it from a fresher snapshot would let Z fire a button
+   * that appeared between the frame they read and the key they pressed.
+   */
+  private actions: readonly HudAction[] = [];
+  /**
+   * The economy model, rebuilt on a tick rather than on a frame.
+   *
+   * The panels behind it are dry runs of the engine's own gating (`researchPanelModel` calls
+   * `researchTech` for real and undoes it) and full sweeps of the unit table. All of that is correct
+   * and none of it belongs in a 60 Hz frame, so the cache owns when it is rebuilt — see `EconomyCache`.
+   */
+  private readonly economyCache = new EconomyCache();
+  private economy: EconomyModel = { sections: [], actions: [] };
   private running = false;
   private rafHandle = 0;
   /** Told whenever the tier changes, however it changed. Set by the shell so the picker tracks it. */
@@ -98,9 +120,7 @@ export class Game {
     this.renderer.setTier(tier);
 
     this.hud = new HudView(elements.hudRoot, {
-      onTrain: (unitType) => this.trainFromSelection(unitType),
-      onBuild: (buildingType) => { this.mode = { kind: "build", buildingType }; },
-      onDeploy: () => this.bridge.enqueue({ kind: "deploy" }),
+      onCommand: (command) => this.runCommand(command),
     });
     this.minimap = new MinimapView(elements.minimapCanvas, {
       pixelWidth: elements.minimapCanvas.width || 200,
@@ -203,7 +223,13 @@ export class Game {
     this.renderer.setPower(this.ghost || this.showPower ? snap.power : null);
     this.composer.compose(this.renderer, snap, camera, TIERS[this.tier], this.terrain, alpha, this.ghost);
 
-    this.hud.render(hudModel(snap));
+    const hud = hudModel(snap);
+    this.hud.render(hud);
+    this.refreshEconomy(hud, snap);
+    this.hud.renderEconomy(this.economy);
+    // The positional row is the concatenation, in the order the two rows are drawn. Z is the first
+    // button the player can see and N is the fifth, whichever panel it came from.
+    this.actions = [...hud.actions, ...this.economy.actions];
     const error = this.bridge.takeCommandError();
     if (error) this.hud.notice(error);
     this.minimap.draw(snap, camera);
@@ -309,6 +335,15 @@ export class Game {
     if (result.intent) this.bridge.enqueue(result.intent);
     if (result.group) this.applyGroup(result.group.n, result.group.op);
     if (result.bomb) this.applyBomb(result.bomb);
+    // A positional key fires the Nth button the HUD is showing, or nothing at all when the row is
+    // shorter than that — never the last button, which is how a player learns to distrust the row.
+    if (result.action) {
+      const action = this.actions[result.action.index];
+      if (action) this.runCommand(action.command);
+    }
+    // Toggling: the same key closes the board it opened. A second key to close is one a player has
+    // to be told about, and this client has no place to tell them.
+    if (result.board) this.board = this.board === result.board ? null : result.board;
     switch (result.camera) {
       case "focusBase": {
         const base = this.bridge.state.map.bases.player;
@@ -432,14 +467,37 @@ export class Game {
     }
   }
 
-  private trainFromSelection(unitType: string): void {
-    for (const id of this.bridge.state.selection) {
-      const b = this.bridge.state.buildings.get(id);
-      if (b && (BUILDINGS[b.type]?.produces ?? []).includes(unitType)) {
-        this.bridge.enqueue({ kind: "train", buildingId: id, unitType });
-        return;
-      }
+  /**
+   * Run one HUD command, from a click or from a positional key. The single path (P4-T01).
+   *
+   * **Every order goes through `bridge.enqueue`**, including all nine of Phase 2's economy intents.
+   * Nothing here calls the engine: a direct call would land mid-frame instead of on a tick boundary,
+   * and a recorded intent stream would no longer replay — which is the whole reason the bridge
+   * queues rather than applies. The refusal comes back through `takeCommandError` on the next frame
+   * and lands in `hud.notice`, the same way a rejected build order always has.
+   */
+  private runCommand(command: HudCommand): void {
+    if (command.kind === "buildMode") {
+      this.mode = { kind: "build", buildingType: command.buildingType };
+      return;
     }
+    this.bridge.enqueue(command.intent);
+  }
+
+  /** Assemble the economy model's inputs. The cache decides whether it is actually rebuilt. */
+  private refreshEconomy(hud: HudModel, snap: Snapshot): void {
+    this.economy = this.economyCache.get({
+      hud,
+      state: this.bridge.state,
+      snap,
+      credits: this.bridge.galaxyCredits,
+      board: this.board,
+      // The Rig's survey is a PLACEMENT reading (P2-T16) — it belongs to the ghost, not to a
+      // selection, because the question it answers is asked before 200 ore is committed.
+      ghost: this.mode.kind === "build" && this.ghost
+        ? { buildingType: this.mode.buildingType, x: this.ghost.x, y: this.ghost.y }
+        : null,
+    });
   }
 
   /** Nearest entity whose footprint contains the point. Buildings win ties — they are bigger. */

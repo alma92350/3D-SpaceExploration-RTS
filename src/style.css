@@ -166,6 +166,44 @@ html, body {
 .hud-button.unaffordable { opacity: 0.45; }
 .hud-button.unaffordable .hud-button-cost { text-decoration: line-through; }
 
+/* The economy drawer (P4-T01). Sits above the action row rather than over the world: these are
+   panels a player reads while deciding, not a heads-up overlay. Scrolls rather than grows, because
+   the market lists every tradeable commodity and the tech tree lists every node. */
+.hud-economy {
+  position: absolute;
+  left: 0;
+  bottom: 132px;
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 52vh;
+  max-width: 640px;
+  overflow-y: auto;
+  padding: 10px 14px;
+  background: var(--panel);
+  border-top: 1px solid var(--edge);
+  border-right: 1px solid var(--edge);
+  border-top-right-radius: 6px;
+}
+.hud-economy.visible { display: flex; }
+
+.hud-econ-section + .hud-econ-section { border-top: 1px solid var(--edge); padding-top: 8px; }
+.hud-econ-title { font-weight: 600; margin-bottom: 3px; }
+.hud-econ-line { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.hud-econ-section .hud-row { margin-top: 6px; }
+
+/* The doctrine commitment. Bordered as well as coloured — N-05 forbids colour alone, and this is
+   the one warning in the client about something that cannot be undone. */
+.hud-econ-warning {
+  display: none;
+  margin: 3px 0 2px;
+  padding: 3px 7px;
+  border-left: 3px solid var(--warn);
+  color: var(--warn);
+  font-size: 11px;
+}
+.hud-econ-warning.visible { display: block; }
+
 /* ---------- Sidebar ---------- */
 
 #sidebar {
