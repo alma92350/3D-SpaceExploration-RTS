@@ -420,7 +420,7 @@ export class Game {
     this.composer.ageEffects(frameMs / 1000);
 
     if (screen.kind === "world") {
-      this.applyContinuousPan(frameMs / 1000);
+      this.applyContinuousPan(frameMs / 1000, this.camera, true);
       this.updateGhost();
       const camera = this.camera.update(rect.width, rect.height);
       this.renderer.setFog(snap.fog);
@@ -438,6 +438,11 @@ export class Game {
           this.renderer, this.galaxySnapshot(), this.starmapCamera.update(rect.width, rect.height),
         );
       } else {
+        // The picker's rig is flown with the same eight keys the battlefield's is (P7-T03) — and
+        // BEFORE it is read for this frame, so a held key moves the ground the mark will be put on
+        // rather than lagging it by a frame. It was driven by nothing at all until this row: the
+        // one screen whose entire job is aiming a camera was the one screen the pan keys skipped.
+        this.applyContinuousPan(frameMs / 1000, screen.view.rig, false);
         // The destination's own fog, not the seat's. Both renderers paint terrain through whatever
         // fog they last received, so without this the world the player is about to land on wears the
         // explored shape of the world they are standing on — a pattern that means nothing here.
@@ -549,13 +554,12 @@ export class Game {
     el.addEventListener("pointerup", (e) => this.onPointerUp(e));
     el.addEventListener("pointermove", (e) => this.onPointerMove(e));
     el.addEventListener("pointerleave", () => { this.pointerInside = false; });
+    // One notch per wheel event, and `zoomBy` is shared with the keyboard (P7-T03) rather than
+    // copied for it — which is what makes "the key feels like the wheel" a fact about the code
+    // instead of a matched pair of constants.
     el.addEventListener("wheel", (e) => {
       e.preventDefault();
-      // The approach view is a full rig, not a frozen pose (P4-T05): zooming in to look at a valley
-      // is the same control it is on the battlefield. The plate does not zoom — its one distance is
-      // the authored view the layout was priced at.
-      if (this.screen.kind === "approach") this.screen.view.rig.zoom(Math.sign(e.deltaY));
-      else if (this.screen.kind === "world") this.camera.zoom(Math.sign(e.deltaY));
+      this.zoomBy(Math.sign(e.deltaY));
     }, { passive: false });
     el.addEventListener("dblclick", (e) => this.onDoubleClick(e));
     window.addEventListener("keydown", (e) => this.onKeyDown(e));
@@ -699,9 +703,23 @@ export class Game {
     // P6-T11's two keys. Both belong to the battlefield for the same reason the camera commands
     // below it do: the cycle MOVES the camera and the crosshair IS the camera, and neither means
     // anything on a screen that camera is not being drawn through.
+    //
+    // **The approach view is the exception P7-T03 found, and only for the crosshair.** That screen
+    // is drawn through a camera of its own, centred on screen by the same construction — so "here"
+    // has a meaning there, and it is the landing mark. `Q` still has none: a picker has no roster.
+    // The BUTTON `translateKey` decided is read off the battlefield's pending mode and means
+    // nothing on this screen, which offers one gesture rather than two.
     if (this.screen.kind === "world") {
       if (result.select) this.applySelect(result.select.scope);
       if (result.crosshair) this.pressCrosshair(result.crosshair);
+    } else if (this.screen.kind === "approach" && result.crosshair) {
+      this.markLanding(this.screen.view);
+    }
+    // ZOOM (P7-T03), before the battlefield-only guard below, because the approach view is a full
+    // rig and the wheel already turns it. A keyboard zoom that stopped at the edge of the world
+    // screen would be a smaller control than the one it is copying.
+    if (result.camera === "zoomIn" || result.camera === "zoomOut") {
+      this.zoomBy(result.camera === "zoomIn" ? -1 : 1);
     }
     // A positional key fires the Nth button the HUD is showing, or nothing at all when the row is
     // shorter than that — never the last button, which is how a player learns to distrust the row.
@@ -737,8 +755,31 @@ export class Game {
       }
       case "rotateLeft": this.camera.rotate(-1); break;
       case "rotateRight": this.camera.rotate(1); break;
+      // Handled above, on every screen that has a rig to turn — see `zoomBy`. Listed rather than
+      // folded into `default`, so a camera action added later still has to be placed by hand.
+      case "zoomIn": case "zoomOut": break;
       case null: break;
     }
+  }
+
+  /**
+   * One zoom notch, on whichever rig the player is looking through (P7-T03).
+   *
+   * **The wheel and the keys are the same control, so they are the same call.** The wheel passes
+   * `Math.sign(e.deltaY)` and a key press passes ±1 — literally the same argument — and
+   * `CameraRig.zoom` multiplies the distance by 1.15^n and clamps it to `MIN_DISTANCE`…
+   * `MAX_DISTANCE` (90…900, a shade under 17 notches end to end). A larger key step would be a
+   * second feel for one control; a smaller one would make the keyboard the slow way to do something
+   * the mouse does in a flick. Positive is OUT, which is the rig's own convention and the wheel's
+   * (`deltaY > 0` is a scroll down).
+   *
+   * The approach view is a full rig rather than a frozen pose (P4-T05), so it zooms. **The plate
+   * does not** — its one distance is the authored view ADR-0019 §3 priced the layout at, and a
+   * diagram read at an arbitrary distance is a diagram whose labels no longer fit.
+   */
+  private zoomBy(notches: number): void {
+    if (this.screen.kind === "approach") this.screen.view.rig.zoom(notches);
+    else if (this.screen.kind === "world") this.camera.zoom(notches);
   }
 
   private onMinimapClick(e: PointerEvent): void {
@@ -759,7 +800,20 @@ export class Game {
     if (result.intent) this.bridge.enqueue(result.intent);
   }
 
-  private applyContinuousPan(dt: number): void {
+  /**
+   * Fly a rig with the held pan keys, and — where it is wanted — with the pointer at the edge.
+   *
+   * **The rig is a parameter as of P7-T03**, and that is the whole of the landing mark's keyboard
+   * half. This ran on the world screen alone, so on the approach view all eight pan keys were dead
+   * while `index.html` advertised them — the P5-T10 defect's exact shape — and a picker whose camera
+   * cannot be moved can only ever mark the point it opened on, which is the engine's own default.
+   *
+   * `allowEdgeScroll` is false on the picker because edge scrolling is a POINTER control and that
+   * screen's pointer already has a job at every pixel of the window: `onPointerMove` marks the
+   * landing wherever it goes, so an edge that also panned would move the mark and the ground under
+   * it in one gesture.
+   */
+  private applyContinuousPan(dt: number, rig: CameraRig, allowEdgeScroll: boolean): void {
     let dx = 0;
     let dy = 0;
     if (this.keys.has("arrowleft") || this.keys.has("a")) dx -= 1;
@@ -775,7 +829,7 @@ export class Game {
     // keys priority". S was already spent on panning by that decision; it just never arrived.
     if (this.keys.has("arrowdown") || this.keys.has("s")) dy += 1;
 
-    if (this.settings.edgeScroll && this.pointerInside) {
+    if (allowEdgeScroll && this.settings.edgeScroll && this.pointerInside) {
       const [w, h] = this.viewportSize();
       if (this.pointerX < EDGE_SCROLL_MARGIN) dx -= 1;
       if (this.pointerX > w - EDGE_SCROLL_MARGIN) dx += 1;
@@ -785,7 +839,36 @@ export class Game {
 
     if (dx === 0 && dy === 0) return;
     const speed = (this.keys.size > 0 ? KEY_PAN_SPEED : EDGE_SCROLL_SPEED) * dt;
-    this.camera.pan(dx * speed, dy * speed);
+    rig.pan(dx * speed, dy * speed);
+  }
+
+  /**
+   * Put the approach screen's landing mark where its camera is pointing (P7-T03).
+   *
+   * The same call `pointermove` and the left click make (`onPointerMove`, `onPointerUp`), at the
+   * CENTRE pixel — so this is literally the click a mouse would make at the crosshair, resolved by
+   * the same ray-march on the same rig. Nothing here knows about grids, sites or margins: the mark
+   * is a raw ground point, `landingSite` puts it through the engine's own `snapLandingPoint`, and
+   * `ui/landing-panel.ts` alone decides whether the jump may carry it at all (it may not, when a pad
+   * stands on the destination — `landingZone` would throw it away).
+   *
+   * **Unlike the battlefield's crosshair this does not defer to the pointer's position**, and the
+   * difference is what the two things ARE rather than an inconsistency. The build ghost is a
+   * PROMISE — the interface saying where the next press will put a building — so a key that ignored
+   * it would contradict the picture the player is looking at. This mark is a RECORD of the last
+   * press, and a left click on this screen already re-marks wherever it lands however recently the
+   * pointer moved. `K` is that click, at the centre.
+   *
+   * `pointAt` REFUSES a ray that left the world rather than clamping it, keeping the last good mark
+   * — the pointer's own behaviour when it slides off the planet, and why there is nothing here for
+   * a caller to act on. **The crosshair reaches that case**, which is not obvious: the centre ray is
+   * the rig's own look-at line, and at yaw 0 it comes at the target from the south, so at the
+   * northern and southern edges of the world it can cross out before it meets the ground. Keeping
+   * the mark is what stops a press at the top of the map costing the player the site they chose.
+   */
+  private markLanding(view: ApproachView): void {
+    const [w, h] = this.viewportSize();
+    view.pointAt(view.camera(w, h), w / 2, h / 2);
   }
 
   private updateGhost(): void {

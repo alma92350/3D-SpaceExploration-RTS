@@ -145,6 +145,68 @@
 // board with two letters left, and neither is needed to play — nothing in the game requires an
 // empty selection, and every per-entity ORDER already takes its target from the crosshair through
 // the modes above (repair, service, assist, ferry, home base, escort).
+//
+// ================================================================================================
+// P7-T03 — the two controls P6-T11 named as still pointer-only
+// ================================================================================================
+//
+// P6-T11 closed keyboard-only play and named its own remainder rather than waving it away. Two
+// controls were left with a pointer and nothing else, and they are opposite kinds of gap.
+//
+// **1. Zoom had no key anywhere in the app.** `CameraRig.zoom` was driven from exactly one place —
+// a `wheel` listener — so a player without a wheel was stuck at whatever distance the camera
+// happened to be. On this rig that is not merely inconvenient: pitch is a pure function of distance
+// (`input/camera.ts`), so zoom is also the only control over the ANGLE the world is read at, and a
+// keyboard player could reach neither the overhead view a battlefield is read from nor the low one
+// that shows a mesh.
+//
+// **The key is `+` / `-`, and the whole point of the choice is that it costs the letter board
+// nothing.** P6-T11 spent the last two bare letters and said so in this file: "the board is now
+// full, and the next order that needs a key needs a mode, a modifier or a positional slot". Zoom is
+// not an order, and it has an answer off the letter board entirely — which is where this file
+// already keeps the camera's own controls (`,`/`.` rotate, `Home` goes to the base) and the one
+// order that had no letter left (`Delete` cancels a queued unit).
+//
+//   • `+` / `-` is what zoom means on the machine the player is already sitting at: the browser
+//     running this page (Ctrl + `+`/`-`), every map, every image viewer, every PDF reader — and the
+//     numeric keypad, which emits exactly these two `key` values with no modifier at all.
+//   • `=` is bound alongside `+` because on a US layout `+` **is** Shift+`=`. A player pressing the
+//     key capped `+` without reaching for Shift produces `=`, and a zoom that needed a modifier
+//     would be the only control in this app that did. `_` rides with `-` for the mirror-image
+//     reason, so a player who does hold Shift gets both halves rather than half a control.
+//   • **Not the brackets.** `[` / `]` is a real convention and it is a different one: brush size in
+//     an image editor, previous/next in a media player, and nothing whatever in an RTS. Neither
+//     bracket says which way is closer, so it is a camera control a player has to try in order to
+//     learn — and they will try it in the wrong direction first. Both stay unbound, and
+//     `test/input/phase7-input.test.ts` sweeps them to keep it that way.
+//
+// It is a `camera` action beside `rotateLeft`/`rotateRight`, which is the precedent exactly: the
+// camera is not sim state, so the shell performs it and nothing about it reaches the intent queue.
+//
+// **2. The approach screen's landing mark spends NO key, and that is the finding rather than an
+// economy.** The mark was placed by `ApproachView.pointAt`, which takes screen PIXELS — so a
+// pointer was the only thing that could produce one, and a keyboard player could open the picker,
+// read it, and confirm a jump that always landed on the engine's default site. P4-T05 built that
+// whole screen so the landing could be SEEN before a fleet was committed; without a keyboard path
+// the decision it exists for was mouse-only. Two keys were already the right ones, and neither had
+// been pointed at that screen:
+//
+//   • **The arrow keys and WASD were dead there.** `applyContinuousPan` ran on the battlefield
+//     alone, so on the picker all eight pan keys did nothing while `index.html` advertised them —
+//     the exact shape of the P5-T10 defect (`S` in "WASD pan", bound nowhere at all). They now fly
+//     the approach screen's own rig, which is a full `CameraRig` precisely so that it can be flown.
+//   • **`K` already means "here".** P6-T11's argument for it is that the camera IS the cursor,
+//     "centred on screen by construction". The approach screen has a camera, centred on screen by
+//     the same construction — so `K` there is the left click a mouse makes at the centre pixel,
+//     literally: the same `pointAt`, the same ray-march, the same rig. The mark cannot land
+//     anywhere the pointer would not have put it, because it goes through the pointer's own code.
+//
+// What this deliberately does NOT do is decide what the jump carries. `landingZone` DISCARDS a
+// landing point whenever a pad stands on the destination, so an intent shipping one there would be
+// a promise the recorded stream keeps and the game does not — and that decision already has an
+// owner: `ui/landing-panel.ts` returns `landingX`/`landingY` as null in the pad case and
+// `hud.ts`'s `approachSection` omits the fields when it does. The keyboard places a MARK, exactly
+// as the pointer does, and the panel keeps the last word over both of them.
 
 import { type Intent } from "../bridge/commands.js";
 import { type Snapshot, FLAG_BUILDING_KIND, engineId, numericId } from "../bridge/snapshot.js";
@@ -349,8 +411,13 @@ export interface KeyResult {
    * which lives in the application — so, like `group` below, this only says WHICH action, never
    * where. It also dismisses what it jumps to: an alert a player has looked at is handled, and
    * making them press a second key to clear it is how an alert board fills up and stops being read.
+   *
+   * `zoomIn`/`zoomOut` (P7-T03) join the rotate pair rather than becoming a field of their own, for
+   * the reason the rotate pair is here: one notch of a rig the shell owns, and no letter spent to
+   * ask for it. WHICH rig is the shell's question too — the approach screen has one of its own, and
+   * the wheel already turns that one (`app/game.ts`, `zoomBy`).
    */
-  readonly camera: "focusBase" | "focusAlert" | "rotateLeft" | "rotateRight" | null;
+  readonly camera: "focusBase" | "focusAlert" | "rotateLeft" | "rotateRight" | "zoomIn" | "zoomOut" | null;
   readonly cancel: boolean;
   /** Flip the power-grid overlay. A view concern, so it is not an intent (nothing in the sim moves). */
   readonly togglePower?: boolean;
@@ -497,6 +564,13 @@ export const POSITIONAL_KEYS: readonly string[] = ["z", "c", "v", "b", "n"];
  * it or say where — so Q cycles the selection and K acts on the camera centre. `J` is still
  * deliberately unbound. The board is now full, and the next order that needs a key needs a mode, a
  * modifier or a positional slot; there is no bare letter left to argue over.
+ *
+ * **P7-T03 is the first row to take that at its word.** It had two pointer-only controls to close
+ * and it spent **no letter at all**: zoom went onto `+`/`-` (with `=` and `_`, the same two keys
+ * unshifted and shifted), which is off the letter board entirely and is where the camera's own
+ * controls already live; and the approach screen's landing mark reused `K` and the pan keys, which
+ * were bound already and simply had never been pointed at that screen. The header has both
+ * arguments. The letters are exactly where P6-T11 left them.
  */
 export function translateKey(gesture: KeyGesture, mode: PendingMode = { kind: "none" }): KeyResult {
   // Control groups: the digit row, as every RTS since the nineties. Ctrl assigns, Shift appends, a
@@ -632,6 +706,16 @@ export function translateKey(gesture: KeyGesture, mode: PendingMode = { kind: "n
     case "home": return { ...NO_KEY, camera: "focusBase" };
     case ",": return { ...NO_KEY, camera: "rotateLeft" };
     case ".": return { ...NO_KEY, camera: "rotateRight" };
+    // --- P7-T03: zoom, the one camera control that had no key at all ------------------------------
+    //
+    // The wheel was the only zoom in the whole app. `+`/`-` is what zoom already means in the
+    // browser this page runs in and on the numeric keypad, which emits these exact `key` values
+    // unmodified — and, on a board P6-T11 left with no bare letter at all, it costs the letters
+    // nothing. `=` and `_` are the SAME two physical keys pressed without and with Shift; binding
+    // only the shifted halves would make zoom the one control here that needs a modifier. The
+    // bracket keys are deliberately left unbound — the header says why.
+    case "+": case "=": return { ...NO_KEY, camera: "zoomIn" };
+    case "-": case "_": return { ...NO_KEY, camera: "zoomOut" };
     default: return NO_KEY;
   }
 }

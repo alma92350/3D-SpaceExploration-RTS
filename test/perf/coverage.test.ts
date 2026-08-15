@@ -214,10 +214,12 @@ describe("the gate's camera path sweeps every yaw snap (P6-T07)", () => {
   // from the other six — and the rig snaps yaw to eight compass directions (ADR-0010), so those six
   // are a third of the game's rotations, not an edge case.
   //
-  // It hid a real bug for five phases. The imposter quad is not billboarded by either renderer, so
-  // whether the LOD fallback is drawn at all is a function of the active snap; at snaps 2 and 6 it
-  // projects to zero width, and at a fixed yaw it was back-facing at five of the eight. Nothing in
-  // the gate could see any of that from two viewpoints.
+  // It hid a real bug for five phases. Neither renderer billboards the imposter quad — the composer
+  // has to, and until P6-T07 it did not — so whether the LOD fallback was drawn at all was a function
+  // of the active snap; at snaps 2 and 6 it projected to zero width, and at a fixed yaw it was
+  // back-facing at five of the eight. Nothing in the gate could see any of that from two viewpoints.
+  // The composer turns it in yaw now and it is built already leaning in pitch (ADR-0024), and this
+  // path is what keeps both honest at every rotation rather than at two of them.
   const WARMUP = 60;
   const MEASURED = 600;
 

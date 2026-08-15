@@ -69,9 +69,12 @@ describe("mesh budgets", () => {
   });
 
   it("stands every mesh on the ground with a usable bounding radius", () => {
+    // The imposter used to be exempted here — "a billboard the renderer orients; it has no ground
+    // contact point" — and both halves were wrong: no renderer orients it (P6-T07), and it stands on
+    // the ground like everything else, because it replaces something that does. Since ADR-0024 it
+    // leans back from a base edge at y = 0, so it passes this sweep on the same terms as the rest of
+    // the roster and no longer needs an exemption.
     for (const mesh of buildMeshes()) {
-      // The imposter is a billboard the renderer orients; it has no ground contact point.
-      if (mesh.id === "imposter") continue;
       let minY = Infinity;
       for (let i = 1; i < mesh.positions.length; i += 3) minY = Math.min(minY, mesh.positions[i]!);
       expect(minY, `${mesh.id} floats or sinks: its lowest vertex is at y=${minY}`).toBeCloseTo(0, 5);

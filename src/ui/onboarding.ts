@@ -109,8 +109,14 @@ export function onboardingModel(input: OnboardingInput): OnboardingModel {
       id: "look",
       // The arrow keys, NOT "WASD": `S` pans nowhere (see the header). Four keys that all work beat
       // a mnemonic where one of them is silently dead.
-      text: "Look around: the arrow keys pan, the mouse wheel zooms.",
-      keys: ["arrowup", "arrowdown", "arrowleft", "arrowright"],
+      //
+      // **This line used to read "the mouse wheel zooms", and it was the truth** — the wheel was
+      // the only zoom control in the app until P7-T03, so the first thing this card taught a
+      // keyboard player was a control they did not have. `+`/`-` is named now for the same reason
+      // the arrow keys are: it is DATA, put through `translateKey` by this file's own test, and it
+      // could not have been named a phase earlier without failing that check.
+      text: "Look around: the arrow keys pan, and + and - zoom (so does the mouse wheel).",
+      keys: ["arrowup", "arrowdown", "arrowleft", "arrowright", "+", "-"],
       buttons: [],
       done: null,
     },
