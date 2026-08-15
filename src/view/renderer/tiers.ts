@@ -52,13 +52,18 @@ export interface TierConfig {
    * distance at which both bbox dimensions agree within one rasterised pixel gives 7 151 (civic) to
    * 43 858 (command) world units. T0's CULL distance is 1 100.
    *
-   * **The cause is the quad's size, not the threshold, so no threshold fixes it.** `scene.ts` sizes
-   * the imposter `entityRadius × 2.2` and uses that for the quad's HEIGHT as well as its width,
-   * while the roster is mostly wider than it is tall — a Skiff is 12.4 wide and 2.4 high, so a flat
-   * ship is replaced by a 15-unit vertical wall. Moving `lodDistance` trades where that pop happens
-   * for how much geometry is drawn; it cannot make the pop small. Deliberately NOT changed here:
-   * the fix is the quad's proportions, that is a visual decision with an owner, and re-tuning a
-   * distance to hide it would be the "edit the number" move ADR-0006 and ADR-0014 both name.
+   * **The cause was the quad's size, not the threshold, so no threshold could have fixed it — and
+   * P7-T02 fixed the quad (ADR-0024).** The imposter is now sized by the mean footprint width of the
+   * MESH it replaces rather than by the engine's collision radius, and it is built already leaning
+   * back at this rig's own mid-pitch, so a Y-rotation-only renderer draws a billboard. Re-measured by
+   * `perf/imposter-probe.mjs` over every zoom, yaw snap and facing: screen width 0.88–2.99× →
+   * **0.95–1.13×**, height 0.34–5.60× → **0.48–2.20×**, area 0.30–14.68× → **0.49–2.23×**, for zero
+   * draw calls and zero triangles.
+   *
+   * `lodDistance` was still not moved, and that is still the right call: **it was never the wrong
+   * number.** The paragraph this replaces said the fix was "a visual decision with an owner" and
+   * left it — which was right at the time and would have been wrong to leave standing, because a
+   * comment that describes a closed defect as open is how the next reader spends a day on it.
    *
    * **4. It is doing a second job nobody measured.** `pushEntityOverlays` reuses this same distance
    * to decide whether a health bar, a chevron or a status badge is drawn at all — see the corrected
