@@ -213,8 +213,72 @@ engine never said:
 
 ## Phase 3 — Combat and the opponent
 
-Not yet decomposed. Headings: full unit roster, combat feedback, wreckage and craters, turret tiers,
-AI live under its own fog, formations, escorts, control groups, alerts.
+Goal: fights that read clearly in 3D. Exit criteria: PRD §5, Phase 3 — *a 20-minute AI-vs-player
+match runs at budget; every combat cue is legible in a blind readability test; no combat feedback
+allocates per frame.*
+
+> Phase 2's gate is closed on its automated criteria (ADR-0011). Its one open criterion — legibility
+> — needs five playtesters, so Phase 3 proceeds rather than waiting. Note that Phase 3 *adds* to the
+> same deferred question, and the two scripts should be run in one sitting.
+
+**What the engine actually says, which is why this decomposition looks like it does.** Read off the
+vendored source, not the PRD's prose — the same exercise that found the PRD wrong about the recipe
+chain in Phase 2. Four findings shape everything below.
+
+- **The engine emits no "a shot was fired" event.** Thirteen event types exist across the whole
+  simulation and the only combat one is `entityKilled`. There is no tracer, no impact, no
+  damage-dealt. Combat feedback therefore cannot be event-driven: the only per-tick evidence a shot
+  happened is `unit.attackTimer` resetting to `def.cooldown` and `unit.autoTarget` naming the
+  victim, both of which the bridge must *diff between ticks* to turn into an event. That is Q-12,
+  and it is the phase's central architecture question.
+- **The bridge currently throws every event away.** `WorldBridge.step` runs
+  `this.state.events.length = 0` with a comment saying nothing consumes them in the MVP. Alerts
+  (P3-T14) and death feedback (P3-T06) both start by *keeping* them, which is a snapshot-width
+  decision of the same kind ADR-0012 §1 made for the economy.
+- **"Turret tiers" is not a tier mechanic.** `building.tier` is unrelated. The static-defence ladder
+  is four separate building types — `turret` (20 dmg / 130 range), `bastille` (32/115, needs a
+  Foundry), `torpedobattery` (55/180, ammo-fed from `plasmatorp`, needs Torpedo Works) — plus
+  `aegisbastion`, which **has no attack at all**: it is a `guardAura` granting −20% damage taken
+  within 130. Three of those four share the `fortress` mesh (ADR-0013), so today a player cannot
+  tell the thing that shoots hardest from the thing that does not shoot.
+- **The roster gap is exactly the nine the PRD names.** `ranger`, `breacher`, `dreadnought`,
+  `mender`, `wraith`, `aegis`, `colossus`, `leviathan`, `heliumbomb` have no mesh and fall back to
+  `worker`. The PRD is *right* here, unlike Phase 2 — but its scope line also lists **veterancy
+  chevrons, which Phase 1 already built** (P1-T15, `rankOf` + the chevron overlay). The PRD should
+  be amended.
+
+**Two scope notes that are decisions, not observations.**
+
+- Eight engine commands exist that the bridge has never exposed: `issueEscort`,
+  `issueHoldFormation`, `issueAssistBuild`, `issueScout`, `issueFerryFreighter`, `issueSetHomeBase`,
+  `issueSetAILogistics`, `issueSetCollectPoint`. Formations and escorts are therefore *wiring*, not
+  invention — `issueMove` already takes a `formation` argument.
+- **Control groups exist nowhere** — not in the engine, not in the client. They must stay client
+  state: `state.selection` is sim state, so putting a control group there would change the
+  determinism hash and break every recorded replay.
+
+| ID | Task | Status | Deps | Definition of done | Notes |
+|---|---|---|---|---|---|
+| P3-T01 | ADR: the draw-call budget for nine new unit meshes | TODO | — | An ADR with a **measurement**, deciding families vs. full silhouettes vs. a raised ceiling; the Phase 2 scene re-measured after | **Do this first — everything visual in the phase depends on it.** Nine meshes cost two batches apiece (one per owner; the imposter LOD is shared), so **18 more** against a 300-building scene measuring 27–28. ADR-0013's precedent is families with the cost admitted; ADR-0006 calls raising the ceiling to fit the failure it was written about. Do not edit a number |
+| P3-T02 | Meshes for the nine unmeshed units | TODO | P3-T01 | Every `UNITS` key resolves to a mesh that was actually built; no type silently falls back; the silhouette test covers the new ones | The fallback is what hides this today: `meshIdForType` returns `worker` for anything unknown, so a Dreadnought renders as a Worker and nothing goes red. The test must assert **no fallback**, not merely that meshes exist |
+| P3-T03 | Static-defence ladder reads as a ladder | TODO | P3-T01 | `turret`, `bastille`, `torpedobattery` and `aegisbastion` are distinguishable; the Aegis Bastion does not read as a weapon | Three share the `fortress` mesh today. The Aegis Bastion is the sharp one: **no attack, an aura**, and it currently looks like the two things that shoot |
+| P3-T04 | The Aegis Bastion's guard aura is visible | TODO | P3-T03 | The `guardAura` radius (130) renders; a player can see their own damage-reduction coverage | Invisible today. It is a radius field like the power grid (P2-T06), which is already solved once — reuse before inventing |
+| P3-T05 | **Q-12**: how a shot crosses the bridge | TODO | — | Decided in an ADR: per-tick diff of `attackTimer`/`autoTarget`, an engine event that does not exist, or something else | The sim ticks at 20 Hz and the view renders at 60. A tracer needs the *moment* of firing, and the engine records only that a cooldown was reset. Whatever is chosen must not allocate per frame (PRD §5 exit criterion) |
+| P3-T06 | Combat feedback: tracers, impacts, death | TODO | P3-T05 | Who is shooting whom is readable in a still frame; **zero allocation across 600 frames of a firefight**, asserted | The exit criterion names allocation explicitly, which means a pooled effect buffer, not per-shot objects. `entityKilled` already carries x/y/owner/unitType/kind — death is the one cue the engine hands over ready-made |
+| P3-T07 | The bridge stops discarding engine events | TODO | — | Events survive the tick and reach the view; the drain still happens exactly once, so nothing grows without bound | `WorldBridge.step` clears `state.events` today. Thirteen types, and the ones that matter here are `entityKilled`, `unitSpawned`, `productionBlocked`, `neighbourHostile`, `wreckMatured`, `craterMatured`, `bombFused` |
+| P3-T08 | Wreckage renders as salvage, not as an ore seam | TODO | P3-T07 | A matured wreck is distinguishable from a natural deposit at camera distance | **`state.wrecks` matures into `state.map.nodes` carrying `n.wreck`**, and `pushNodes` draws every node with `meshIdForCommodity` — so a battlefield salvage pile looks exactly like a natural seam. The flag already exists and is discarded at the bridge, the same shape as `comIndex` in P2-T17 |
+| P3-T09 | Craters render, and read as bomb damage | TODO | P3-T07 | A `craterMatured` node is distinguishable from both a natural deposit and a wreck | Same discard, different flag (`n.crater`). `CRATER_NODE_AMOUNT` is 400 and the commodity is a raw roll — a crater is a *reward* for a detonation, which is worth reading as such |
+| P3-T10 | Helium Bomb: fuse, blast radius, and the warning | TODO | P3-T02, P3-T07 | `BOMB_FUSE_DELAY` (4 s) is visible on a lit fuse; `BOMB_BLAST_RADIUS` is shown before it goes off | The one unit whose *radius* is the whole decision. `bombFused` is an event the engine already emits and the bridge already throws away. `bombDamageAt(dist)` is the engine's falloff — show it, never re-derive it |
+| P3-T11 | Formations: shapes, leader position, hold | TODO | — | `FORMATION_SHAPES` (grid, line, wedge, circle) and `LEADER_POSITIONS` (front, back, center) round-trip through the UI; slots match `formationSlots` | Wiring, not invention: `issueMove` already takes a `formation` argument and `issueHoldFormation` exists. `hold-formation` and `follow-leader` are real order types in `updateCombat` |
+| P3-T12 | Escorts | TODO | P3-T11 | `issueEscort` reachable; an escorting unit's station matches `keepEscortStation`; the guarded ship is identifiable | A persistent follow that is never cleared on arrival — so a player who cannot see *what* a unit is escorting has no way to tell it from a stuck move order |
+| P3-T13 | Control groups | TODO | — | Assign, recall and append; a group survives a unit dying; **the group is never written to `state.selection`'s owner, i.e. never sim state** | Exists nowhere today, engine or client. The constraint is the whole task: `state.selection` IS sim state, so a control group stored there changes the determinism hash and invalidates every recorded fixture |
+| P3-T14 | The alert system | TODO | P3-T07 | Each engine event that a player must act on produces exactly one alert, positioned, and dismissible; no alert fires for an event the player cannot see | Fog is the subtle half: `entityKilled` fires for the AI's losses too, and an alert for a kill in unexplored territory tells the player something they have not earned |
+| P3-T15 | The AI opponent, live under its own fog | TODO | — | The AI's decisions are asserted to use `state.fogAI` and never `state.fog`; a scripted match shows it reacting to what it has actually seen | The engine already does this — `aiIntel` has `INTEL_FADE` (240 s) and `INTEL_FULL` (900 s) memory decay and `sightEnemy` reads the AI's own fog. The Phase 3 job is to **prove it**, because "the AI cheats" is unfalsifiable without a test and is the first thing a playtester will assume |
+| P3-T16 | Perf: the Phase 3 combat scene and its gate | TODO | P3-T02, P3-T06 | A 20-minute AI-vs-player match holds the T0 budget; combat feedback allocates nothing per frame | PRD §5's own criterion. Note P2-T18's finding: at scale the **sim** consumes the budget, not the view, and a 20-minute match is the longest sim run yet gated |
+| P3-T17 | Determinism fixture extended with combat orders | TODO | P3-T11, P3-T12, P3-T13 | The recorded replay includes escort, formation and attack orders and hashes identically; each provably moves the hash | P2-T19's lesson applies directly: **check that each order moves the hash** by dropping it and replaying. Two of six economy orders were not actually covered until that was done, and a recycle/cancel pair cancelled out entirely |
+| P3-T18 | Phase 3 playtest script | TODO | P3-T06 … P3-T14 | Script exists; written and left UNRUN under ADR-0011 | The blind readability test PRD §5 names. It should be run **in the same sitting** as `docs/playtests/economy.md`, since both measure the same accumulated silhouette debt |
+
+
 
 ## Phase 4 — The galaxy
 
@@ -248,6 +312,8 @@ here and in the ADR it produces.
 | Q-09 | 29 building types × 2 owners breaks "one draw call per (mesh, owner)". Merge rare types, or raise the budget? | Phase 2 (P2-T18) | OPEN — ~58 building draws against 15 measured for the whole MVP scene. The answer decides whether PRD §5's "300 buildings" exit criterion is reachable at T0 |
 | Q-10 | One pure model per panel, or one growing `hudModel`? | Phase 2 (P2-T09) | OPEN — six or more panels are coming. Recommendation: one model per panel, composed, so a panel's logic test does not have to build the whole HUD |
 | Q-11 | Phase 2's remaining meshes do not fit the frame's draw-call ceiling. Merge them into families, LOD them harder, or raise the ceiling with evidence? | Phase 2 (P2-T05, P2-T17) | **ANSWERED — ADR-0014: families, and the ceiling is DERIVED from the roster rather than chosen.** A hand-picked number has one failure mode and it is the one that keeps happening: add a mesh, go red, edit the number. The test now computes the ceiling from the batching rule over the roster that exists, so adding a mesh changes the derivation in the same commit as the mesh. The buildings cap stays hand-written at 28 — that is the number a new building type should have to argue against. Original finding follows.** Arithmetic: the frame measures 34 batches against a 36 ceiling today. P2-T05's four logistics units add 4 meshes × 2 owners = 8; P2-T17's five extra node types add 5. That is **47 against 36**. Buildings were solved this way once already (ADR-0013, six families) and the same move is available — freighters share a hull, nodes share a rock and differ by the crystal on top — but it is a *decision*, and the third time this budget has been the binding constraint. Recommendation: families again for the nodes (one rock mesh, one crystal mesh, one volatile mesh), and one shared freighter hull with cargo on the existing per-instance channel, which is what P2-T05 asks for anyway. Do NOT raise the ceiling to fit: ADR-0006 calls that the failure it was written about |
+| Q-12 | The engine emits no "a shot was fired" event. How does a shot cross the bridge? | Phase 3 (P3-T05, P3-T06) | OPEN — measured: thirteen event types exist in the whole simulation and the only combat one is `entityKilled`. There is no tracer, impact or damage-dealt event, so combat feedback cannot be event-driven from the engine. The only per-tick evidence is `unit.attackTimer` resetting to `def.cooldown` and `unit.autoTarget` naming the victim. Options: (a) the bridge diffs those between ticks and synthesises a shot event, (b) the snapshot carries `autoTarget` + a fired flag and the view infers, (c) something else. The sim ticks at 20 Hz and the view renders at 60, so a tracer needs a MOMENT the engine only records as a cooldown reset — and PRD §5 requires no per-frame allocation, which rules out an object per shot. Recommendation: (a), pooled, decided in an ADR before P3-T06 |
+| Q-13 | Do wreck and crater flags widen the node table, or ride the existing `comIndex`? | Phase 3 (P3-T08, P3-T09) | OPEN — `n.wreck` and `n.crater` already exist on matured nodes and are discarded at the bridge, exactly as `comIndex` was before P2-T17. Two booleans per node is cheap; the question is whether they become a mesh choice (a third and fourth deposit family, against ADR-0014's derived ceiling) or an overlay. Recommendation: decide it inside P3-T01's budget ADR rather than separately, since it is the same draw-call argument |
 | Q-03 | Starmap: true 3D scene or 2.5D diagram? | Phase 4 | OPEN |
 | Q-04 | Ship Observer Mode, or is a free camera enough? | Phase 5 | OPEN |
 | Q-05 | Ever bridge the 3D view back into the 2D repo? | any | OPEN — recommendation: no |

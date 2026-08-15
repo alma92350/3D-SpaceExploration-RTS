@@ -248,6 +248,22 @@ Leviathan, freighters, Helium Bomb), veterancy chevrons, combat feedback (tracer
 wreckage, craters), turret tiers, the AI opponent live under its own fog, formations, escorts,
 control groups, and the alert system.
 
+*Amended at the Phase 2 gate,* from the vendored engine rather than from this list:
+
+- **Veterancy chevrons were delivered in Phase 1** (P1-T15: `rankOf` plus the chevron overlay, drawn
+  by both renderers). They are not Phase 3 work.
+- **The unit roster gap is exactly the nine named here**, confirmed against `meshIdForType` — those
+  nine have no mesh and silently fall back to the Worker's, so a Dreadnought renders as a Worker
+  today. This line is accurate; the fallback is what hid it.
+- **"Turret tiers" is not a tier mechanic.** `building.tier` is unrelated. The static-defence ladder
+  is four separate building types: `turret` (20 damage / 130 range), `bastille` (32/115, gated on a
+  Foundry) and `torpedobattery` (55/180, ammo-fed from `plasmatorp`, gated on Torpedo Works) — plus
+  the **Aegis Bastion, which has no attack at all** and is a `guardAura` granting −20% damage taken
+  within 130. Three of the four currently share one mesh (ADR-0013).
+- **There is no "shot fired" event.** The engine emits thirteen event types and the only combat one
+  is `entityKilled`. "Tracers, impacts" therefore has no engine signal behind it and needs a bridge
+  decision (Q-12) before it can be built.
+
 **Exit criteria:** a 20-minute AI-vs-player match runs at budget; every combat cue is legible in a
 blind readability test; no combat feedback allocates per frame.
 
