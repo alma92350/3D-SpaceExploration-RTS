@@ -38,3 +38,6 @@ declare global {
     workerTarget?: number;
   }
 }
+
+/** Acts on every world's standing orders. Called from the galaxy step, not per world. */
+export declare function runColonyPolicies(galaxy: Galaxy): void;

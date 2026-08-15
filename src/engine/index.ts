@@ -143,6 +143,28 @@ export {
   createLane, assignShipToLane, unassignShipFromLane, runLanes, sweepColonies,
 } from "@engine/engine/galaxy.js";
 
+// The rest of the galaxy surface Phase 4 presents (P4-T03 … P4-T08).
+//
+// Every one is a *query the engine already answers* or a *command the engine validates*. The
+// pattern is the one Phase 3 established with formations: the client asks, it never decides.
+// Two are worth naming because a plausible re-derivation is wrong:
+//
+//   • `jumpCost` is NOT `JUMP_COST` — `FUEL_DISCOUNT_BY_TIER` makes the price depend on the
+//     Spaceport's tier, so a panel that showed the constant would be wrong for every upgraded port.
+//   • `canJumpTo` is not "do I have a Spaceport". A stranded force can always FALL BACK to a world
+//     where it still has a foothold, which is the rule that stops a portless world being a trap.
+export {
+  JUMP_LOAD_RADIUS, COLONY_INCOME_PER_BUILDING, COLONY_INCOME_CAP,
+  PACIFIED_INCOME, SPACEPORT_MAX_TIER, SPACEPORT_CAPACITY, SPACEPORT_UPGRADE_COST,
+  FUEL_DISCOUNT_BY_TIER, CARGO_GOODS, LANDING_PICK_GRID,
+  canJump, canJumpTo, jumpVessel, stagedRiders, jumpManifest, jumpManifestAll,
+  spaceportTier, jumpCapacity, upgradeSpaceport, playerSpaceports,
+  freightCapacity, cargoManifest, loadFreighter, unloadFreighter, deleteLane,
+  snapLandingPoint, previewPlanet, galaxyStatus, backgroundWorldIds,
+} from "@engine/engine/galaxy.js";
+
+export { runColonyPolicies } from "@engine/engine/colonyPolicy.js";
+
 export {
   MAX_WORKER_TARGET, sanitizePolicy, getColonyPolicy, setColonyPolicy,
 } from "@engine/engine/colonyPolicy.js";

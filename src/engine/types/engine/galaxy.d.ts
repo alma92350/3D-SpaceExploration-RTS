@@ -1,5 +1,4 @@
 export declare const ODYSSEY_WORLDS: string[];
-export declare const BACKGROUND_WORLDS: number;
 export declare function createGalaxy(opts?: GalaxyOpts): Galaxy;
 export declare function stepGalaxy(galaxy: Galaxy, dt: number): void;
 export declare function activeState(galaxy: Galaxy): State;
@@ -95,3 +94,56 @@ declare global {
     lastReliefTime?: number;
   }
 }
+
+// --- Phase 4 presentation surface (P4-T03 … P4-T08) -------------------------------------------
+
+/** How many neighbour worlds `createGalaxy` brings up alongside the seat. */
+export declare const BACKGROUND_WORLDS: number;
+export declare const JUMP_LOAD_RADIUS: number;
+export declare const COLONY_INCOME_PER_BUILDING: number;
+/** Credits/sec ceiling per colony. The number that makes a fifth colony worth less than a fourth. */
+export declare const COLONY_INCOME_CAP: number;
+export declare const PACIFIED_INCOME: number;
+export declare const SPACEPORT_MAX_TIER: number;
+/** Supply carried per jump, indexed by tier. Index 0 is unused. */
+export declare const SPACEPORT_CAPACITY: readonly number[];
+export declare const SPACEPORT_UPGRADE_COST: Readonly<Record<number, Record<string, number>>>;
+/** Fuel multiplier by tier. Why `jumpCost` must be asked and `JUMP_COST` never shown. */
+export declare const FUEL_DISCOUNT_BY_TIER: readonly number[];
+export declare const CARGO_GOODS: readonly string[];
+/** The landing picker's own snap grid. A raw click disagrees with where the colony lands. */
+export declare const LANDING_PICK_GRID: number;
+
+export declare function canJump(state: State): boolean;
+/**
+ * Not "do I have a Spaceport". A stranded force can always fall back to a world where it still
+ * holds a Command Center or an undeployed colony ship — the rule that stops a portless world
+ * being a trap.
+ */
+export declare function canJumpTo(galaxy: Galaxy, destId: string): boolean;
+export declare function jumpVessel(state: State): Unit | null;
+/** Who is actually standing in the ring. Lane-booked ships are skipped. */
+export declare function stagedRiders(state: State, spaceport: Building): Unit[];
+export declare function jumpManifest(state: State, spaceport: Building): {
+  riders: Unit[]; supply: number; capacity: number; left: Unit[];
+};
+export declare function jumpManifestAll(state: State): {
+  riders: Unit[]; supply: number; capacity: number; left: Unit[];
+};
+export declare function spaceportTier(b: Building): number;
+export declare function jumpCapacity(b: Building): number;
+export declare function upgradeSpaceport(state: State, building: Building): boolean;
+export declare function playerSpaceports(state: State): Building[];
+export declare function freightCapacity(riders: Unit[]): number;
+export declare function cargoManifest(
+  from: State, capacity?: number, goods?: readonly string[],
+): Record<string, number>;
+export declare function loadFreighter(state: State, unitId: string, com: string, qty: number): boolean;
+export declare function unloadFreighter(state: State, unitId: string, com: string, qty: number): boolean;
+export declare function deleteLane(galaxy: Galaxy, laneId: string): boolean;
+/** The engine's own landing snap. A picker that used the raw click would disagree with it. */
+export declare function snapLandingPoint(map: GameMap, x: number, y: number): { x: number; y: number };
+export declare function previewPlanet(galaxy: Galaxy, planetId: string): unknown;
+/** The engine's own per-world summary. Report it; never re-derive it. */
+export declare function galaxyStatus(galaxy: Galaxy): unknown;
+export declare function backgroundWorldIds(seed: number, startId: string, count?: number): string[];
