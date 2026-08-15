@@ -5,6 +5,56 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Stellar Frontier: Odyssey 3D</title>
     <link rel="stylesheet" href="/src/style.css" />
+    <script>
+      // A boot watchdog, and it exists because of a real incident rather than a hypothetical.
+      //
+      // This file is Vite SOURCE: its script tag points at `/src/main.ts`, which no browser can
+      // execute. `npm run build` rewrites it to a bundled `./assets/*.js`, so only `dist/` is a
+      // website. When GitHub Pages is set to "Deploy from a branch" it serves this file instead of
+      // the built one — the module 404s, `boot()` never runs, and the page sits on "Loading the
+      // Odyssey…" forever with the reason visible only in a console nobody thinks to open. The
+      // deploy workflow documented that trap in a header comment; a header comment is not where
+      // anyone looks while staring at a page that will not load.
+      //
+      // So the page diagnoses itself. Two triggers, because there are two distinct failures and a
+      // player cannot be expected to tell them apart:
+      //   • a script or stylesheet that never loaded  → almost certainly the Pages source setting
+      //   • everything loaded and `boot()` threw      → a real bug, and the message says so
+      (function () {
+        var failed = null;
+        addEventListener("error", function (e) {
+          var t = e.target;
+          if (t && (t.tagName === "SCRIPT" || t.tagName === "LINK")) failed = t.src || t.href;
+        }, true);
+        function show(title, detail) {
+          var boot = document.getElementById("boot");
+          if (!boot) return;                       // booted fine; nothing to say
+          boot.textContent = "";
+          var h = document.createElement("strong");
+          h.textContent = title;
+          var p = document.createElement("p");
+          p.textContent = detail;
+          p.style.cssText = "max-width:46ch;text-align:center;line-height:1.5;letter-spacing:normal";
+          boot.appendChild(h);
+          boot.appendChild(p);
+        }
+        addEventListener("DOMContentLoaded", function () {
+          setTimeout(function () {
+            if (!document.getElementById("boot")) return;
+            if (failed) {
+              show("This page is serving source, not a build.",
+                "The browser could not load " + failed + ". Only dist/ is a website — it is what "
+                + "npm run build produces. If this is GitHub Pages, set Settings → Pages → Build "
+                + "and deployment → Source to \"GitHub Actions\" and re-run the Pages workflow.");
+            } else {
+              show("The game failed to start.",
+                "Everything loaded, so this is a bug rather than a deployment problem. The console "
+                + "has the error and the stack trace.");
+            }
+          }, 6000);                                // long enough for a cold load on a slow line
+        });
+      })();
+    </script>
   </head>
   <body>
     <div id="viewport">
