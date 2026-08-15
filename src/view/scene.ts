@@ -227,6 +227,7 @@ export class SceneComposer {
 
     this.pushNodes(snap, camera, cullSq);
     this.pushAuras(snap, camera, cullSq);
+    this.pushBombs(snap, camera, cullSq);
     this.pushEffects(camera, cullSq);
     if (ghost?.active) this.pushGhost(ghost);
 
@@ -354,6 +355,37 @@ export class SceneComposer {
       const reach = Math.sqrt(cullSq) + r;
       if (dx * dx + dz * dz > reach * reach) continue;
       buf.push(x, elevation(this.field, x, y) + 0.3, y, r, auras.owner[i]!);
+    }
+  }
+
+  /**
+   * The Helium Bomb's reach and its fuse (P3-T10).
+   *
+   * Same widened cull as the aura, and for a sharper version of the same reason: a bomb just off the
+   * left edge of the screen reaches ground the player is looking at, and blinking its ring away at
+   * the frame edge would hide the one thing on the map that can erase an army in four seconds.
+   *
+   * `fuse01` runs 0 → 1 as the fuse burns. It is computed from the **sim's** remaining seconds and
+   * the sim's own delay — `view/` may not import the engine, so the delay rides on the table — never
+   * from a wall clock. A paused game therefore holds the arc still instead of detonating it on
+   * screen while the sim has not moved.
+   */
+  private pushBombs(snap: Snapshot, camera: CameraState, cullSq: number): void {
+    const bombs = snap.bombs;
+    const buf = this.overlays.get("bomb")!;
+    for (let i = 0; i < bombs.count; i++) {
+      const x = bombs.x[i]!;
+      const y = bombs.y[i]!;
+      const blast = bombs.blast[i]!;
+      const dx = x - camera.eyeX;
+      const dz = y - camera.eyeZ;
+      const reach = Math.sqrt(cullSq) + blast;
+      if (dx * dx + dz * dz > reach * reach) continue;
+      const fuse = bombs.fuse[i]!;
+      const lit = fuse >= 0 ? 1 : 0;
+      const delay = bombs.fuseDelay > 0 ? bombs.fuseDelay : 1;
+      const fuse01 = lit ? 1 - Math.max(0, Math.min(1, fuse / delay)) : 0;
+      buf.push(x, elevation(this.field, x, y) + 0.35, y, bombs.core[i]!, blast, lit, fuse01, bombs.owner[i]!);
     }
   }
 

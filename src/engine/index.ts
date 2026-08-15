@@ -45,6 +45,13 @@ export {
   FORMATION_SHAPES, LEADER_POSITIONS, formationSlots, pickLeader,
 } from "@engine/engine/formation.js";
 
+// The Helium Bomb (P3-T10). Both radii cross, because the engine's own `bombDetonated` event
+// carries both — and `bombDamageAt` crosses so nothing above the bridge ever re-derives the falloff.
+export {
+  BOMB_BLAST_RADIUS, BOMB_CORE_RADIUS, BOMB_DETECT_RANGE, BOMB_MAX_DAMAGE, BOMB_FUSE_DELAY,
+  bombDamageAt, lightFuse,
+} from "@engine/engine/bomb.js";
+
 export { BUILD_REACH, queueProduction, cancelProduction, researchUpgrade } from "@engine/engine/production.js";
 
 // Refinery doctrines (P2-T12). `committedDoctrine` is the irreversible half: once an owner has

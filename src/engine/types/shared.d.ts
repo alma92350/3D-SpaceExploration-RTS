@@ -111,6 +111,20 @@ declare global {
      * it names WHO is being shot at, never THAT a shot occurred — the timer above says that.
      */
     autoTarget?: string | null;
+    // --- role "bomb" only (engine/bomb.js, P3-T10). Absent on every other unit in the game. ---
+    /**
+     * Armed. An unarmed Helium Bomb is inert in all three of its trigger paths — it can be shot,
+     * stood next to, or driven into a base with no effect — so this is the commitment, not the
+     * unit type. There is no engine command that sets it: `aiSuperweapon.js` flips the field
+     * directly, and upstream's own HUD does the same.
+     */
+    armed?: boolean;
+    /**
+     * Sim time (`state.time`, not wall clock) at which the blast is due, or absent/null while the
+     * fuse is unlit. **This is state, not an event** — `bombFused` fires once, four seconds before
+     * this comes due, and the warning has to outlive it (P3-T10).
+     */
+    fuseUntil?: number | null;
   }
 
   interface Building {

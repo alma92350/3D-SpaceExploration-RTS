@@ -13,7 +13,7 @@ import {
   deployColonyShip, getEntity, isElectrifiable, issueAttack, issueAttackMove,
   issueBuild, issueCancelRecycle, issueGather, issueHold, issueMove, issuePatrol, issueRecycle,
   UPGRADES, committedDoctrine, researchUpgrade,
-  FORMATION_SHAPES, LEADER_POSITIONS, issueEscort, issueHoldFormation,
+  FORMATION_SHAPES, LEADER_POSITIONS, issueEscort, issueHoldFormation, lightFuse,
   issueSetLogiPriority, issueSetRally, issueStop, prereqsMet, queueProduction, researchTech,
   sampleTerrain, sell, tradeables,
 } from "../engine/index.js";
@@ -45,7 +45,10 @@ export type Intent =
   // --- Phase 3, combat (P3-T11, P3-T12) ---
   | { kind: "escort"; targetId: string; queue: boolean }
   | { kind: "holdFormation"; shape: string; leaderPos: string }
-  | { kind: "moveInFormation"; x: number; y: number; shape: string; leaderPos: string; queue: boolean };
+  | { kind: "moveInFormation"; x: number; y: number; shape: string; leaderPos: string; queue: boolean }
+  // --- Phase 3, the Helium Bomb (P3-T10) ---
+  | { kind: "armBomb"; unitId: string; armed: boolean }
+  | { kind: "detonate"; unitId: string };
 
 /**
  * Apply one intent. Returns a player-facing reason when the engine refused, or null on success.
@@ -112,6 +115,48 @@ export function applyIntent(state: State, intent: Intent, galaxy: Galaxy): strin
       // `issueMove` has taken a formation argument since before this project existed; the MVP just
       // never passed one (P3-T11).
       issueMove(units, intent.x, intent.y, intent.queue, { shape: intent.shape, leaderPos: intent.leaderPos });
+      return null;
+    }
+
+    // --- The Helium Bomb (P3-T10) -----------------------------------------------------------
+    //
+    // These are the only intents in this module that write a sim field instead of calling an
+    // `issue*` function, and that is worth saying out loud rather than leaving for someone to
+    // notice. There is no engine command: `bomb.armed` is a direct flip, and the engine's OWN AI
+    // does exactly this (`aiSuperweapon.js`: `bomb.armed = true; lightFuse(state, bomb)`), as does
+    // upstream's HUD. So the player side and the AI side arm a bomb through identical code, which
+    // is the property that matters — not whether a wrapper function exists.
+    //
+    // The header's rule about the module still holds where it counts: this runs inside
+    // `applyIntent`, so it happens at a tick boundary in the recorded intent order like every other
+    // command. A flip done anywhere else would desync a replay, which is exactly why the flip is
+    // HERE and not in the input layer.
+    case "armBomb": {
+      const bomb = bombOrNull(state, intent.unitId);
+      if (!bomb) return null;                          // gone, or not a bomb — not an error
+      if (intent.armed) {
+        bomb.armed = true;
+        return null;
+      }
+      // Disarming cuts a lit fuse. That is upstream's documented behaviour (engine/bomb.js's header
+      // names `disarm` as the reversible half and says it cuts the fuse), but its implementation
+      // lives in a UI file outside the vendored subset — so this line is the one rule in P3-T10 the
+      // bridge writes rather than calls. It is a two-field reset with no derived state behind it.
+      bomb.armed = false;
+      bomb.fuseUntil = null;
+      return null;
+    }
+
+    case "detonate": {
+      const bomb = bombOrNull(state, intent.unitId);
+      if (!bomb) return null;
+      // An unarmed bomb ignores all three triggers, and "Detonate Now" is one of them. Arming is
+      // the commitment; letting this path skip it would make the confirmation dialog decorative.
+      if (!bomb.armed) return "The bomb is not armed";
+      // `lightFuse`, not `detonateBomb`: the player's own trigger is a FUSE, so the four seconds
+      // exist for everyone including the player who pressed it. Detonating on the spot here would
+      // give the player's own trigger a property the enemy's proximity trigger does not have.
+      lightFuse(state, bomb);
       return null;
     }
 
@@ -319,6 +364,20 @@ function applySelect(state: State, ids: string[], additive: boolean): null {
     if (!state.selection.includes(id)) state.selection.push(id);
   }
   return null;
+}
+
+/**
+ * The player's own Helium Bomb by id, or null (P3-T10).
+ *
+ * Owner-checked here rather than at the call sites, because both callers write a sim field and the
+ * one thing neither may ever do is write it on somebody else's unit. `role === "bomb"` is the
+ * engine's own discriminator — `UNITS.heliumbomb.role`, the same field `sim.js` branches on to run
+ * the fuse at all — so a second bomb type added upstream is armable here on the day it exists.
+ */
+function bombOrNull(state: State, id: string): Unit | null {
+  const u = state.units.get(id);
+  if (!u || u.owner !== "player") return null;
+  return UNITS[u.type]?.role === "bomb" ? u : null;
 }
 
 function selectedUnits(state: State): Unit[] {

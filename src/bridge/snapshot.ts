@@ -16,8 +16,9 @@
 // leaks — through a selection box, a minimap dot, or a stray sort order.
 
 import {
-  BUILDINGS, COM, FOG_CELL_SIZE, POWER_TIERS, UNITS, buildingConcern, inputCapOf, inputTotal,
-  isNodeDiscovered, isVisibleAt, onPowerGrid, powerEfficiency, recipeOf, storeCapOf, storeTotal,
+  BOMB_BLAST_RADIUS, BOMB_CORE_RADIUS, BOMB_FUSE_DELAY, BUILDINGS, COM, FOG_CELL_SIZE, POWER_TIERS, UNITS,
+  buildingConcern, inputCapOf, inputTotal, isNodeDiscovered, isVisibleAt, onPowerGrid,
+  powerEfficiency, recipeOf, storeCapOf, storeTotal,
   type Recipe,
 } from "../engine/index.js";
 
@@ -319,6 +320,72 @@ export class AuraTable {
   }
 }
 
+/** An armed bomb whose fuse has not been lit. `fuse` carries this instead of a countdown. */
+export const FUSE_UNLIT = -1;
+
+/**
+ * Helium Bombs the player is entitled to see, and where they will reach (P3-T10).
+ *
+ * **Derived from unit state, not from the `bombFused` event — and that is the opposite of the answer
+ * ADR-0017 gave for shots.** The two are worth contrasting because the reasoning is symmetric. A
+ * shot leaves no trace: nothing in the state says "this unit fired", only a timer that was reset, so
+ * a diff is the only honest signal. A fuse is the reverse — `bomb.fuseUntil` is a real field that
+ * persists for the whole four seconds, and the event fires *once*, on the tick it lights. A warning
+ * built on the event would be correct for one tick in eighty: a player who looked away, or whose
+ * camera was elsewhere, would get no warning at all. Worse, disarming cuts a lit fuse and emits
+ * nothing, so an event-driven warning would keep counting down to a blast that is never coming.
+ *
+ * Both radii cross, because the engine's own `bombDetonated` event carries both. One ring cannot
+ * describe this blast: at `core` everything dies outright, at `blast` the damage has fallen to zero,
+ * and a single circle would either overstate the threat at the rim or hide it at the centre.
+ */
+export class BombTable {
+  capacity: number;
+  count = 0;
+  /**
+   * `BOMB_FUSE_DELAY`, carried once for the whole table rather than per row.
+   *
+   * The view needs it to draw a countdown as a *fraction*, and `view/` may not import the engine
+   * (ADR-0008) — so without this the only way to draw an arc is a hardcoded 4 that agrees with the
+   * engine until someone tunes the fuse. It is a table-level scalar because it is one constant, not
+   * a property of any particular bomb.
+   */
+  fuseDelay = 0;
+  x: Float32Array;
+  y: Float32Array;
+  /** `BOMB_CORE_RADIUS` — inside this, everything takes the flat peak hit. */
+  core: Float32Array;
+  /** `BOMB_BLAST_RADIUS` — damage reaches zero here. */
+  blast: Float32Array;
+  /** Sim seconds left on a lit fuse, or `FUSE_UNLIT` for an armed bomb that has not been tripped. */
+  fuse: Float32Array;
+  owner: Uint8Array;
+
+  constructor(capacity: number) {
+    this.capacity = capacity;
+    this.x = new Float32Array(capacity);
+    this.y = new Float32Array(capacity);
+    this.core = new Float32Array(capacity);
+    this.blast = new Float32Array(capacity);
+    this.fuse = new Float32Array(capacity);
+    this.owner = new Uint8Array(capacity);
+  }
+
+  ensure(needed: number): void {
+    if (needed <= this.capacity) return;
+    let next = this.capacity || 8;
+    while (next < needed) next *= 2;
+    const grown = new BombTable(next);
+    this.capacity = next;
+    this.x = grown.x;
+    this.y = grown.y;
+    this.core = grown.core;
+    this.blast = grown.blast;
+    this.fuse = grown.fuse;
+    this.owner = grown.owner;
+  }
+}
+
 /**
  * Shots fired this tick (P3-T05, ADR-0017).
  *
@@ -425,6 +492,8 @@ export interface Snapshot {
   nodes: NodeTable;
   /** Guard-aura projectors the player can see (P3-T04). */
   auras: AuraTable;
+  /** Armed Helium Bombs the player is entitled to see (P3-T10). */
+  bombs: BombTable;
   /** Shots fired this tick, derived (P3-T05, ADR-0017). */
   shots: ShotTable;
   /** Entities that died this tick, from the engine's own events (P3-T07). */
@@ -590,6 +659,7 @@ export class SnapshotExtractor {
       entities: new EntityTable(initialCapacity),
       nodes: new NodeTable(Math.max(32, map.nodes.length)),
       auras: new AuraTable(16),
+      bombs: new BombTable(8),
       shots: new ShotTable(64),
       deaths: new DeathTable(32),
       typeNames: [],
@@ -695,6 +765,7 @@ export class SnapshotExtractor {
     this.extractDeaths(state, fog);
     this.extractNodes(state, fog);
     this.extractAuras(state, fog);
+    this.extractBombs(state, fog);
     this.extractFog(fog);
     this.extractPower(state, opts.viewer);
 
@@ -1033,6 +1104,50 @@ export class SnapshotExtractor {
       n++;
     }
     auras.count = n;
+  }
+
+  /**
+   * Armed Helium Bombs and their reach (P3-T10).
+   *
+   * Two different questions get two different answers, and conflating them would be a real leak:
+   *
+   *   • **The player's own armed bomb** shows its rings unconditionally. This is a planning tool,
+   *     and it is the one unit where the radius IS the decision — the blast is not owner-exempt, so
+   *     the ring is mostly a picture of which of the player's own units are standing in it.
+   *   • **An enemy bomb** shows nothing until its fuse is lit, and then only on live vision. An
+   *     un-fused enemy bomb's ring would hand over a number the player has not earned: they could
+   *     walk an army around a device they were never told was armed. A lit fuse is different — it is
+   *     four seconds of a blast already happening, and the engine emits `bombFused` for exactly that
+   *     reason. Live vision rather than memory, on the same rule as the guard aura: a warning
+   *     remembered where a bomb used to be is a warning about ground that is now safe.
+   *
+   * The countdown is `fuseUntil - state.time`, never a timer counted down up here. The engine will
+   * detonate on its own clock, so a second clock above the bridge is a second answer to the same
+   * question, and the one on screen is the one that would be wrong.
+   */
+  private extractBombs(state: State, fog: Fog): void {
+    const bombs = this.snapshot.bombs;
+    bombs.count = 0;
+    bombs.fuseDelay = BOMB_FUSE_DELAY;
+    let n = 0;
+    for (const u of state.units.values()) {
+      if (UNITS[u.type]?.role !== "bomb" || !u.armed) continue;
+      const lit = u.fuseUntil != null;
+      if (u.owner !== "player") {
+        if (!lit || !isVisibleAt(fog, u.x, u.y)) continue;
+      }
+      bombs.ensure(n + 1);
+      bombs.x[n] = u.x;
+      bombs.y[n] = u.y;
+      bombs.core[n] = BOMB_CORE_RADIUS;
+      bombs.blast[n] = BOMB_BLAST_RADIUS;
+      // Clamped at zero: the blast fires on the tick `state.time` reaches `fuseUntil`, and a frame
+      // interpolated past that would otherwise render a negative countdown.
+      bombs.fuse[n] = lit ? Math.max(0, u.fuseUntil! - state.time) : FUSE_UNLIT;
+      bombs.owner[n] = u.owner === "player" ? SNAP_PLAYER : SNAP_AI;
+      n++;
+    }
+    bombs.count = n;
   }
 
   private extractFog(fog: Fog): void {
