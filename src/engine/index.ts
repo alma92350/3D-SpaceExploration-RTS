@@ -160,7 +160,7 @@ export {
   canJump, canJumpTo, jumpVessel, stagedRiders, jumpManifest, jumpManifestAll,
   spaceportTier, jumpCapacity, upgradeSpaceport, playerSpaceports,
   freightCapacity, cargoManifest, loadFreighter, unloadFreighter, deleteLane,
-  snapLandingPoint, previewPlanet, galaxyStatus, backgroundWorldIds,
+  snapLandingPoint, landingSites, previewPlanet, galaxyStatus, backgroundWorldIds,
 } from "@engine/engine/galaxy.js";
 
 export { runColonyPolicies } from "@engine/engine/colonyPolicy.js";
@@ -168,3 +168,78 @@ export { runColonyPolicies } from "@engine/engine/colonyPolicy.js";
 export {
   MAX_WORKER_TARGET, sanitizePolicy, getColonyPolicy, setColonyPolicy,
 } from "@engine/engine/colonyPolicy.js";
+
+// ---------------------------------------------------------------------------------------------
+// Phase 5 — the long game.
+//
+// Same shape as Phases 3 and 4: every one is a query the engine already answers or a command it
+// validates. Two are worth naming because the client has already been caught wanting them:
+//
+//   • `stanceLabel` is the engine's own banding of the −1..1 stance. P4-T03 drew the starmap's
+//     stance bar with NO bands precisely because this stopped at the engine, and inventing a
+//     threshold above the bridge would be a second answer to a question the simulation answers
+//     (ADR-0012 §5). Now it crosses, that bar can be labelled from the engine's own words.
+//   • `scoreBreakdown` is broken out rather than collapsed into a total, and upstream's own comment
+//     says why: "so a HUD can show WHY". A score recomputed above the bridge disagrees with it the
+//     first time a weight moves.
+// ---------------------------------------------------------------------------------------------
+
+export {
+  PEACE_THRESHOLD, APPEASE_TIME, TRIBUTE_BASE_COST, GOODWILL_CAP,
+  FAVOR_INTERVAL, FAVOR_WINDOW, FAVOR_GOODWILL, GRACE_TIME,
+  tributeCost, offerTribute, offerGift, fulfillRequest, atPeace, hostility, stanceLabel, provoked,
+} from "@engine/engine/diplomacy.js";
+
+export { updateWonder, chargingWonderOf, chargingPlayerWonder } from "@engine/engine/wonder.js";
+
+export {
+  DEFAULT_MATCH_TIME_LIMIT, checkWinCondition, checkEndlessLoss, checkEndlessWin,
+  scoreBreakdown, playerScore,
+} from "@engine/engine/victory.js";
+
+export {
+  RELIEF_COOLDOWN, MILESTONE_IDS, DOMINATION_TARGET, CLAIM_DEV, EXPAND_DEV,
+  CAPITAL_UPGRADE_COST, CAPITAL_HP_MULT, upgradeToCapital,
+  checkGalaxyRescue, surrenderGalaxy, checkGalaxyProgress, checkDomination, isMilestoneId,
+  updateFactionWarmth, checkRivalGate,
+} from "@engine/engine/galaxy.js";
+
+export { FACTIONS, PLAYABLE_FACTIONS, factionTrait } from "@engine/engine/factions.js";
+
+// ---------------------------------------------------------------------------------------------
+// Phase 5's parity close-out (P5-T13 … P5-T16).
+//
+// `docs/planning/PARITY.md` §5.2 is the reason these are here: **ten of the engine's own twenty-eight
+// orders had no gesture, no button and no intent**, a third of the verb list the 2D game gives a
+// player, and five of the ten did not cross this façade at all. That is the number the checklist was
+// written to make visible, and it is the one Phase 5's exit criterion turns on.
+//
+// Two of them are worth naming, because the client has already been caught reading their
+// consequences while unable to set their causes:
+//
+//   • `issueSetCollectPoint` — P2-T07 documents that a landed collection-point freighter can win the
+//     drop-off over a nearer Command Center, and `nearestGatherDrop` honours it. The client has read
+//     that answer since Phase 2 and has never been able to make one.
+//   • `issueSetRally` takes a `nodeId` as well as a point: rally-to-node, so a worker spawns already
+//     mining. A rally intent carrying only x/y would be a rally point that is quietly worse than
+//     upstream's for exactly the unit that needs it most.
+export {
+  issueAssistBuild, issueFerryFreighter, issueSetHomeBase, issueSetCollectPoint, issueSetAILogistics,
+} from "@engine/engine/commands.js";
+
+export { FREIGHTER_AI_TECH, assignFerry } from "@engine/engine/haul.js";
+
+export { updateScoutMode } from "@engine/engine/scout.js";
+
+// The predicates those orders gate on. Every one of the ten engine functions above returns `void` —
+// not P2-T12's bare `false`, not `surrenderGalaxy`'s nothing-on-one-path, but nothing ever, on any
+// path — so each silently skips whatever in the selection it does not accept. The bridge therefore
+// has to ask BEFORE the call, and it must ask with the engine's own predicate: P5-T13 had to
+// transcribe `canLogisticsType`'s one-line body into `bridge/commands.ts` to do it, which is a
+// second copy of a rule and exactly what ADR-0012 §5 forbids.
+export { canLogisticsType, canGatherType, canBuildCategory } from "@engine/engine/entities.js";
+
+// The new-game screen (row 104). `WorldOptions` has accepted `difficulty` and `playerFaction` since
+// Phase 1 and `main.ts` has never passed either, so every session ever played has been medium /
+// frontier. The roster and the tuning tables are the engine's own; nothing here picks a default.
+export { DIFFICULTY_OPTIONS } from "@engine/engine/aiDifficulty.js";

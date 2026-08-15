@@ -160,3 +160,34 @@ export declare function previewPlanet(galaxy: Galaxy, planetId: string): unknown
 /** The engine's own per-world summary. Report it; never re-derive it. */
 export declare function galaxyStatus(galaxy: Galaxy): unknown;
 export declare function backgroundWorldIds(seed: number, startId: string, count?: number): string[];
+
+/**
+ * The landing sites a map actually offers, per axis (added upstream in 50ceb88, issue #94).
+ *
+ * The site list is the source of truth, not the bare grid: near a map edge the two disagree, and
+ * "nearest multiple of LANDING_PICK_GRID" was wrong by up to 60 units there. `snapLandingPoint`
+ * picks the nearest entry of these, which is what makes it a fixed point.
+ */
+export declare function landingSites(map: GameMap): { xs: number[]; ys: number[] };
+
+// --- Phase 5, the long game (P5-T05 … P5-T07) --------------------------------------------------
+
+/** Sim seconds between relief drops. The anti-farm cooldown a player must SEE, or relief looks broken. */
+export declare const RELIEF_COOLDOWN: number;
+export declare const MILESTONE_IDS: readonly string[];
+/** Worlds pacified for a domination win. */
+export declare const DOMINATION_TARGET: number;
+export declare const CLAIM_DEV: number;
+export declare const EXPAND_DEV: number;
+export declare const CAPITAL_UPGRADE_COST: Record<string, number>;
+export declare const CAPITAL_HP_MULT: number;
+
+export declare function upgradeToCapital(state: State, building: Building): boolean;
+export declare function checkGalaxyRescue(galaxy: Galaxy): unknown;
+export declare function surrenderGalaxy(galaxy: Galaxy): unknown;
+export declare function checkGalaxyProgress(galaxy: Galaxy): unknown;
+export declare function checkDomination(galaxy: Galaxy): unknown;
+export declare function isMilestoneId(id: string): boolean;
+export declare function updateFactionWarmth(galaxy: Galaxy): void;
+/** The tracked rival Gate's `{ worldId, charge }`, or null. Already drawn as a starmap alert. */
+export declare function checkRivalGate(galaxy: Galaxy): unknown;

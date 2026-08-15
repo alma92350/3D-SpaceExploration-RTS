@@ -67,3 +67,20 @@ export declare function upgradeMult(upgrades: Record<string, unknown>, field: st
  * BEFORE the click, not after it.
  */
 export declare function committedDoctrine(state: State, owner: OwnerId): string | undefined;
+
+// --- The order predicates (P5-T13) --------------------------------------------------------------
+//
+// `canLogisticsType` is `!!UNITS[t]?.canLogistics` and `canBuildType` is
+// `canBuildCategory(t, BUILDINGS[b]?.category)`. Both are one line upstream and both are quoted
+// rather than copied, because a filter re-derived above the bridge is a second answer to a question
+// the engine already answers — and these are the filters that decide whether an order does anything
+// at all, since every one of the orders they gate returns `void` whatever happens.
+
+/** Can this unit type take a logistics job — repair, service, ferry? */
+export declare function canLogisticsType(unitType: string): boolean;
+
+/** Can this unit type gather? */
+export declare function canGatherType(unitType: string): boolean;
+
+/** Can this unit type build things in `category`? What `canBuildType` is built from. */
+export declare function canBuildCategory(unitType: string, category: string | undefined): boolean;

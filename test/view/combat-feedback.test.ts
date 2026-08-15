@@ -17,7 +17,7 @@ import { BLAST_SECONDS, CombatEffects, TRACER_SECONDS } from "../../src/view/eff
 import { TIERS } from "../../src/view/renderer/tiers.js";
 import { buildMeshes } from "../../src/view/meshes/generators.js";
 import { buildTerrainMesh } from "../../src/view/terrain/mesh.js";
-import { elevationFieldFrom } from "../../src/view/terrain/elevation.js";
+import { elevation, elevationFieldFrom } from "../../src/view/terrain/elevation.js";
 import { CameraRig } from "../../src/input/camera.js";
 import { OVERLAY_STRIDE } from "../../src/view/renderer/port.js";
 import { SNAP_AI, SNAP_PLAYER } from "../../src/bridge/snapshot.js";
@@ -172,6 +172,55 @@ describe("combat feedback in a composed frame", () => {
     throw new Error("no tracer was drawn in 200 ticks");
   });
 
+  it("lifts each end of a tracer onto the ground under THAT end", () => {
+    // Found by mutation while P5-T15 was pinning the rally line, which packs its two ends the same
+    // way: swapping the far end's elevation for the near end's survived every test in this file.
+    // A tracer whose far end carried the shooter's height sinks into any slope it crosses, which is
+    // precisely the thing the lift exists to prevent.
+    const { bridge, composer, renderer, draw } = firefight();
+    const map = bridge.state.map;
+    const field = elevationFieldFrom(map.terrain, map.width, map.height);
+    const base = map.bases.player;
+
+    // A real rise on this world, found rather than assumed: the base sits on the zero plane, so a
+    // tracer that stayed near it would leave both ends level and prove nothing.
+    let high: { x: number; y: number } | null = null;
+    for (let cy = 0; cy < field.rows && !high; cy++) {
+      for (let cx = 0; cx < field.cols; cx++) {
+        const x = cx * field.cell + field.cell / 2;
+        const y = cy * field.cell + field.cell / 2;
+        if (elevation(field, x, y) > 10) { high = { x, y }; break; }
+      }
+    }
+    expect(high, "this world is flat, so the per-end lift cannot be told from a shared one").not.toBeNull();
+
+    composer.effects.clear();
+    composer.ingestTick({
+      shots: {
+        count: 1, dropped: 0,
+        fromX: new Float32Array([base.x]), fromY: new Float32Array([base.y]),
+        toX: new Float32Array([high!.x]), toY: new Float32Array([high!.y]),
+        owner: new Uint8Array([0]),
+      },
+      deaths: { count: 0, x: new Float32Array(0), y: new Float32Array(0), owner: new Uint8Array(0), isBuilding: new Uint8Array(0) },
+      impacts: {
+        count: 0, x: new Float32Array(0), y: new Float32Array(0), owner: new Uint8Array(0),
+        heavy: new Uint8Array(0), bonus: new Uint8Array(0), splashRadius: new Float32Array(0),
+      },
+    } as unknown as Parameters<SceneComposer["ingestTick"]>[0]);
+    draw();
+
+    const l = layer(renderer, "tracer")!;
+    expect(l, "no tracer was packed").not.toBeNull();
+    const rise = elevation(field, high!.x, high!.y) - elevation(field, base.x, base.y);
+    expect(rise, "the two ends are on level ground, so this proves nothing").toBeGreaterThan(5);
+    expect(
+      l.data[4]! - l.data[1]!,
+      "both ends of the tracer came out at the same height across a real rise — the far end is being " +
+      "lifted onto the ground under the SHOOTER, so a tracer sinks into any slope it crosses",
+    ).toBeCloseTo(rise, 3);
+  });
+
   it("costs one layer each, not one per effect", () => {
     const { renderer, draw, tick } = firefight();
     for (let t = 0; t < 60; t++) { tick(); draw(); }
@@ -212,11 +261,16 @@ describe("the zero-allocation criterion (PRD §5)", () => {
     const before = {
       tx0: fx.tx0, ty0: fx.ty0, tx1: fx.tx1, ty1: fx.ty1, tOwner: fx.tOwner, tAge: fx.tAge,
       bx: fx.bx, by: fx.by, bOwner: fx.bOwner, bBig: fx.bBig, bAge: fx.bAge,
+      // P5-T15's third pool. It ingests, ages and compacts on exactly the same terms as the two
+      // above, so it belongs inside the same criterion rather than beside it.
+      ix: fx.ix, iy: fx.iy, iOwner: fx.iOwner, iHeavy: fx.iHeavy, iBonus: fx.iBonus,
+      iSplash: fx.iSplash, iAge: fx.iAge,
     };
 
     let frames = 0;
     let peakTracers = 0;
     let sawBlast = false;
+    let sawImpact = false;
     while (frames < 600) {
       tick();
       for (let f = 0; f < 3 && frames < 600; f++) {
@@ -225,12 +279,18 @@ describe("the zero-allocation criterion (PRD §5)", () => {
         frames++;
         peakTracers = Math.max(peakTracers, fx.tracerCount);
         if (fx.blastCount > 0) sawBlast = true;
+        if (fx.impactCount > 0) sawImpact = true;
       }
     }
 
     // The fight has to have been real, or the identity check below is vacuous.
     expect(peakTracers, "no tracer was ever live — 600 frames of nothing proves nothing").toBeGreaterThan(0);
     expect(sawBlast, "nothing died in 600 frames, so the blast pool was never exercised").toBe(true);
+    expect(
+      sawImpact,
+      "no impact mark was ever live, so the impact pool was never exercised — this brawl is a Skiff/" +
+      "Lancer/Bastion mix, which is the engine's own counter triangle, so `bonus` hits must land",
+    ).toBe(true);
     expect(bridge.snapshot.shots.dropped).toBe(0);
 
     for (const [name, buffer] of Object.entries(before)) {
@@ -245,15 +305,19 @@ describe("the zero-allocation criterion (PRD §5)", () => {
     // Compaction is the one per-frame loop that mutates the pool, and a naive implementation
     // (filter, splice, a fresh array) is exactly what a reviewer would reach for.
     const fx = new CombatEffects(256);
-    fx.ingestTick(fakeSnapshot(200, 50));
-    const before = { tx0: fx.tx0, tAge: fx.tAge, bx: fx.bx, bAge: fx.bAge };
+    fx.ingestTick(fakeSnapshot(200, 50, 120));
+    const before = { tx0: fx.tx0, tAge: fx.tAge, bx: fx.bx, bAge: fx.bAge, ix: fx.ix, iAge: fx.iAge };
+    expect(fx.impactCount, "the impact pool took nothing to age").toBe(120);
     for (let f = 0; f < 120; f++) fx.age(1 / 60);
     expect(fx.tracerCount, "everything should have expired by now").toBe(0);
     expect(fx.blastCount).toBe(0);
+    expect(fx.impactCount).toBe(0);
     expect(fx.tx0).toBe(before.tx0);
     expect(fx.tAge).toBe(before.tAge);
     expect(fx.bx).toBe(before.bx);
     expect(fx.bAge).toBe(before.bAge);
+    expect(fx.ix).toBe(before.ix);
+    expect(fx.iAge).toBe(before.iAge);
   });
 });
 
@@ -262,8 +326,14 @@ function composeOnly(_renderer: RecordingRenderer, draw: () => void, frames: num
   for (let f = 0; f < frames; f++) draw();
 }
 
-/** A snapshot-shaped stub carrying just the two tables the pool reads. */
-function fakeSnapshot(shots: number, deaths: number) {
+/**
+ * A snapshot-shaped stub carrying just the tables the pool reads.
+ *
+ * `impacts` defaults to none so every test above reads as it did before P5-T15 added the third
+ * pool — but it is present rather than absent, because `ingestTick` reads all three unconditionally
+ * and a stub that omitted one would only ever prove the pool tolerates a malformed snapshot.
+ */
+function fakeSnapshot(shots: number, deaths: number, impacts = 0) {
   const s = {
     count: shots, dropped: 0,
     fromX: new Float32Array(shots), fromY: new Float32Array(shots),
@@ -276,5 +346,13 @@ function fakeSnapshot(shots: number, deaths: number) {
     x: new Float32Array(deaths), y: new Float32Array(deaths),
     owner: new Uint8Array(deaths), isBuilding: new Uint8Array(deaths),
   };
-  return { shots: s, deaths: d } as unknown as Parameters<CombatEffects["ingestTick"]>[0];
+  const im = {
+    count: impacts,
+    x: new Float32Array(impacts), y: new Float32Array(impacts),
+    owner: new Uint8Array(impacts),
+    heavy: new Uint8Array(impacts).fill(1),
+    bonus: new Uint8Array(impacts),
+    splashRadius: new Float32Array(impacts),
+  };
+  return { shots: s, deaths: d, impacts: im } as unknown as Parameters<CombatEffects["ingestTick"]>[0];
 }

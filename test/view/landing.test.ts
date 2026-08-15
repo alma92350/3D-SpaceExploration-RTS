@@ -28,7 +28,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
-  LANDING_PICK_GRID, activeState, createGalaxy, makeBuilding, makeUnit, playerSpaceports,
+  LANDING_PICK_GRID, landingSites, activeState, createGalaxy, makeBuilding, makeUnit, playerSpaceports,
   previewPlanet, snapLandingPoint,
 } from "../../src/engine/index.js";
 import { applyIntent } from "../../src/bridge/commands.js";
@@ -70,6 +70,7 @@ function briefFor(galaxy: Galaxy, destId: string): ApproachBrief {
     destId,
     field: elevationFieldFrom(map.terrain, map.width, map.height),
     snap: (x, y) => snapLandingPoint(map, x, y),
+    sites: landingSites(map),
     pads: playerSpaceports(dest).map((b) => ({
       id: b.id, x: b.x, y: b.y, lastLanding: (b as PadStamp).lastLanding ?? 0,
     })),
@@ -337,18 +338,34 @@ describe("the chosen point is snapLandingPoint's", () => {
     expect(riders[0]!.y - ring.dy).toBe(site.y);
   });
 
-  it("forwarding the SNAPPED point instead of the raw one would move the landing", () => {
-    // Why `pick` is the raw ground point and the panel forwards that. `snapLandingPoint` rounds and
-    // then clamps, so it is not idempotent inside the margin: the picker's own answer, fed back in,
-    // comes out somewhere else. This is the mutation, written as an assertion.
+  it("snaps to a fixed point, so forwarding the picker's own answer is now safe", () => {
+    // **This test used to assert the opposite, and that is the point of keeping it.**
+    // `snapLandingPoint` rounded and then clamped, so it was not idempotent inside the margin —
+    // 161 of 1601 x-values on a 1600-wide map — and the picker forwards the RAW ground point
+    // because of it. Reported from here as upstream issue #94 and fixed in 50ceb88: the engine now
+    // picks the nearest entry of `landingSites`, so its output is always a site and re-snapping is
+    // the identity.
+    //
+    // The picker still forwards the raw point. That is no longer load-bearing, but it is still
+    // correct and one fewer thing to change; what this test now guards is the property the engine
+    // promises, so a regression upstream is caught here rather than as a mysterious offset.
     const galaxy = createGalaxy({ seed: SEED, startId: HOME });
     const map = destMap(galaxy, FRESH);
-    const near = { x: 30, y: 500 };
-    const once = snapLandingPoint(map, near.x, near.y);
-    const twice = snapLandingPoint(map, once.x, once.y);
-    expect(once.x).toBe(100);
-    expect(twice.x).toBe(LANDING_PICK_GRID);
-    expect(twice.x).not.toBe(once.x);
+    let moved = 0;
+    for (let x = 0; x <= map.width; x += 10) {
+      const once = snapLandingPoint(map, x, 500);
+      const twice = snapLandingPoint(map, once.x, once.y);
+      if (once.x !== twice.x || once.y !== twice.y) moved++;
+    }
+    expect(moved, "snapLandingPoint is not a fixed point — issue #94 has regressed").toBe(0);
+
+    // And every answer is a real site rather than a bare multiple of the grid — the distinction
+    // that made "nearest lattice point" a wrong re-derivation near an edge.
+    const { xs } = landingSites(map);
+    expect(xs, "the site list is empty").not.toHaveLength(0);
+    for (const x of [0, 30, 90, map.width, map.width - 30]) {
+      expect(xs, `snap(${x}) left the site list`).toContain(snapLandingPoint(map, x, 500).x);
+    }
   });
 });
 
@@ -568,8 +585,19 @@ describe("the frame", () => {
     const view = new ApproachView(briefFor(galaxy, FRESH));
     const renderer = renderOnce(view);
     expect(renderer.lastFrame.batches.map((b) => b.mesh).sort()).toEqual(["colonyship"]);
+    // The key list is pinned so a future field has to argue for itself here. `sites` did: it was
+    // added when upstream's 50ceb88 exposed `landingSites`, and it is the landing LATTICE — a
+    // function of the map's width and height and two engine constants, identical on every world of
+    // the same size. It tells a player nothing about the destination they have not been to, which
+    // is the property this test exists to protect. `field` is the terrain and is already here on
+    // the same footing: the approach view is a terrain screen by design.
     expect(Object.keys(view.brief)).toEqual(
-      ["destId", "field", "snap", "pads", "anchorX", "anchorY"],
+      ["destId", "field", "snap", "sites", "pads", "anchorX", "anchorY"],
     );
+    // Asserted rather than argued: the site list is the same on a world the player has never seen
+    // as on their own, so it cannot be a channel for anything about the destination.
+    const home = briefFor(galaxy, HOME);
+    expect(view.brief.sites, "the landing lattice differs per world — it would be a real intel leak")
+      .toEqual(home.sites);
   });
 });

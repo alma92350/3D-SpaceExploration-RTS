@@ -8,7 +8,7 @@ import { BUILD_REACH, BUILDINGS, NODE_RADIUS, UNITS } from "../engine/index.js";
 import { WorldBridge, type WorldOptions } from "../bridge/world.js";
 import { checkPlacement } from "../bridge/commands.js";
 import { GalaxySnapshotExtractor, type GalaxySnapshot } from "../bridge/galaxy-snapshot.js";
-import { FLAG_BUILDING_KIND, type Snapshot } from "../bridge/snapshot.js";
+import { FLAG_BUILDING_KIND, engineId, type Snapshot } from "../bridge/snapshot.js";
 import { FixedStepLoop, STEP_SECONDS } from "./loop.js";
 import { type Settings, saveSettings } from "./settings.js";
 import { CameraRig, clamp } from "../input/camera.js";
@@ -28,9 +28,12 @@ import { SceneComposer, type GhostState } from "../view/scene.js";
 import { type FogField, type Renderer, type TerrainMesh, type Tier } from "../view/renderer/port.js";
 import { TIERS, TierMonitor } from "../view/renderer/tiers.js";
 import {
-  type EconomyBoard, type EconomyModel, type HudAction, type HudCommand, type HudModel,
-  EconomyCache, GalaxyCache, HudView, hudModel,
+  type EconomyBoard, type EconomyModel, type GalaxyBoard, type HudAction, type HudCommand,
+  type HudModel, EconomyCache, GalaxyCache, HudView, hudModel,
 } from "../ui/hud.js";
+import { NewsFeed, newsModel } from "../ui/news.js";
+import { loadOnboardingSeen, markOnboardingSeen } from "../ui/onboarding.js";
+import { type SaveCatalog, deleteSave, newSaveId, readCatalog, writeSave } from "../ui/save-panel.js";
 import { MinimapView, minimapToWorld } from "../ui/minimap.js";
 
 export interface GameElements {
@@ -124,6 +127,29 @@ export class Game {
   private showPower = false;
   /** Which base-wide economy board is open, if any (P4-T01). View state, like `showPower`. */
   private board: EconomyBoard | null = null;
+  /** Which campaign board is open on the galaxy screen (P5-T12). View state, like `board`. */
+  private galaxyBoard: GalaxyBoard | null = null;
+  /**
+   * Whether the onboarding card has been dismissed, read ONCE at construction.
+   *
+   * `loadOnboardingSeen` touches `localStorage`, and the model that reads this is built per tick.
+   * Held here so the drawer never asks storage a question it has already answered.
+   */
+  private onboardingSeen = loadOnboardingSeen();
+  /**
+   * The save catalog, refreshed only when it can have changed — when the board opens, and after a
+   * write or a delete. `readCatalog` walks every key in storage and parses every payload, which is
+   * not a thing to do on a tick.
+   */
+  private savesCatalog: SaveCatalog = { available: false, saves: [] };
+  /**
+   * News from the worlds the player is not standing on (P5-T16).
+   *
+   * Galaxy-scoped, and deliberately NOT cleared on a jump — unlike `alerts`, which is, because an
+   * alert is a place on the map you just left. This is about the worlds you are not on, so a jump
+   * is the moment it becomes the only thing worth knowing.
+   */
+  private readonly news = new NewsFeed();
   /**
    * The buttons the HUD is currently showing, in order — what a positional key press indexes into.
    *
@@ -391,6 +417,13 @@ export class Game {
         approach: screen.kind === "approach"
           ? { brief: screen.view.brief, pick: screen.view.pick, site: screen.view.site }
           : null,
+        board: this.galaxyBoard,
+        saves: this.savesCatalog,
+        now: this.wallClock(),
+        settings: this.settings,
+        currentTier: this.tier,
+        news: newsModel(this.news, this.bridge.galaxy.time || 0),
+        newsVersion: this.news.version,
       });
     // The world's own action row is emptied on a galaxy screen. The positional keys must address
     // what the player is LOOKING at, and a Deploy button from the world behind the starmap would
@@ -402,15 +435,24 @@ export class Game {
     this.actions = screen.kind === "world" ? [...hud.actions, ...drawer.actions] : drawer.actions;
     const error = this.bridge.takeCommandError();
     if (error) this.hud.notice(error);
-    // A colony's news, which does NOT fit the alert board — see `takeColonyNotes`. It lands in the
-    // notice, the same line a refused order does, and the standing condition behind it is on the
-    // starmap itself: `alertForWorld` marks a contested world for as long as it is contested, which
-    // is the difference between a moment and a state that `view/alerts.ts` is built around.
+    // A colony's news, which does NOT fit the alert board — see `takeColonyNotes`, and `news.ts`'s
+    // header for why it is beside `view/alerts.ts` rather than in it.
     //
-    // The newest wins when several arrive on one frame. That is what a one-line notice means, and
-    // the sweep raises each of these at most once per state change, so "several" is two worlds
-    // falling in the same frame rather than a stream.
-    for (const note of this.bridge.takeColonyNotes()) this.hud.notice(colonyNotice(note));
+    // **This used to go straight into `hud.notice`, and that was the defect.** The notice is ONE
+    // shared line, cleared only by the next notice and shared with the command error above it — so
+    // a colony falling was erased by the next refused order, several notes on one frame showed only
+    // the last, and the line then sat there forever because `notice` is only called when there is
+    // something to say. The news was reaching the player and could not survive contact with the
+    // next thing that happened. The feed gives it memory; the toast keeps the transient half.
+    //
+    // Once per frame is correct: `ingest` is idempotent with respect to the galaxy (it reads the
+    // engine's queues through a cursor and writes none of them), and the colony notes are already
+    // destroyed by the drain, which is why the shell does the draining and the model never does.
+    this.news.ingest({
+      galaxy: this.bridge.galaxy,
+      colonyNotes: this.bridge.takeColonyNotes(),
+      now: this.bridge.galaxy.time || 0,
+    });
 
     const correction = this.tierMonitor.sample(frameMs);
     if (correction.dropped) {
@@ -653,7 +695,15 @@ export class Game {
     if (this.keys.has("arrowleft") || this.keys.has("a")) dx -= 1;
     if (this.keys.has("arrowright") || this.keys.has("d")) dx += 1;
     if (this.keys.has("arrowup") || this.keys.has("w")) dy -= 1;
-    if (this.keys.has("arrowdown")) dy += 1;
+    // `s` was missing from this line from Phase 1 until P5-T10 found it. Three of the four WASD keys
+    // were bound and the fourth was not, `index.html` advertised all four, and nothing could catch
+    // it because the sidebar's list is hand-written prose. It is the reason the onboarding card
+    // names every key as DATA and puts each one through `translateKey` or this set.
+    //
+    // The fix belongs here rather than in the paragraph, because `src/input/intents.ts`'s own header
+    // records why stop is X and not S — "W/A/S/D pan the camera (PRD §5) and upstream gave the pan
+    // keys priority". S was already spent on panning by that decision; it just never arrived.
+    if (this.keys.has("arrowdown") || this.keys.has("s")) dy += 1;
 
     if (this.settings.edgeScroll && this.pointerInside) {
       const [w, h] = this.viewportSize();
@@ -837,6 +887,61 @@ export class Game {
       this.openApproach(command.destId);
       return;
     }
+    // --- Phase 5's non-order commands (P5-T12) ---------------------------------------------------
+    if (command.kind === "galaxyBoard") {
+      this.galaxyBoard = command.board;
+      // Storage is read when the board OPENS, not per tick: `readCatalog` walks every key and parses
+      // every payload, and the answer cannot change while nothing in this tab has written one.
+      if (command.board === "system") this.savesCatalog = readCatalog();
+      return;
+    }
+    if (command.kind === "save") {
+      const result = writeSave({
+        id: newSaveId(this.wallClock(), this.savesCatalog),
+        name: command.name,
+        // `bridge.save()`, so the round trip is P4-T09's and this shell never touches
+        // `serializeGalaxy` — which is also what stops it rewinding the engine's entity-id counter.
+        payload: this.bridge.save(),
+        now: this.wallClock(),
+      });
+      this.savesCatalog = readCatalog();
+      this.hud.notice(result.problem ?? `Saved as “${command.name}”`);
+      return;
+    }
+    if (command.kind === "loadSave") {
+      const save = this.savesCatalog.saves.find((s) => s.id === command.id);
+      // The panel already disabled the button for a payload this build cannot open; this is the
+      // second half of the same rule, so a load that fails says so instead of doing nothing.
+      const ok = save ? this.bridge.load(save.payload) : false;
+      if (!ok) { this.hud.notice("That save could not be loaded."); return; }
+      this.adoptSeat();
+      this.setScreen({ kind: "world" });
+      return;
+    }
+    if (command.kind === "deleteSave") {
+      const result = deleteSave(command.id);
+      this.savesCatalog = readCatalog();
+      if (result.problem) this.hud.notice(result.problem);
+      return;
+    }
+    if (command.kind === "settings") {
+      // Each option carries a WHOLE `Settings`, so there is nothing to merge here — which is what
+      // keeps the decision in the panel that made it.
+      Object.assign(this.settings, command.settings);
+      saveSettings(this.settings);
+      if (command.settings.tierOverride) this.setTier(command.settings.tierOverride, true);
+      else this.tierMonitor.clearManual();
+      return;
+    }
+    if (command.kind === "readNews") {
+      this.news.markAllSeen();
+      return;
+    }
+    if (command.kind === "dismissOnboarding") {
+      this.onboardingSeen = true;
+      markOnboardingSeen();
+      return;
+    }
     this.bridge.enqueue(command.intent);
     // A confirmed jump ends the screen that confirmed it. The intent is queued, not applied, so the
     // seat is still the old world for one more tick — `adoptSeat` handles the arrival, and going
@@ -857,7 +962,19 @@ export class Game {
       ghost: this.mode.kind === "build" && this.ghost
         ? { buildingType: this.mode.buildingType, x: this.ghost.x, y: this.ghost.y }
         : null,
+      onboardingSeen: this.onboardingSeen,
     });
+  }
+
+  /**
+   * Wall-clock milliseconds, for the save panel's "12 minutes ago" and a save slot's timestamp.
+   *
+   * The one place in the app that reads a real clock, and it is deliberately NOT inside any model:
+   * every string those produce stays a pure function of its inputs, which is what makes them
+   * testable without freezing time. Nothing in the simulation ever sees this.
+   */
+  private wallClock(): number {
+    return Date.now();
   }
 
   /** Nearest entity whose footprint contains the point. Buildings win ties — they are bigger. */
@@ -879,8 +996,11 @@ export class Game {
   private nodeAt(x: number, y: number): string | null {
     const nodes = this.bridge.snapshot.nodes;
     for (let i = 0; i < nodes.count; i++) {
+      // `engineId`, not `n${id - 1}`: a salvage or crater deposit is named off the entity that died
+      // there (`wreck-u12-ore`), so it has no number to rebuild from and the arithmetic answered
+      // `n-1` for every one of them. Right-clicking any of them ordered a gather on nothing.
       if (Math.hypot(nodes.x[i]! - x, nodes.y[i]! - y) <= NODE_RADIUS + ENTITY_PICK_SLACK)
-        return `n${nodes.ids[i]! - 1}`;
+        return engineId(nodes.ids[i]!);
     }
     return null;
   }
@@ -902,9 +1022,6 @@ export class Game {
   }
 }
 
-function engineId(numeric: number): string {
-  return numeric < 0 ? `b${-numeric - 1}` : `u${numeric - 1}`;
-}
 
 /** `FogField.state`'s "explored but not visible" — the port's own middle value. */
 const FOG_EXPLORED_NOT_VISIBLE = 1;
@@ -923,11 +1040,4 @@ const NO_ACTIONS: readonly HudAction[] = [];
  * in progress. An unrecognised type is reported as itself rather than dropped — a fourth kind
  * upstream should reach the player looking odd, not silently not reach them at all.
  */
-function colonyNotice(note: { readonly type: string; readonly planetId: string }): string {
-  switch (note.type) {
-    case "lost": return `${note.planetId} is lost — nothing of yours is left standing there`;
-    case "hostile": return `${note.planetId}'s neighbour has declared war on your colony`;
-    case "attacked": return `Your colony on ${note.planetId} is under attack`;
-    default: return `${note.planetId}: ${note.type}`;
-  }
-}
+

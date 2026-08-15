@@ -12,7 +12,7 @@
 // not have.
 
 import { type CameraState, type OverlayLayer } from "./port.js";
-import { type Glyph, statusGlyph } from "./glyphs.js";
+import { IMPACT_BONUS, IMPACT_HEAVY, type Glyph, statusGlyph } from "./glyphs.js";
 import { projectToScreen } from "../../input/picking.js";
 
 /**
@@ -226,6 +226,73 @@ export function drawOverlayLayer(
       break;
     }
 
+    case "impact": {
+      // A hit that landed and had something to say (P5-T15, PARITY rows 66-68). Up to three marks
+      // per row, because the engine states up to three facts about one hit and a Colossus shell on a
+      // building really is heavy AND splashing:
+      //
+      //   • SPLASH is a measurement in world units, so it is GROUND geometry — a ring at the
+      //     weapon's own `def.splash.radius`, deforming over a slope the way a selection ring or a
+      //     guard aura does, because it is the same kind of object: a radius on the ground. Dashed,
+      //     on the grammar the aura and the bomb established, where a dash means "an effect reached
+      //     this far". Constant size for its whole life: the radius is the fact, and a ring that
+      //     grew into it would be true only on its last frame.
+      //   • HEAVY and BONUS are categories, not measurements, so they are SCREEN glyphs at a
+      //     constant pixel size — the same reason every other badge here is 2D (see this file's
+      //     header). They differ in shape, in size and in stroke weight, and never in hue alone
+      //     (N-05): a colour-only split between "siege" and "counter" is the exact failure the badge
+      //     vocabulary was built to avoid, and both marks are drawn in the ATTACKER's colour anyway,
+      //     so hue is already spent saying whose weapon did it.
+      //
+      // Their placement is fixed rather than dependent on each other — the spark always above the
+      // point, the wedge always on it — so position never becomes a hidden fourth channel and the
+      // two never overlap into mush on the one hit that carries both.
+      for (let i = 0; i < layer.count; i++) {
+        const off = i * layer.stride;
+        const x = d[off]!;
+        const height = d[off + 1]!;
+        const z = d[off + 2]!;
+        const progress = Math.max(0, Math.min(1, d[off + 3]!));
+        const heavy = d[off + 4]! !== 0;
+        const bonus = d[off + 5]! !== 0;
+        const splash = d[off + 6]!;
+        const color = OWNER_CSS[d[off + 7]! | 0] ?? OWNER_CSS[2]!;
+
+        ctx.globalAlpha = 1 - progress;
+        ctx.strokeStyle = color;
+
+        if (splash > 0) {
+          ctx.setLineDash([4, 5]);
+          ctx.lineWidth = 1.6;
+          drawGroundEllipse(ctx, camera, x, height, z, splash);
+          ctx.setLineDash([]);
+        }
+
+        if (!heavy && !bonus) continue;
+        projectToScreen(camera, x, height, z, projected);
+        if (projected.behind) continue;
+        // The glyphs swell as they fade, so the eye is caught by motion rather than by a static
+        // mark — the argument the death mark already makes, and the one thing a still frame cannot
+        // fake. The ring above deliberately does not, because its size means something.
+        const swell = 1 + 0.35 * progress;
+        ctx.lineJoin = "round";
+        if (heavy) {
+          ctx.lineWidth = 2.4;
+          strokeGlyph(ctx, IMPACT_HEAVY, projected.x, projected.y, IMPACT_HEAVY_PIXELS * swell);
+        }
+        if (bonus) {
+          ctx.lineWidth = 1.5;
+          strokeGlyph(
+            ctx, IMPACT_BONUS, projected.x, projected.y - IMPACT_BONUS_PIXELS * 1.1,
+            IMPACT_BONUS_PIXELS * swell,
+          );
+        }
+      }
+      ctx.globalAlpha = 1;
+      ctx.setLineDash([]);
+      break;
+    }
+
     case "bomb": {
       // The Helium Bomb's reach (P3-T10). TWO rings, because the blast is two facts and one circle
       // can only tell half of it: inside `core` everything dies outright, and at `blast` the damage
@@ -289,6 +356,17 @@ export function drawOverlayLayer(
 
 /** Badge size in CSS pixels — constant on screen, like every other overlay here. */
 const GLYPH_PIXELS = 9;
+
+/**
+ * The two hit marks' sizes, in CSS pixels (P5-T15).
+ *
+ * Different on purpose, and it is the second of the three channels that separate them (shape, size,
+ * stroke weight). The siege mark is the larger and heavier of the two because that is the cue the
+ * row asks for in as many words — a siege hit reading *heavier* — and because it lands on a
+ * building, which is a bigger thing to be standing under than a unit.
+ */
+const IMPACT_HEAVY_PIXELS = 12;
+const IMPACT_BONUS_PIXELS = 8;
 
 /**
  * Stroke one glyph centred on a screen point.

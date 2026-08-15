@@ -1,0 +1,63 @@
+--- a/engine/market.js	2026-08-14 20:01:27.607358024 +0000
++++ b/engine/market.js	2026-08-15 12:47:44.404275671 +0000
+@@ -92,7 +92,10 @@
+ 
+ export function createMarket(state) {
+   const total = {}; let sum = 0;
+-  for (const n of state.map.nodes) { total[n.com] = (total[n.com] || 0) + n.max; sum += n.max; }
++  for (const n of state.map.nodes) {
++    if (n.wreck || n.crater) continue;
++    total[n.com] = (total[n.com] || 0) + n.max; sum += n.max;
++  }
+   const industry = PLANETS.find(p => p.id === state.planetId)?.industry ?? 5;
+   const base = {}, pressure = {}, glut = {};
+   for (const com of TRADEABLE) {
+--- a/engine/galaxy.js	2026-08-15 09:56:58.300057984 +0000
++++ b/engine/galaxy.js	2026-08-15 12:50:33.232738304 +0000
+@@ -820,15 +820,24 @@
+       let status = "unexplored", income = 0;
+       const pacified = !!(galaxy.pacified && galaxy.pacified.has(id));
+       if (id === galaxy.activeId) status = "seat";
+-      else if (pacified) status = "pacified";   // conquered — its neighbour's capital is razed
+       else if (s) {
+         const buildings = playerBuildingCount(s);
+         // A world you've been to is a "colony" only while you still hold a
+         // building there; once razed it's "contested" — visited but no longer
+         // yours (so the map doesn't keep calling a lost world your colony).
+-        status = buildings > 0 ? "colony" : "contested";
+-        income = Math.round(incomeBuildingCount(s) * COLONY_INCOME_PER_BUILDING * 60);   // credits/min (capped, turret-excluded)
++        // "pacified" outranks both: a conquered world stays labelled as conquered.
++        status = pacified ? "pacified" : (buildings > 0 ? "colony" : "contested");
++        // Income is reported for what the world EARNS, not for what it is called. This used to sit
++        // behind `else if (pacified)`, so a conquered world reported 0 while sweepColonies paid it
++        // both halves below — measured at 60 credits/min against a reported 0. And the occupation
++        // dividend was never reported for any world at all. Mirrors sweepColonies exactly: the
++        // per-building income, plus PACIFIED_INCOME additively, for background worlds only.
++        income = s.background
++          ? Math.round((incomeBuildingCount(s) * COLONY_INCOME_PER_BUILDING
++              + (pacified ? PACIFIED_INCOME : 0)) * 60)   // credits/min (capped, turret-excluded)
++          : 0;
+       }
++      else if (pacified) status = "pacified";   // conquered, and never visited
+       // Industry/Tech ratings (data.js) drive factory speed + research speed and
+       // finished-good prices — surfaced so "where to settle/jump" is an informed call.
+       const p = PLANETS.find(pl => pl.id === id);
+@@ -1278,7 +1287,17 @@
+ export const LANDING_PICK_GRID = 160;
+ const LANDING_PICK_MARGIN = 100;
+ export function snapLandingPoint(map, x, y) {
+-  const snap = (v, span) => Math.min(Math.max(Math.round(v / LANDING_PICK_GRID) * LANDING_PICK_GRID, LANDING_PICK_MARGIN), span - LANDING_PICK_MARGIN);
++  // Clamped to the LATTICE inside the margin, not to the margin itself — which is what makes this
++  // idempotent, and it was not. Rounding first and clamping second lands the whole edge band on
++  // LANDING_PICK_MARGIN (100), which is not a multiple of LANDING_PICK_GRID (160), so feeding the
++  // answer back in moved it again: x=0 displayed at 100 and re-snapped to 160. That bit any caller
++  // that showed a player where they were about to land and then sent that same point back.
++  // 161 of 1601 x-values on a 1600-wide map were affected — the entire clamp band at both edges.
++  const snap = (v, span) => {
++    const lo = Math.ceil(LANDING_PICK_MARGIN / LANDING_PICK_GRID) * LANDING_PICK_GRID;
++    const hi = Math.floor((span - LANDING_PICK_MARGIN) / LANDING_PICK_GRID) * LANDING_PICK_GRID;
++    return Math.min(Math.max(Math.round(v / LANDING_PICK_GRID) * LANDING_PICK_GRID, lo), hi);
++  };
+   return { x: snap(num(x), map.width), y: snap(num(y), map.height) };
+ }
+ function num(v) { const n = Number(v); return Number.isFinite(n) ? n : 0; }

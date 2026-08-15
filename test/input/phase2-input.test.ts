@@ -48,6 +48,7 @@ function selectBuilding(bridge: WorldBridge, type: string): Building {
 function shownActions(bridge: WorldBridge, board: EconomyBoard | null = null): readonly HudAction[] {
   const hud = hudModel(bridge.snapshot);
   const economy = economyModel({
+    onboardingSeen: true,
     hud,
     state: bridge.state,
     snap: bridge.snapshot,
@@ -202,6 +203,7 @@ describe("research and doctrine reach the engine (P2-T11, P2-T12)", () => {
 
     const hud = hudModel(bridge.snapshot);
     const economy = economyModel({
+    onboardingSeen: true,
       hud, state: bridge.state, snap: bridge.snapshot, credits: bridge.galaxyCredits,
       board: null, ghost: null,
     });
@@ -227,6 +229,7 @@ describe("research and doctrine reach the engine (P2-T11, P2-T12)", () => {
     bridge.step(STEP_SECONDS);
 
     const economy = economyModel({
+    onboardingSeen: true,
       hud: hudModel(bridge.snapshot), state: bridge.state, snap: bridge.snapshot,
       credits: bridge.galaxyCredits, board: null, ghost: null,
     });
@@ -331,6 +334,7 @@ describe("no Phase 2 economy order is left unreachable", () => {
     const bridge = opened();
     const rig = selectBuilding(bridge, "plasmarig");
     const withRig = economyModel({
+    onboardingSeen: true,
       hud: hudModel(bridge.snapshot), state: bridge.state, snap: bridge.snapshot,
       credits: bridge.galaxyCredits, board: null, ghost: null,
     });
@@ -340,6 +344,7 @@ describe("no Phase 2 economy order is left unreachable", () => {
 
     // The survey is the PLACEMENT half and hangs off the build ghost, not off a selection.
     const withGhost = economyModel({
+    onboardingSeen: true,
       hud: hudModel(bridge.snapshot), state: bridge.state, snap: bridge.snapshot,
       credits: bridge.galaxyCredits, board: null,
       ghost: { buildingType: "plasmarig", x: 700, y: 700 },
@@ -347,6 +352,7 @@ describe("no Phase 2 economy order is left unreachable", () => {
     expect(withGhost.sections.map((s) => s.id), "the Rig survey never reaches the build ghost").toContain("survey");
 
     const board = economyModel({
+    onboardingSeen: true,
       hud: hudModel(bridge.snapshot), state: bridge.state, snap: bridge.snapshot,
       credits: bridge.galaxyCredits, board: "logistics", ghost: null,
     });

@@ -35,6 +35,18 @@ const LOD_LEVELS = 2;
 /** Neutral owner slot — resource nodes and stars belong to nobody. */
 const NEUTRAL_SLOT = 2 as OwnerSlot;
 
+/**
+ * How far a drawn LINE is lifted off the terrain, in world units.
+ *
+ * Both ends of a tracer and both ends of a rally line get the same lift, and it is the same number
+ * `view/landing.ts` uses for its own line: a line that followed the ground would sink into every
+ * slope it crosses, and two lines lifted differently would cross each other in mid-air.
+ */
+const LINE_LIFT = 2.2;
+
+/** The impact mark's lift. A ground ring, so it sits where a selection ring or an aura sits. */
+const IMPACT_LIFT = 0.5;
+
 
 /** One bucket of instances sharing a mesh, an owner and a LOD. Grown in powers of two, off-frame. */
 class Batch {
@@ -228,6 +240,7 @@ export class SceneComposer {
     this.pushNodes(snap, camera, cullSq);
     this.pushAuras(snap, camera, cullSq);
     this.pushBombs(snap, camera, cullSq);
+    this.pushRally(snap, camera, cullSq);
     this.pushEffects(camera, cullSq);
     if (ghost?.active) this.pushGhost(ghost);
 
@@ -317,8 +330,8 @@ export class SceneComposer {
       // Both ends are lifted off the ground by the same small amount: a tracer that followed the
       // terrain would disappear into a slope it crosses.
       tracers.push(
-        x0, elevation(this.field, x0, y0) + 2.2, y0,
-        x1, elevation(this.field, x1, y1) + 2.2, y1,
+        x0, elevation(this.field, x0, y0) + LINE_LIFT, y0,
+        x1, elevation(this.field, x1, y1) + LINE_LIFT, y1,
         fx.tracerFade(i), fx.tOwner[i]!,
       );
     }
@@ -331,6 +344,57 @@ export class SceneComposer {
       const dz = y - camera.eyeZ;
       if (dx * dx + dz * dz > cullSq) continue;
       blasts.push(x, elevation(this.field, x, y) + 1.0, y, fx.blastProgress(i), fx.bBig[i]!, fx.bOwner[i]!);
+    }
+
+    // Landed hits that had something to say (P5-T15). The pool is already filtered — `ingestTick`
+    // drops a plain hit — so everything here draws.
+    const impacts = this.overlays.get("impact")!;
+    const cull = Math.sqrt(cullSq);
+    for (let i = 0; i < fx.impactCount; i++) {
+      const x = fx.ix[i]!;
+      const y = fx.iy[i]!;
+      const splash = fx.iSplash[i]!;
+      const dx = x - camera.eyeX;
+      const dz = y - camera.eyeZ;
+      // Widened by the splash radius, on the same rule as the aura and the bomb: a Colossus shell
+      // landing just off the screen edge still rattles units the player IS looking at, and clipping
+      // the impact point would hide the reason half an army lost health at once.
+      const reach = cull + splash;
+      if (dx * dx + dz * dz > reach * reach) continue;
+      impacts.push(
+        x, elevation(this.field, x, y) + IMPACT_LIFT, y,
+        fx.impactProgress(i), fx.iHeavy[i]!, fx.iBonus[i]!, splash, fx.iOwner[i]!,
+      );
+    }
+  }
+
+  /**
+   * Rally lines (P5-T15, PARITY row 8) — where the selected producers send what they build.
+   *
+   * The `rally` overlay kind and both renderers' drawing of it have existed since Phase 1; this is
+   * the line of code that was missing. Everything about *which* buildings get one is decided at the
+   * bridge (`RallyTable`), because the filters are ownership and an engine table — neither of which
+   * `view/` may look at (ADR-0008).
+   *
+   * Culled on the BUILDING's end rather than the rally point's, exactly as a tracer is culled on the
+   * shooter's: the line belongs to the thing the player selected, and a rally point set across the
+   * map should not make its own line disappear when the camera looks at the building.
+   */
+  private pushRally(snap: Snapshot, camera: CameraState, cullSq: number): void {
+    const rally = snap.rally;
+    const buf = this.overlays.get("rally")!;
+    for (let i = 0; i < rally.count; i++) {
+      const x0 = rally.fromX[i]!;
+      const y0 = rally.fromY[i]!;
+      const dx = x0 - camera.eyeX;
+      const dz = y0 - camera.eyeZ;
+      if (dx * dx + dz * dz > cullSq) continue;
+      const x1 = rally.toX[i]!;
+      const y1 = rally.toY[i]!;
+      buf.push(
+        x0, elevation(this.field, x0, y0) + LINE_LIFT, y0,
+        x1, elevation(this.field, x1, y1) + LINE_LIFT, y1,
+      );
     }
   }
 

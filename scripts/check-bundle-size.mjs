@@ -64,7 +64,21 @@ if (!existsSync(html)) {
 // imported chunks are deliberately NOT counted: they are not what the player waits for.
 const entry = readFileSync(html, "utf8");
 const referenced = new Set(["index.html"]);
-for (const m of entry.matchAll(/(?:src|href)="\/?([^"]+)"/g)) referenced.add(m[1]);
+// Normalised to a dist-relative path, and the `./` is the whole reason this exists.
+//
+// **This gate double-counted every JS chunk from Phase 0 until Phase 5.** Vite emits the entry's
+// references as `./assets/x.js` (ADR-0007's `base: "./"` — relative URLs, so one build works from
+// any path). The old pattern stripped only a LEADING SLASH, so `referenced` held `./assets/x.js`
+// while the `walk(DIST)` pass below yields `assets/x.js`; `referenced.has()` missed, the
+// transitive-chunk branch counted the same file a second time, and the reported total was exactly
+// double — 435.8 kB against a true 219.6 kB.
+//
+// It never fired wrongly, because the error is conservative and the budget has ~14x headroom. It
+// was still worth fixing the moment it was confirmed: P5-T02 was told to weigh audio against this
+// number, and a measurement that is wrong by 2x is one a future decision gets wrong by 2x.
+for (const m of entry.matchAll(/(?:src|href)="([^"]+)"/g)) {
+  referenced.add(m[1].replace(/^\.?\//, ""));
+}
 
 let total = 0;
 const rows = [];

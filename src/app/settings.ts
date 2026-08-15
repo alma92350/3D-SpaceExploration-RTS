@@ -13,9 +13,18 @@ export interface Settings {
   /** A tier the player chose. `null` means "let auto-detection decide". */
   tierOverride: Tier | null;
   edgeScroll: boolean;
+  /**
+   * The last new-game pick (P5-T16), or null for the engine's own defaults.
+   *
+   * Stored raw and **never validated here**: `newGameModel` is the thing that knows what the engine
+   * accepts, and it treats its input as untrusted precisely because this is where it comes from. A
+   * second opinion in this file would be a second answer to a question `DIFFICULTY_OPTIONS` and
+   * `PLAYABLE_FACTIONS` already answer — and it would go stale the first time upstream adds one.
+   */
+  newGame: { difficulty: unknown; playerFaction: unknown } | null;
 }
 
-const DEFAULTS: Settings = { tierOverride: null, edgeScroll: true };
+const DEFAULTS: Settings = { tierOverride: null, edgeScroll: true, newGame: null };
 
 export function loadSettings(): Settings {
   try {
@@ -28,6 +37,15 @@ export function loadSettings(): Settings {
         ? parsed.tierOverride as Tier
         : null,
       edgeScroll: typeof parsed.edgeScroll === "boolean" ? parsed.edgeScroll : DEFAULTS.edgeScroll,
+      // Shape only. What is IN it is `newGameModel`'s question, and it reports what it rejected
+      // rather than silently substituting — which is the whole difference from the engine, which
+      // stores an unknown difficulty verbatim and plays it as Medium without saying so.
+      newGame: parsed.newGame && typeof parsed.newGame === "object"
+        ? {
+          difficulty: (parsed.newGame as Record<string, unknown>).difficulty,
+          playerFaction: (parsed.newGame as Record<string, unknown>).playerFaction,
+        }
+        : null,
     };
   } catch {
     return { ...DEFAULTS };

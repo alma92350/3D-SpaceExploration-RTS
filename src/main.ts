@@ -6,6 +6,7 @@ import { loadSettings, saveSettings } from "./app/settings.js";
 import { TIERS, TIER_ORDER } from "./view/renderer/tiers.js";
 import { type Tier } from "./view/renderer/port.js";
 import { MVP_WORLD } from "./bridge/world.js";
+import { newGameModel, worldOptionsFor } from "./ui/new-game.js";
 
 function el<T extends HTMLElement>(id: string): T {
   const found = document.getElementById(id);
@@ -30,12 +31,22 @@ function boot(): void {
   // same terrain, the same deposits and the same neighbour, so their reports compare. `MVP_WORLD`
   // is the single source of that choice — this comment named Ferros Prime long after the code
   // stopped doing so, which is exactly why it points at the constant instead of repeating it.
+  // The difficulty and the faction (P5-T16, PARITY row 104). `WorldOptions` has accepted both since
+  // Phase 1 and this line passed neither, so **every session ever played has been medium /
+  // frontier** — including every measurement in `perf/` and every scenario in the four playtest
+  // scripts. `worldOptionsFor` spreads over the base, so ADR-0010 §2's fixed seed and world survive.
+  //
+  // The model treats the stored pick as untrusted and reports what it rejected, because the engine
+  // does not: an unknown difficulty is stored verbatim and played as Medium, and an unknown faction
+  // is stored while conferring nothing at all. Both fail silently, which is why they are resolved
+  // here rather than handed straight through.
+  const newGame = newGameModel({ requested: settings.newGame });
   const game = new Game(
     { viewport: el("viewport"), hudRoot: el("hud"), minimapCanvas: el<HTMLCanvasElement>("minimap") },
     choice.renderer,
     choice.tier,
     settings,
-    { seed: 20260814, worldId: MVP_WORLD },
+    worldOptionsFor(newGame.choice, { seed: 20260814, worldId: MVP_WORLD }),
   );
 
   const picker = buildTierPicker(el("tier-picker"), choice.tier, settings, (tier) => game.setTier(tier, true));

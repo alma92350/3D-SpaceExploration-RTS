@@ -433,6 +433,149 @@ export class ShotTable {
 }
 
 /**
+ * Hits that LANDED this tick, from the engine's own `attackHit` event (P5-T15; PARITY rows 66–68).
+ *
+ * **The engine has been describing every hit since before Phase 3 was scoped and nothing read it.**
+ * `combat.js` pushes an `attackHit` inside `performAttack` — shared by mobile units and turrets —
+ * and hangs three presentation-only fields on it, each with a comment naming the thing that was
+ * meant to draw it: `heavy` "so a siege hit thumps deeper", `bonus` "so a counter-triangle hit …
+ * telegraphs too", and `splashRadius` "so renderEffects.js can draw an impact ring". Zero sim
+ * effect; the engine's own comment says the flags "are read only by the UI layer".
+ *
+ * ADR-0017 opens by stating there is no combat event but `entityKilled`. PARITY §7.1 checked that
+ * against the vendored source and it is false — sixteen event types, and this is one of them. **The
+ * ADR's decision is untouched here**: a tracer is still derived by diffing `attackTimer`, because
+ * that path is built, mutation-tested and allocation-free, and rebuilding it would be churn with no
+ * measurement behind it. What changes is that the payload the ADR's premise assumed away now
+ * crosses the bridge.
+ *
+ * All three fields are the engine's answers, copied and not re-derived (ADR-0012 §5). That matters
+ * most for `splashRadius`: it is `def.splash.radius`, a WEAPON property, and the alternative — the
+ * view looking a radius up from a unit type — is impossible anyway (ADR-0008 forbids `view/` the
+ * engine) and would be a second opinion about a number the event already states.
+ *
+ * **Fog: live vision at the impact point, and deliberately not the `explored` rule `DeathTable`
+ * uses.** A death leaves a wreck deposit the player will walk up to later, so remembering one is
+ * honest. A hit is a fight happening *now*: a mark on remembered-but-unseen ground would say "an
+ * enemy is standing exactly here, this instant" — the same leak ADR-0017 §4 rejects for tracers,
+ * and worse, because a ring is a point rather than a line. The rule is also never more generous
+ * than the tracer already is: the shot's endpoint is this same position.
+ *
+ * One thing it buys back, worth naming because ADR-0017 filed the opposite as a known cost: a
+ * player shot from the dark now sees the impact on their own unit, which is always visible to them,
+ * even though the tracer is (correctly) suppressed. "Something is hitting me and I cannot see what"
+ * is a true statement and a far better cue than silence.
+ */
+export class ImpactTable {
+  capacity: number;
+  count = 0;
+  /** The engine's `ev.x`/`ev.y` — the TARGET's position, which is where the damage landed. */
+  x: Float32Array;
+  y: Float32Array;
+  /** The ATTACKER's owner, as the event carries it. The shot's colour, not the target's. */
+  owner: Uint8Array;
+  /** 1 when `def.bonusVsBuildings` applied — a siege weapon on a structure (row 66). */
+  heavy: Uint8Array;
+  /** 1 when `def.bonusVs[target.type]` applied — the counter triangle, landing (row 67). */
+  bonus: Uint8Array;
+  /**
+   * The weapon's own `def.splash.radius` in world units, or 0 for a weapon with no splash (row 68).
+   *
+   * Zero rather than a sentinel: "no splash" and "a splash of nothing" are the same picture, so
+   * unlike `BombTable.fuse`'s `FUSE_UNLIT` there is no state here that a number cannot say.
+   */
+  splashRadius: Float32Array;
+
+  constructor(capacity: number) {
+    this.capacity = capacity;
+    this.x = new Float32Array(capacity);
+    this.y = new Float32Array(capacity);
+    this.owner = new Uint8Array(capacity);
+    this.heavy = new Uint8Array(capacity);
+    this.bonus = new Uint8Array(capacity);
+    this.splashRadius = new Float32Array(capacity);
+  }
+
+  ensure(needed: number): void {
+    if (needed <= this.capacity) return;
+    let next = this.capacity || 64;
+    while (next < needed) next *= 2;
+    const grown = new ImpactTable(next);
+    this.capacity = next;
+    this.x = grown.x;
+    this.y = grown.y;
+    this.owner = grown.owner;
+    this.heavy = grown.heavy;
+    this.bonus = grown.bonus;
+    this.splashRadius = grown.splashRadius;
+  }
+}
+
+/**
+ * Where a selected producer sends what it builds (P5-T15; PARITY row 8).
+ *
+ * The `rally` overlay kind has existed in `renderer/port.ts` since Phase 1 and **both product
+ * renderers already draw it** — the only caller was `view/landing.ts`, drawing a line to a landing
+ * point. The battlefield never pushed one, so the engine's `building.rally` reached nothing.
+ *
+ * Three filters, each of them a decision rather than an omission:
+ *
+ *   • **The viewer's own buildings only.** An enemy's rally point is where their reinforcements
+ *     will arrive, which is intel a player has to scout for. Buildings cross this bridge on
+ *     *explored* memory, so without this an hour-old scouting pass would keep drawing a live line
+ *     out of an enemy factory. No further fog rule is needed once this one is in place: a player is
+ *     never fogged from their own base.
+ *   • **Producers only** — `BUILDINGS[type].produces`. This is upstream's own rule, not ours, and
+ *     the engine states it in its data: `refinery`, `habitat`, `foundry`, `market` and `datacenter`
+ *     each carry a comment saying that having no `produces` "keeps it out of the rally-point UI and
+ *     rally rendering". Only `command`, `barracks` and `stardock` train anything.
+ *   • **Selected only.** The same rule Q-07 applies to a building's commodity buffers: the
+ *     expensive detail belongs to the thing the player clicked. `makeBuilding` gives *every*
+ *     building a rally at `(x + 60, y + 60)` from birth, so drawing every producer's would paint an
+ *     identical diagonal stub out of every factory in the base — and a cue on all of them is not a
+ *     cue (the same argument `hasStatusGlyph` makes for badges).
+ *
+ * That default is not a null and is not treated as one: `updateProduction` really does send new
+ * units to it, so the stub is where they will really walk. Drawing it is how a player learns the
+ * rally point exists at all — which matters here more than usual, since the order that MOVES it
+ * (`issueSetRally`) has had an intent and no producer since Phase 1 (PARITY row 31).
+ *
+ * `nodeId` deliberately does not cross. Rally-to-node makes a new worker spawn already mining, and
+ * it is a difference in what happens on arrival rather than in where the line goes; carrying it
+ * would widen the `rally` overlay's stride, which `view/landing.ts` shares.
+ */
+export class RallyTable {
+  capacity: number;
+  count = 0;
+  /** The building. Owner is not carried: only the viewer's own ever cross. */
+  fromX: Float32Array;
+  fromY: Float32Array;
+  /** `building.rally` — where the next unit out of it walks. */
+  toX: Float32Array;
+  toY: Float32Array;
+
+  constructor(capacity: number) {
+    this.capacity = capacity;
+    this.fromX = new Float32Array(capacity);
+    this.fromY = new Float32Array(capacity);
+    this.toX = new Float32Array(capacity);
+    this.toY = new Float32Array(capacity);
+  }
+
+  ensure(needed: number): void {
+    if (needed <= this.capacity) return;
+    let next = this.capacity || 8;
+    while (next < needed) next *= 2;
+    const grown = new RallyTable(next);
+    this.capacity = next;
+    this.fromX = grown.fromX;
+    this.fromY = grown.fromY;
+    this.toX = grown.toX;
+    this.toY = grown.toY;
+  }
+}
+
+/**
  * Entities that died this tick — the one combat cue the engine hands over ready-made (P3-T07).
  *
  * `WorldBridge.step` used to clear `state.events` and throw the contents away, on the grounds that
@@ -496,6 +639,10 @@ export interface Snapshot {
   bombs: BombTable;
   /** Shots fired this tick, derived (P3-T05, ADR-0017). */
   shots: ShotTable;
+  /** Hits that landed this tick, from the engine's own `attackHit` (P5-T15, rows 66–68). */
+  impacts: ImpactTable;
+  /** Rally lines for the selected producers the viewer owns (P5-T15, row 8). */
+  rally: RallyTable;
   /** Entities that died this tick, from the engine's own events (P3-T07). */
   deaths: DeathTable;
   /** Stable index → engine type name. Grows only when a type is first seen. */
@@ -549,12 +696,106 @@ export interface Snapshot {
 }
 
 /**
- * Engine ids are `u12` / `b7` / `n3`. Pack to an int so the hot tables stay numeric; buildings go
- * negative so a single number carries both the identity and the kind.
+ * Engine ids packed into the one `Int32Array` every hot table is made of, and back again.
+ *
+ * The simulation mints ids in namespaces it keeps **deliberately** apart, and says so in its own
+ * comments — `engine/bomb.js` on `crater-${bomb.id}`: *"so it can never collide with a
+ * map-generated node's `n<N>` id scheme — the two id spaces are namespaced apart by construction"*.
+ * There are five:
+ *
+ *   • `u12` — a unit.               `b7` — a building.               `n3` — a map deposit.
+ *   • `g4`  — anything the GALAXY minted: the relief ship `checkGalaxyRescue` sends a wiped-out
+ *     player, and every rider `jumpCapital` lands on a new world. Both from `galaxy.entitySeq`.
+ *   • `wreck-u12-ore`, `crater-bomb3-ore` — salvage and crater deposits, named off the entity that
+ *     died there. **No number to pack at all.**
+ *
+ * This used to be `Number.parseInt(id.slice(1))`, sign-flipped for buildings, which collapsed all
+ * five onto one. Two live breakages came out of that, both of them a dead click on the exact
+ * object the player was told to click:
+ *
+ *   • `n7`, `u7` and `g7` all packed to **8**. So `entityAt` resolved the relief ship's `g1` to
+ *     `u1` — which either names nothing (the selection stays empty) or names a *different unit*,
+ *     which is worse: every subsequent order goes to it. Whole expeditions land under `g` ids.
+ *   • `parseInt("reck-u12-ore")` is **NaN**, and an `Int32Array` stores NaN as **0**. Every wreck
+ *     and every crater on the map packed to the same 0 and decoded to the id `n-1`, so no salvage
+ *     deposit and no crater in the game could be right-clicked (ADR-0018, shipped in Phase 3).
+ *
+ * So each namespace gets its own band, and ids with nothing to pack are interned. Buildings keep
+ * the sign convention because `isBuildingId` is what lets a single number carry the kind — and
+ * they can keep it: `jumpCapital` re-ids **riders only**, so no building ever carries a `g`.
  */
+// 16.7 M ids per namespace against four bands, inside `Int32Array`'s 2.1 B with two orders of
+// magnitude spare. A counter that reached the band edge would encode into its NEIGHBOUR's space and
+// decode as the wrong kind — silently, which is the failure mode this whole rewrite exists to
+// remove — so `numericId` interns anything that big instead. That is slower and correct rather than
+// fast and wrong, and it is what makes the codec total for *every* counter value rather than for
+// the ones a match happens to reach.
+const ID_BAND = 1 << 24;
+const BAND_GALAXY = ID_BAND;
+const BAND_NODE = 2 * ID_BAND;
+const BAND_OPAQUE = 3 * ID_BAND;
+
+/**
+ * `wreck-…` / `crater-…` ids, interned in first-seen order — the one namespace with no counter to
+ * read. Hashing them would reintroduce exactly the collision this exists to remove.
+ *
+ * It only grows, which is deliberate and cheap: the entries are the strings the engine already
+ * holds, and a match makes hundreds, not millions. Two worlds can mint the same `wreck-u12-ore`,
+ * and that is fine — a snapshot only ever holds the active seat, so they never coexist in one
+ * table, and the same string mapping to the same integer is the correct answer anyway.
+ */
+const opaqueIds: string[] = [];
+const opaqueIndex = new Map<string, number>();
+
 export function numericId(id: string): number {
-  const n = Number.parseInt(id.slice(1), 10);
-  return id.charCodeAt(0) === 98 /* 'b' */ ? -(n + 1) : n + 1;
+  // Hand-rolled rather than `parseInt(id.slice(1))`, because `slice` allocates a string and this
+  // runs for every entity and every node, every tick (ADR-0006: no per-frame allocation). Falling
+  // out of it: "the digits ran out" is a branch here, where it used to be a silent NaN.
+  const len = id.length;
+  if (len < 2) return intern(id);
+  let n = 0;
+  for (let i = 1; i < len; i++) {
+    const d = id.charCodeAt(i) - 48;
+    if (d < 0 || d > 9) return intern(id);
+    n = n * 10 + d;
+  }
+  const kind = id.charCodeAt(0);
+  // Buildings own the ENTIRE negative half and are not banded, so they need no bound and must not
+  // take the guard below: interning one would hand it a positive id, and `isBuildingId` — the only
+  // channel the snapshot has for an entity's kind — would then call a building a unit.
+  if (kind === 98 /* 'b' */) return -(n + 1);
+  if (n + 1 >= ID_BAND) return intern(id);  // see ID_BAND: never encode into the next band
+  switch (kind) {
+    case 117: return n + 1;                 // 'u'
+    case 103: return BAND_GALAXY + n + 1;   // 'g'
+    case 110: return BAND_NODE + n + 1;     // 'n'
+    default:  return intern(id);            // a namespace this client has not met yet
+  }
+}
+
+/**
+ * The inverse. **This is the only one** — it used to be copied into `intents.ts`, `hud.ts`,
+ * `game.ts` and `building-panel.ts`, four transcriptions of three lines, and all four were wrong
+ * in the same two ways because that is what four copies of a rule do.
+ */
+export function engineId(numeric: number): string {
+  if (numeric < 0) return `b${-numeric - 1}`;
+  if (numeric > BAND_OPAQUE) return opaqueIds[numeric - BAND_OPAQUE - 1] ?? "";
+  if (numeric > BAND_NODE) return `n${numeric - BAND_NODE - 1}`;
+  if (numeric > BAND_GALAXY) return `g${numeric - BAND_GALAXY - 1}`;
+  // Zero is not a packed id — nothing encodes to it now that NaN cannot. Naming it beats returning
+  // the confident lie `u-1`.
+  return numeric === 0 ? "" : `u${numeric - 1}`;
+}
+
+function intern(id: string): number {
+  let i = opaqueIndex.get(id);
+  if (i === undefined) {
+    i = opaqueIds.length;
+    opaqueIds.push(id);
+    opaqueIndex.set(id, i);
+  }
+  return BAND_OPAQUE + i + 1;
 }
 
 export function isBuildingId(numeric: number): boolean {
@@ -661,6 +902,8 @@ export class SnapshotExtractor {
       auras: new AuraTable(16),
       bombs: new BombTable(8),
       shots: new ShotTable(64),
+      impacts: new ImpactTable(64),
+      rally: new RallyTable(8),
       deaths: new DeathTable(32),
       typeNames: [],
       comNames: [],
@@ -761,8 +1004,12 @@ export class SnapshotExtractor {
 
     e.count = n;
     this.diffLifetimes();
+    // `extractShots` FIRST, and it is the one ordering in this method that is load-bearing — see its
+    // own doc comment. `extractImpacts` has no such constraint and says why.
     this.extractShots(state, fog);
+    this.extractImpacts(state, fog);
     this.extractDeaths(state, fog);
+    this.extractRally(state, opts.viewer);
     this.extractNodes(state, fog);
     this.extractAuras(state, fog);
     this.extractBombs(state, fog);
@@ -1051,6 +1298,77 @@ export class SnapshotExtractor {
     shots.toY[n] = ty;
     shots.owner[n] = e.owner === "player" ? SNAP_PLAYER : SNAP_AI;
     shots.count = n + 1;
+  }
+
+  /**
+   * Landed hits, from the engine's own `attackHit` events (P5-T15) — see `ImpactTable`.
+   *
+   * **Unlike `extractShots`, this has no ordering constraint at all**, and the reason is worth
+   * stating next to a method that does: the event carries the impact position itself, so nothing
+   * here consults `prevPos` and a target that died on this same tick needs no fallback. That is the
+   * whole difference between reading an event and deriving one.
+   *
+   * The three payload fields are copied and never re-derived. `heavy` in particular is *not*
+   * `owner !== target.owner && target is a building` or any other reconstruction: it is
+   * `def.bonusVsBuildings && target.kind === "building"`, which is a question about the ATTACKER's
+   * weapon that the event has already answered and this side of the bridge cannot ask.
+   */
+  private extractImpacts(state: State, fog: Fog): void {
+    const impacts = this.snapshot.impacts;
+    impacts.count = 0;
+    const events = state.events ?? [];
+    // Sized to the whole event list rather than to the hits in it: one pass, no counting pass, and
+    // the over-estimate is bounded by a tick's events. `DeathTable` sizes itself the same way.
+    impacts.ensure(events.length);
+    for (const ev of events) {
+      if (ev.type !== "attackHit") continue;
+      const x = ev.x as number;
+      const y = ev.y as number;
+      // Live vision, not the explored memory `extractDeaths` uses. See `ImpactTable`: a hit is a
+      // fight happening now, and a mark on remembered ground names an enemy's position this tick.
+      if (!isVisibleAt(fog, x, y)) continue;
+      const n = impacts.count;
+      impacts.x[n] = x;
+      impacts.y[n] = y;
+      impacts.owner[n] = ev.owner === "player" ? SNAP_PLAYER : SNAP_AI;
+      impacts.heavy[n] = ev.heavy ? 1 : 0;
+      impacts.bonus[n] = ev.bonus ? 1 : 0;
+      // `undefined` for a weapon with no splash — the engine writes the field either way, so this
+      // reads it either way rather than testing for its presence.
+      impacts.splashRadius[n] = (ev.splashRadius as number | undefined) ?? 0;
+      impacts.count = n + 1;
+    }
+  }
+
+  /**
+   * Rally lines for the viewer's own selected producers (P5-T15) — see `RallyTable` for the three
+   * filters and why each one is there.
+   *
+   * `produces` is asked of the engine's own `BUILDINGS` table rather than listed here, because a
+   * hand-written list of "the buildings that train things" is exactly the shape P4-T14 deleted:
+   * upstream adds a producer and the client silently keeps the old three.
+   */
+  private extractRally(state: State, viewer: OwnerId): void {
+    const rally = this.snapshot.rally;
+    rally.count = 0;
+    rally.ensure(state.selection.length);
+    for (const id of state.selection) {
+      const b = state.buildings.get(id);
+      // A selection may hold units and enemy buildings alike — `applySelect` accepts any entity the
+      // player can click, and only the orders downstream of it are owner-gated.
+      if (!b || b.owner !== viewer) continue;
+      if (!(BUILDINGS[b.type]?.produces?.length)) continue;
+      const point = b.rally;
+      // Every building is minted with one, but a save from an older build or a hand-made state need
+      // not have: a missing rally is no line rather than a line to the origin.
+      if (!point) continue;
+      const n = rally.count;
+      rally.fromX[n] = b.x;
+      rally.fromY[n] = b.y;
+      rally.toX[n] = point.x;
+      rally.toY[n] = point.y;
+      rally.count = n + 1;
+    }
   }
 
   /**

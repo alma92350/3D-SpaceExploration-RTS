@@ -18,6 +18,11 @@ import {
   createLane, deleteLane, assignShipToLane, unassignShipFromLane, setColonyPolicy,
   issueSetLogiPriority, issueSetRally, issueStop, prereqsMet, queueProduction, researchTech,
   sampleTerrain, sell, tradeables,
+  offerTribute, offerGift, fulfillRequest, tributeCost, surrenderGalaxy,
+  // --- Phase 5's parity close-out (P5-T13, PARITY.md §5.2 rows 31–40) ---------------------------
+  canBuildType, canLogisticsType, FREIGHTER_AI_TECH,
+  issueAssistBuild, issueFerryFreighter, issueRepair, issueScout, issueServiceBuilding,
+  issueSetAILogistics, issueSetCollectPoint, issueSetHomeBase,
 } from "../engine/index.js";
 
 export type Intent =
@@ -31,8 +36,28 @@ export type Intent =
   | { kind: "patrol"; x: number; y: number }
   | { kind: "build"; buildingType: string; x: number; y: number }
   | { kind: "train"; buildingId: string; unitType: string }
-  | { kind: "cancelTrain"; buildingId: string; queueIndex: number }
-  | { kind: "setRally"; buildingId: string; x: number; y: number }
+  /**
+   * Cancel one queued unit (row 32). **Both payload fields are optional and that is the row.**
+   *
+   * The intent has existed since Phase 1 with `buildingId` and `queueIndex` required, and nothing
+   * on either end of it — because nothing that could produce it can see either number. A gesture
+   * cannot: `input/` has no selection and no queue. So the bridge resolves both, the same way
+   * `deploy` has resolved its colony ship since the MVP: absent `buildingId` means every selected
+   * player building, and absent `queueIndex` means the NEWEST job — "undo the last thing I
+   * queued", which is the only one a player can name without pointing at it. A panel that CAN
+   * point still passes both, so widening this broke nothing.
+   */
+  | { kind: "cancelTrain"; buildingId?: string; queueIndex?: number }
+  /**
+   * Set a rally point (row 31), and rally-TO-NODE with it.
+   *
+   * `nodeId` is upstream's own fourth argument and the reason this intent could not simply be
+   * wired as it stood: `issueSetRally(building, x, y, nodeId)` makes a worker spawn already mining
+   * the node the rally sits on, and an intent carrying only x/y is a rally point quietly worse than
+   * upstream's for exactly the unit that needs it most. `buildingId` is optional for
+   * `cancelTrain`'s reason.
+   */
+  | { kind: "setRally"; buildingId?: string; x: number; y: number; nodeId?: string | null }
   | { kind: "deploy" }
   // --- Phase 2, the economy (P2-T03) ---
   | { kind: "pause"; buildingId: string; paused: boolean }
@@ -64,7 +89,47 @@ export type Intent =
   | { kind: "deleteLane"; laneId: string }
   | { kind: "assignLane"; laneId: string; unitId: string }
   | { kind: "unassignLane"; laneId: string; unitId: string }
-  | { kind: "colonyPolicy"; planetId: string; patch: Record<string, unknown> };
+  | { kind: "colonyPolicy"; planetId: string; patch: Record<string, unknown> }
+  // --- Phase 5 (P5-T04, P5-T07) -----------------------------------------------------------------
+  //
+  // The three diplomacy levers carry a `planetId` for the reason `colonyPolicy` does: a colony's
+  // stance with its neighbour is as real as the seat's, and a player looking at the starmap is
+  // deciding about a world they are not standing on.
+  | { kind: "tribute"; planetId: string }
+  | { kind: "gift"; planetId: string; com: string; qty: number }
+  | { kind: "fulfilFavor"; planetId: string }
+  /** The one terminal choice. Galaxy-scoped, so it takes nothing. */
+  | { kind: "surrender" }
+  // --- Phase 5's parity close-out (P5-T13, PARITY.md §5.2 rows 33–40) ----------------------------
+  //
+  // Eight orders the engine has always had and this client has never given anybody a way to reach.
+  // Every one of them names only what the CLICK found — a target, or nothing at all — because the
+  // actor is the selection and the selection is sim state the input layer cannot see. That is the
+  // `deploy`/`stop`/`hold` shape, not a new one: the bridge filters the selection with the engine's
+  // OWN predicate (`canLogisticsType`'s field, `role`, `canBuildType`), so an order can never be
+  // offered to a unit the engine would silently skip.
+  //
+  // `queue` rides along wherever the engine takes a `queue` argument, so shift-click chains a
+  // logistics job exactly as it chains a move.
+  /** Row 33: the explicit "go fix that", the one a player gives when the automation picks wrong. */
+  | { kind: "repair"; targetId: string; queue: boolean }
+  /** Row 34: the manual counterpart to `assignHaul` — carry this building's inputs in, output out. */
+  | { kind: "serviceBuilding"; buildingId: string; queue: boolean }
+  /** Row 35. Takes nothing: scout mode is a stance, not a destination (`scout.js` picks the ground). */
+  | { kind: "scout" }
+  /** Row 36: more hands on a site already founded and already paid for. */
+  | { kind: "assistBuild"; buildingId: string; queue: boolean }
+  /** Row 37: a worker loading a landed freighter, which is not the freighter acting on its own. */
+  | { kind: "ferryFreighter"; freighterId: string; queue: boolean }
+  /** Row 38: the multi-base control — which Command Center's territory a hauler stays loyal to. */
+  | { kind: "setHomeBase"; ccId: string }
+  /**
+   * Rows 39 and 40, the two freighter modes. `on` is optional because the gesture is a TOGGLE and
+   * only the simulation knows which way it is pointing; absent, the bridge flips it. A panel that
+   * has already read the flag passes it, so the button and the key cannot disagree.
+   */
+  | { kind: "collectPoint"; on?: boolean }
+  | { kind: "aiLogistics"; on?: boolean };
 
 /**
  * Apply one intent. Returns a player-facing reason when the engine refused, or null on success.
@@ -228,6 +293,52 @@ export function applyIntent(state: State, intent: Intent, galaxy: Galaxy): strin
       setColonyPolicy(galaxy, intent.planetId, intent.patch);
       return null;
 
+    // --- Phase 5 -------------------------------------------------------------------------------
+    //
+    // All four ask the engine and report its answer. The refusals are worth reading together,
+    // because the engine says `false` for several different reasons and a player needs the right
+    // one: `offerTribute` refuses on price, `offerGift` on an empty stockpile (an over-ask is a
+    // SMALLER gift, never a refusal — the engine clamps to `floor(held)`), and `fulfillRequest` on
+    // three separate things the diplomacy panel already distinguishes.
+    case "tribute": {
+      const world = worldOrNull(galaxy, intent.planetId);
+      if (!world) return "That world has no record to appease";
+      if (offerTribute(galaxy, world)) return null;
+      const dip = (world as unknown as { diplomacy?: object }).diplomacy;
+      // The price, not "it failed" — tribute escalates 1.55x a payment, so the number is the whole
+      // explanation and `tributeCost` is the only thing that knows it.
+      return dip
+        ? `Not enough credits — this tribute costs ${tributeCost(dip)}`
+        : "This world has no neighbour to appease";
+    }
+
+    case "gift": {
+      const world = worldOrNull(galaxy, intent.planetId);
+      if (!world) return "That world has no record to give to";
+      return offerGift(world, intent.com, intent.qty)
+        ? null
+        : `No ${intent.com} in the stockpile to give`;
+    }
+
+    case "fulfilFavor": {
+      const world = worldOrNull(galaxy, intent.planetId);
+      if (!world) return "That world has no record to answer";
+      return fulfillRequest(galaxy, world) ? null : "That request has lapsed, or the stock is short";
+    }
+
+    case "surrender":
+      // `surrenderGalaxy` returns NOTHING — not even P2-T12's bare `false` — and refuses silently on
+      // a seat that is already over. So this asks the question the engine will not answer.
+      //
+      // It matters because of the HUD's own rule: a struck-through button still enqueues, "so the
+      // engine's own refusal is what explains it" (`HudAction`). For every other command that
+      // holds. For this one the engine says nothing, and a click on a struck-through Surrender
+      // would produce no message at all — which is the silent failure `relief-panel.ts`'s
+      // three-valued `surrender` state was written to name.
+      if (state.over === true) return "This run has already ended";
+      surrenderGalaxy(galaxy);
+      return null;
+
     case "stop":
       issueStop(selectedUnits(state));
       return null;
@@ -260,14 +371,182 @@ export function applyIntent(state: State, intent: Intent, galaxy: Galaxy): strin
         : `${def.name} cannot be trained here`;
     }
 
-    case "cancelTrain":
-      cancelProduction(state, intent.buildingId, intent.queueIndex);
-      return null;
+    case "cancelTrain": {
+      // **The one order in this whole group that ANSWERS.** `cancelProduction` returns a boolean —
+      // false for a building that is gone and for an index with no job, true when it spliced one
+      // out and refunded what was actually charged for it (`job.alt ? def.altCost : def.cost`). So
+      // "did anything happen" is the engine's own verdict here, never a re-read of the queue.
+      const targets = buildingsFor(state, intent.buildingId);
+      if (targets.length === 0) return "Select a building with something in its production queue";
+      let cancelled = 0;
+      // The LAST job, not the first: cancelling the head would abort the unit already being built,
+      // which is not what "cancel" means to a player who has just over-queued. An index the caller
+      // named wins, and an empty queue makes this `-1` — which `cancelProduction` answers `false`
+      // to, exactly as it does for any other index with no job.
+      for (const b of targets) {
+        if (cancelProduction(state, b.id, intent.queueIndex ?? b.queue.length - 1)) cancelled++;
+      }
+      return cancelled > 0 ? null : "Nothing is queued there to cancel";
+    }
 
     case "setRally": {
+      const targets = buildingsFor(state, intent.buildingId);
+      if (targets.length === 0) return "Select a building to set its rally point";
+      // `issueSetRally` accepts ANY building and returns nothing, so it cannot say that a rally on
+      // a Smelter is a control that does nothing. `production.js` reads `building.rally` at the
+      // moment a unit spawns, and the only buildings that ever spawn one are the ones
+      // `queueProduction` itself gates on — `BUILDINGS[type].produces`. That field is the engine's
+      // own answer to "does anything ever come out of here", so it is the filter, and a selection
+      // with none of them is refused rather than silently accepted.
+      const producers = targets.filter((b) => BUILDINGS[b.type]?.produces?.length);
+      if (producers.length === 0) {
+        return `${nameOfBuilding(targets[0]!)} trains no units — a rally point there would do nothing`;
+      }
+      for (const b of producers) issueSetRally(b, intent.x, intent.y, intent.nodeId ?? null);
+      return null;
+    }
+
+    // --- Phase 5's parity close-out (P5-T13, PARITY.md §5.2 rows 33–40) --------------------------
+    //
+    // Read these together, because they share one shape and one problem. **Every engine function
+    // below returns `void`.** Not P2-T12's bare `false`, not `surrenderGalaxy`'s nothing-at-all on
+    // one path — nothing, ever, on any path. Each silently skips whatever in the selection it does
+    // not accept and silently accepts targets its own per-tick update then throws away. So each
+    // case here asks the question the engine will not answer, using the engine's own predicate, and
+    // asks it BEFORE the call rather than trying to detect afterwards that nothing happened.
+    //
+    // The predicates are quoted, never invented:
+    //
+    //   • `canLogisticsType(u.type)` gates repair / service / ferry, and is part of home base.
+    //   • `UNITS[u.type].role` gates scout ("scout") and both freighter modes ("freighter").
+    //   • `canBuildType(u.type, b.type)` IS `canBuildCategory(u.type, BUILDINGS[b.type].category)`,
+    //     which is what `issueAssistBuild` filters on and what `issueBuild` gates founding on.
+    //   • `UNITS[f.type].cargoHold` is what `updateFerry` nulls a ferry target for, and what
+    //     `assignFerry` scans for. A hold-less freighter accepts the order and never loads.
+    //   • `zoneFirst`'s `pinned` test — own, finished, `isCommandCenter` — is what makes a home
+    //     base take effect. `issueSetHomeBase` writes `u.homeCC` whatever id it is handed.
+
+    case "repair": {
+      const target = getEntity(state, intent.targetId);
+      if (!target) return null;                        // it died between the click and the tick
+      // `issueRepair` checks no owner and neither does `updateRepairJob`, so the engine will
+      // happily have a worker heal the enemy's Command Center. Owner-checked here for the reason
+      // `bombOrNull` is: the one thing a command may never do is act on somebody else's entity.
+      if (target.owner !== "player") return "That is not yours to repair";
+      // `updateRepairJob`'s own first line drops the job on a constructing target. An order given
+      // here would vanish on the very next tick with nothing said.
+      const site = state.buildings.get(intent.targetId);
+      if (site?.constructing) return `${nameOfBuilding(site)} is still being built — send builders`;
+      const units = selectedUnits(state).filter((u) => canLogisticsType(u.type));
+      if (units.length === 0) return `Only a ${logisticsNames()} can be sent to repair`;
+      issueRepair(units, intent.targetId, intent.queue);
+      return null;
+    }
+
+    case "serviceBuilding": {
       const b = state.buildings.get(intent.buildingId);
       if (!b) return null;
-      issueSetRally(b, intent.x, intent.y);
+      if (b.owner !== "player") return "That is not yours to service";
+      // `updateService`'s own `if (!b || b.constructing)` — same drop, same silence, as repair.
+      if (b.constructing) return `${nameOfBuilding(b)} is still being built — send builders`;
+      const units = selectedUnits(state).filter((u) => canLogisticsType(u.type));
+      if (units.length === 0) return `Only a ${logisticsNames()} can run a service round trip`;
+      // A manual service on a building with no recipe and no output buffer is NOT a no-op: the
+      // engine's `order.manual && b` branch parks the worker beside it and keeps it there until
+      // re-ordered. That is upstream's documented behaviour for a hand-assigned worker, so it is
+      // left alone rather than second-guessed here.
+      issueServiceBuilding(units, b.id, intent.queue);
+      return null;
+    }
+
+    case "scout": {
+      const units = selectedUnits(state).filter((u) => UNITS[u.type]?.role === "scout");
+      if (units.length === 0) return `Only a ${roleNames("scout")} can scout`;
+      issueScout(units);
+      return null;
+    }
+
+    case "assistBuild": {
+      const b = state.buildings.get(intent.buildingId);
+      if (!b) return null;
+      if (b.owner !== "player") return "That is not yours to build";
+      // The other half of repair's line, and the engine draws it: a finished building takes a
+      // repair job and refuses a build one; an unfinished one takes a build job and drops a repair.
+      if (!b.constructing) return `${nameOfBuilding(b)} is already finished`;
+      const units = selectedUnits(state).filter((u) => canBuildType(u.type, b.type));
+      if (units.length === 0) return `Nothing selected can build a ${nameOfBuilding(b)}`;
+      // The TYPE as well as the id, because the engine resolves the category from the type rather
+      // than from the placed building — `BUILDINGS[buildingType]?.category`, not `b.category`.
+      issueAssistBuild(units, b.id, b.type, intent.queue);
+      return null;
+    }
+
+    case "ferryFreighter": {
+      const ship = state.units.get(intent.freighterId);
+      if (!ship) return null;
+      if (ship.owner !== "player") return "That is not your ship";
+      // `updateFerry` nulls its target on `!UNITS[f.type]?.cargoHold` and the job goes with it.
+      // The plain `freighter` really has none — `entities.js` gives a hold to `hauler`,
+      // `heavyhauler` and `bulkfreighter` only — so this is a live case, not padding.
+      if (!UNITS[ship.type]?.cargoHold) {
+        return `${UNITS[ship.type]?.name ?? ship.type} has no hold to load`;
+      }
+      // **No `u.id !== ship.id` here, unlike `escort` — and that is a decision, not an omission.**
+      // The first draft had one, and mutation testing found it unreachable: `canLogisticsType` is
+      // already false for every freighter role, so the ship can never be in its own crew. The
+      // engine agrees on purpose rather than by accident — `sim.js` offers `assignFerry` only to
+      // logistics types, "never ferry — a freighter doesn't ferry another freighter". A guard no
+      // test can reach is the kind of unreachable code this project keeps finding; the filter
+      // below is what does the work and the test says so.
+      const units = selectedUnits(state).filter((u) => canLogisticsType(u.type));
+      if (units.length === 0) return `Only a ${logisticsNames()} can load a freighter`;
+      issueFerryFreighter(units, ship.id, intent.queue);
+      return null;
+    }
+
+    case "setHomeBase": {
+      const cc = state.buildings.get(intent.ccId);
+      if (!cc) return null;
+      // `zoneFirst`'s `pinned`, condition for condition. An override failing any of the three is
+      // IGNORED there and written anyway by `issueSetHomeBase`, so this is the only place it can
+      // be caught — and a home base that is silently ignored is the whole multi-base control
+      // reading as broken.
+      if (cc.owner !== "player") return "That is not your base";
+      if (!BUILDINGS[cc.type]?.isCommandCenter) return `${nameOfBuilding(cc)} is not a Command Center`;
+      if (cc.constructing) return `${nameOfBuilding(cc)} is still being built`;
+      const units = selectedUnits(state).filter(keepsHomeBase);
+      if (units.length === 0) return "Nothing selected keeps a home base";
+      issueSetHomeBase(units, cc.id);
+      return null;
+    }
+
+    case "collectPoint": {
+      const ships = selectedUnits(state).filter((u) => UNITS[u.type]?.role === "freighter");
+      if (ships.length === 0) return `Only a ${roleNames("freighter")} can be a collection point`;
+      const on = intent.on ?? !ships.every((u) => u.collectPoint === true);
+      // `issueSetCollectPoint` takes every freighter role, and `assignShuttle` only ever moves a
+      // ship with a hold — `freightUsed` is 0 and `freightRoom` is 0 without `cargoHold`, so the
+      // run it offers can never start. Switching a hold-less ship on is accepted by the engine and
+      // does nothing; the engine draws no such line, so this does, before anything is written.
+      if (on && !ships.some((u) => UNITS[u.type]?.cargoHold)) {
+        return `${UNITS[ships[0]!.type]?.name ?? ships[0]!.type} has no hold — it would collect nothing`;
+      }
+      issueSetCollectPoint(ships, on);
+      return null;
+    }
+
+    case "aiLogistics": {
+      const ships = selectedUnits(state).filter((u) => UNITS[u.type]?.role === "freighter");
+      if (ships.length === 0) return `Only a ${roleNames("freighter")} can be automated`;
+      const on = intent.on ?? !ships.every((u) => u.aiLogistics === true);
+      // The research gate, asked BEFORE the order. `issueSetAILogistics` skips an unresearched
+      // freighter silently and returns nothing, so without this the key is simply dead until a
+      // tech the player may not know exists has been finished. Standing DOWN is never gated —
+      // upstream's own comment — so the question is only asked when switching on.
+      if (on && !state.players.player.upgrades[FREIGHTER_AI_TECH]) {
+        return `${TECHS[FREIGHTER_AI_TECH]?.name ?? FREIGHTER_AI_TECH} has not been researched`;
+      }
+      issueSetAILogistics(ships, on, state);
       return null;
     }
 
@@ -448,6 +727,17 @@ function bombOrNull(state: State, id: string): Unit | null {
   return UNITS[u.type]?.role === "bomb" ? u : null;
 }
 
+/**
+ * One world's state by id, or null if the galaxy has never instantiated it.
+ *
+ * An unvisited world in `ODYSSEY_WORLDS` has no `State` at all until `addPlanet` makes one, so this
+ * is a real case rather than defensive padding: the starmap draws every world in the roster and a
+ * diplomacy control on one the player has never reached must refuse rather than throw.
+ */
+function worldOrNull(galaxy: Galaxy, planetId: string): State | null {
+  return galaxy.planets.get(planetId) ?? null;
+}
+
 function selectedUnits(state: State): Unit[] {
   const out: Unit[] = [];
   for (const id of state.selection) {
@@ -455,4 +745,71 @@ function selectedUnits(state: State): Unit[] {
     if (u && u.owner === "player") out.push(u);
   }
   return out;
+}
+
+/* =================================================================================================
+   P5-T13 — what the ten orders needed that the façade does not carry.
+
+   Three narrow shapes and four helpers, each one quoting the engine rather than paraphrasing it.
+   The casts follow `ui/gate-panel.ts`'s precedent: a field that exists in the vendored JavaScript,
+   is read by exactly one place, and has never been declared — written down next to that place.
+   ================================================================================================= */
+
+
+/**
+ * `issueSetHomeBase`'s filter, expression for expression:
+ * `canLogisticsType(u.type) || UNITS[u.type]?.role === "support" || UNITS[u.type]?.role === "freighter"`.
+ *
+ * Wider than every other order in this group — a Mender and a freighter both consult a home zone —
+ * which is exactly why it is written out rather than assumed to be the logistics set again.
+ */
+function keepsHomeBase(u: Unit): boolean {
+  const role = UNITS[u.type]?.role;
+  return canLogisticsType(u.type) || role === "support" || role === "freighter";
+}
+
+/**
+ * The buildings an order applies to: the one named, or the whole selection.
+ *
+ * Owner-filtered on both paths. A named id comes from a panel and a selection comes from
+ * `state.selection`, and neither is trustworthy about ownership — enemy entities are selectable
+ * here (you can inspect them) exactly as they are upstream.
+ */
+function buildingsFor(state: State, buildingId?: string): Building[] {
+  if (buildingId !== undefined) {
+    const b = state.buildings.get(buildingId);
+    return b && b.owner === "player" ? [b] : [];
+  }
+  const out: Building[] = [];
+  for (const id of state.selection) {
+    const b = state.buildings.get(id);
+    if (b && b.owner === "player") out.push(b);
+  }
+  return out;
+}
+
+function nameOfBuilding(b: Building): string {
+  return BUILDINGS[b.type]?.name ?? b.type;
+}
+
+/**
+ * Every unit the engine gives `role`, by name — so a refusal names UNITS, not a role string.
+ *
+ * Asked of `UNITS` rather than typed in, which is the difference between a message that stays true
+ * when upstream adds a second scout and one that starts lying on that day.
+ */
+function roleNames(role: string): string {
+  return joinNames(Object.values(UNITS).filter((d) => d.role === role).map((d) => d.name), role);
+}
+
+/** The same, for the logistics flag — which is a flag rather than a role, so it needs its own pass. */
+function logisticsNames(): string {
+  const names = Object.entries(UNITS).filter(([type]) => canLogisticsType(type)).map(([, d]) => d.name);
+  return joinNames(names, "logistics unit");
+}
+
+function joinNames(names: string[], fallback: string): string {
+  if (names.length === 0) return fallback;
+  if (names.length === 1) return names[0]!;
+  return `${names.slice(0, -1).join(", ")} or ${names[names.length - 1]}`;
 }

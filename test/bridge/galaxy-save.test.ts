@@ -786,12 +786,18 @@ describe("the save version gate (P4-T09)", () => {
    much wreckage a world has accumulated. Measured below on an ordinary twelve-Lancer skirmish:
    radioactives 29 -> 31, about 7%, from four wreck nodes.
 
-   This section asserts the defect IS THERE. If upstream fixes it this test goes red — which is the
-   correct outcome: delete the section, and say so in the sync.
+   FIXED UPSTREAM in 50ceb88 (issue #92), reported from here. The section is INVERTED rather than
+   deleted: the scenario — a real twelve-Lancer fight, run 3 000 ticks so the dead mature into wreck
+   NODES — is expensive to build and is exactly what a regression would need. So it now asserts the
+   price book survives, and the note above is kept because it is why the test exists at all.
+
+   The fix skips wreck and crater nodes in `createMarket` rather than persisting `base`, which
+   changes nothing during play: at world creation there are none to skip, so the only call affected
+   is the one on load, and it now reproduces creation.
    ================================================================================================= */
 
-describe("KNOWN ENGINE DEFECT: market prices do not survive a save on a fought-over world", () => {
-  it("re-derives a world's price book from a node set the live book never saw", () => {
+describe("market prices survive a save on a fought-over world (was issue #92)", () => {
+  it("re-derives the same price book on load, from a node set that has grown wreckage", () => {
     const galaxy = createGalaxy({ seed: SEED, startId: HOME });
     const state = galaxy.planets.get(HOME)!;
     const bookAtCreation = { ...state.market.base };
@@ -826,14 +832,10 @@ describe("KNOWN ENGINE DEFECT: market prices do not survive a save on a fought-o
     const moved = Object.keys(state.market.base).filter((com) => state.market.base[com] !== back.market.base[com]);
     expect(
       moved,
-      "the market base survived a save on a world carrying wreck nodes — upstream has fixed the " +
-      "defect this section documents. Delete this whole describe block and note it in the engine sync.",
-    ).not.toEqual([]);
-
-    // Named, so the report is specific rather than "something moved".
-    for (const com of moved) {
-      expect(back.market.base[com], `${com} base did not actually move`).not.toBe(state.market.base[com]);
-    }
+      `the price book moved across a save on a world carrying ${wreckNodes.length} wreck nodes: ` +
+      moved.map((c) => `${c} ${state.market.base[c]} -> ${back.market.base[c]}`).join(", ") +
+      ". This is issue #92 regressing — `createMarket` must skip nodes flagged `wreck` or `crater`.",
+    ).toEqual([]);
     expect(back.market.pressure, "market PRESSURE does survive — only the base is re-derived")
       .toEqual(state.market.pressure);
   });

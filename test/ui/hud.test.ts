@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { MVP_BUILDINGS, formatClock, hudModel } from "../../src/ui/hud.js";
 import { MVP_WORLD, WorldBridge } from "../../src/bridge/world.js";
 import { STEP_SECONDS } from "../../src/app/loop.js";
-import { BUILDINGS, UNITS, supplyCap, supplyUsed } from "../../src/engine/index.js";
+import { BUILDINGS, UNITS, prereqsMet, supplyCap, supplyUsed } from "../../src/engine/index.js";
 
 const SEED = 20260814;
 
@@ -72,19 +72,25 @@ describe("hudModel", () => {
   });
 
   it("offers a selected building's own production list, and no unit the engine would refuse", () => {
+    // **This test used to assert the opposite, and it was wrong (P5-T14 / PARITY row 47.)** It
+    // pinned `odysseyOnly` as an exclusion — half of `queueProduction`'s `odysseyOnly && !endless`
+    // — so six of eighteen units were hidden from a menu the engine would have accepted them into,
+    // *by a test*, which is why nobody found it for four phases. The engine's own verdict is the
+    // assertion now, and the sweep that would have caught it lives in `production-menu.test.ts`.
     const bridge = opened();
     const cc = [...bridge.state.buildings.values()].find((b) => b.owner === "player" && b.type === "command")!;
     bridge.enqueue({ kind: "select", ids: [cc.id], additive: false });
     bridge.step(STEP_SECONDS);
 
-    const model = hudModel(bridge.snapshot);
+    const model = hudModel(bridge.snapshot, bridge.state);
     expect(model.production.length).toBeGreaterThan(0);
     for (const option of model.production) {
       expect(BUILDINGS.command!.produces).toContain(option.unitType);
-      // Odyssey-gated units (colony ships, freighters) are Phase 4's. A button the engine will
-      // refuse is worse than no button (F-07).
-      expect(UNITS[option.unitType]!.odysseyOnly ?? false).toBe(false);
+      expect(prereqsMet(bridge.state, "player", UNITS[option.unitType]!),
+        `${option.unitType} is offered with its prerequisites unmet`).toBe(true);
     }
+    expect(model.production.map((p) => p.unitType),
+      "this world is endless, so the engine accepts a Colony Ship here").toContain("colonyship");
   });
 
   it("marks what the player cannot afford without hiding it", () => {

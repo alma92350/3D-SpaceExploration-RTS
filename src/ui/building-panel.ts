@@ -13,7 +13,8 @@
 import { BUILDINGS, isElectrifiable } from "../engine/index.js";
 import {
   CONCERN_BUFFER_FULL, CONCERN_NONE, CONCERN_NO_FUEL, CONCERN_NO_POWER, CONCERN_PAUSED,
-  CONCERN_STARVED, CONCERN_THROTTLED, FLAG_BUILDING_KIND, type BuildingBuffers, type Snapshot,
+  CONCERN_STARVED, CONCERN_THROTTLED, FLAG_BUILDING_KIND, engineId,
+  type BuildingBuffers, type Snapshot,
 } from "../bridge/snapshot.js";
 
 /** One commodity in a buffer, with the room it has — enough to draw a bar rather than a number. */
@@ -100,15 +101,11 @@ function indexOfSelected(snap: Snapshot, id: string): number | null {
   const e = snap.entities;
   for (let i = 0; i < e.count; i++) {
     if ((e.flags[i]! & FLAG_BUILDING_KIND) === 0) continue;
-    if (engineIdOf(e.ids[i]!) === id) return i;
+    if (engineId(e.ids[i]!) === id) return i;
   }
   return null;
 }
 
-/** Inverse of `numericId` for buildings: negative numbers carry the `b` prefix. */
-function engineIdOf(numeric: number): string {
-  return numeric < 0 ? `b${-numeric - 1}` : `u${numeric - 1}`;
-}
 
 /**
  * "2 ore → 2 metals", from the engine's own recipe.
