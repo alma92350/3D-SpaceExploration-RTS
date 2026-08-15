@@ -13,7 +13,9 @@ import { FixedStepLoop, STEP_SECONDS } from "./loop.js";
 import { type Settings, applyMotion, saveSettings } from "./settings.js";
 import { CameraRig, clamp } from "../input/camera.js";
 import { pickGround, projectToScreen } from "../input/picking.js";
-import { type PendingMode, type PointerGesture, translateKey, translatePointer } from "../input/intents.js";
+import {
+  type PendingMode, type PointerGesture, physicalLetter, translateKey, translatePointer,
+} from "../input/intents.js";
 import { ControlGroups } from "../input/control-groups.js";
 import { AlertFeed } from "../view/alerts.js";
 import { ApproachView } from "../view/landing.js";
@@ -563,7 +565,8 @@ export class Game {
     }, { passive: false });
     el.addEventListener("dblclick", (e) => this.onDoubleClick(e));
     window.addEventListener("keydown", (e) => this.onKeyDown(e));
-    window.addEventListener("keyup", (e) => this.keys.delete(e.key.toLowerCase()));
+    // Same normalisation as keydown, or a physically-held key is never released (PT-02).
+    window.addEventListener("keyup", (e) => this.keys.delete(physicalLetter(e.code) ?? e.key.toLowerCase()));
     window.addEventListener("resize", () => this.resize());
     this.elements.minimapCanvas.addEventListener("pointerdown", (e) => this.onMinimapClick(e));
   }
@@ -680,8 +683,13 @@ export class Game {
     // focus — so Space is still "focus last alert" for a player who never pressed Tab, and a
     // focused button can never be fired by the same press that jumps the camera.
     if (this.hudFocus.handleKey(e)) return;
-    this.keys.add(e.key.toLowerCase());
-    const result = translateKey({ key: e.key, shift: e.shiftKey, ctrl: e.ctrlKey }, this.mode);
+    // **The held-key set is PHYSICAL** (PT-02). `applyContinuousPan` matches "w"/"a"/"s"/"d"
+    // against it, and those four are a SHAPE under the left hand rather than four letters: on
+    // AZERTY the same four positions are labelled Z, Q, S, D — which is the diamond French players
+    // already use. Storing `code`'s letter makes that work with the pan code unchanged, and falls
+    // back to the label when no `code` came with the event (synthetic events in tests, chiefly).
+    this.keys.add(physicalLetter(e.code) ?? e.key.toLowerCase());
+    const result = translateKey({ key: e.key, code: e.code, shift: e.shiftKey, ctrl: e.ctrlKey }, this.mode);
     // The galaxy screen (P4-T13). A toggle, like the economy boards: the same key closes what it
     // opened, because a second key to close is one a player has to be told about.
     if (result.screen === "starmap") {

@@ -408,7 +408,11 @@ describe("the card names controls the app actually has (P5-T10)", () => {
  * check that silently skips what it cannot read is not a check.
  */
 function keysOf(token: string): string[] {
-  const NOT_KEYS = ["LMB", "RMB", "drag", "click a world", "move"];
+  // `ZQSD` is prose about a LAYOUT, not four more bindings (PT-02): those are the labels an AZERTY
+  // keyboard puts on the same four physical positions `WASD` names here, and this check reasons
+  // about `event.key` values on one layout at a time. The positions themselves are covered by
+  // `test/input/phase7-input.test.ts` and by the real-`Game` sweep in `keyboard-play.test.ts`.
+  const NOT_KEYS = ["LMB", "RMB", "drag", "click a world", "move", "ZQSD"];
   if (NOT_KEYS.includes(token)) return [];
   const NAMED: Record<string, string[]> = {
     WASD: ["w", "a", "s", "d"],

@@ -18,7 +18,9 @@
 //   • and the two keys P6-T03 has to own — Enter and Space — still have no world meaning.
 
 import { describe, expect, it } from "vitest";
-import { type KeyResult, type PendingMode, translateKey } from "../../src/input/intents.js";
+import {
+  type KeyResult, type PendingMode, physicalLetter, translateKey,
+} from "../../src/input/intents.js";
 
 const NONE: PendingMode = { kind: "none" };
 
@@ -233,3 +235,85 @@ describe("the key budget after P7-T03 (PRD N-05)", () => {
        whether a given edge refuses turns on the sign of a sub-thousandth float against that world's
        terrain, and a test pinned to that would be pinning a coin flip.
    ================================================================================================= */
+
+/* =================================================================================================
+   AZERTY: THE PAN DIAMOND IS A POSITION, NOT FOUR LETTERS (PT-02)
+
+   The first playtester was on a French machine and asked for layout detection. The finding was
+   worse than "the keys are in the wrong place": every binding read `event.key`, so on AZERTY the
+   physical W and A positions emit `z` and `q` — which are not merely dead, they are BOUND TO OTHER
+   COMMANDS. `z` is the first positional action button (Deploy, on a selected colony ship) and `q`
+   cycles the selection and flies the camera to it. Panning up would have deployed your colony ship.
+
+   The split this pins: controls that are a SHAPE UNDER THE HAND read `event.code` (the pan diamond,
+   and the Z C V B N action row, which upstream's own naming calls positional); controls that are a
+   MNEMONIC read `event.key`, because `A` for attack-move should follow the letter a player reads.
+   ================================================================================================= */
+
+describe("keyboard layout (PT-02)", () => {
+  /** What an AZERTY keyboard sends for the four physical positions QWERTY calls W, A, S, D. */
+  const AZERTY_PAN = [
+    { code: "KeyW", key: "z" },
+    { code: "KeyA", key: "q" },
+    { code: "KeyS", key: "s" },
+    { code: "KeyD", key: "d" },
+  ] as const;
+
+  it("reads a letter's physical position from its code, on any layout", () => {
+    expect(physicalLetter("KeyW")).toBe("w");
+    expect(physicalLetter("KeyZ")).toBe("z");
+    // Not a letter key: the digit row is a mnemonic (control group 1), not a position.
+    expect(physicalLetter("Digit1")).toBeNull();
+    expect(physicalLetter("ArrowLeft")).toBeNull();
+    // No code at all falls back to the label, which is what keeps synthetic events working.
+    expect(physicalLetter(undefined)).toBeNull();
+    expect(physicalLetter("")).toBeNull();
+  });
+
+  it("does not fire the action row when an AZERTY player pans", () => {
+    // The defect, stated exactly: `z` IS the first positional button, and on AZERTY it is what the
+    // physical W position emits. Without the code, panning up deploys the colony ship.
+    for (const { code, key } of AZERTY_PAN) {
+      const result = translateKey({ key, code, shift: false, ctrl: false });
+      expect(
+        result.action ?? null,
+        `the physical ${code} position fired action row button ${result.action?.index} on AZERTY — `
+        + "a player panning the camera would be pressing a HUD button",
+      ).toBeNull();
+    }
+  });
+
+  it("still fires the action row from the physical Z C V B N positions on AZERTY", () => {
+    // The other half: the row has to remain reachable. On AZERTY `KeyZ` is labelled W.
+    const positions = ["KeyZ", "KeyC", "KeyV", "KeyB", "KeyN"];
+    positions.forEach((code, index) => {
+      // The label AZERTY sends for KeyZ is "w"; the rest are unchanged. Either way the code decides.
+      const key = code === "KeyZ" ? "w" : code[3]!.toLowerCase();
+      const result = translateKey({ key, code, shift: false, ctrl: false });
+      expect(result.action?.index, `the physical ${code} position did not reach action ${index}`)
+        .toBe(index);
+    });
+  });
+
+  it("keeps mnemonic orders on the letter a player reads, not on a position", () => {
+    // `A` is attack-move because the word is "attack", so it follows the LABEL. On AZERTY the key
+    // labelled A sits at the physical Q position, and it must still mean attack-move there.
+    const azertyLabelledA = translateKey({ key: "a", code: "KeyQ", shift: false, ctrl: false });
+    expect(azertyLabelledA.mode, "the key labelled A stopped meaning attack-move on AZERTY")
+      .toEqual({ kind: "attackMove" });
+  });
+
+  it("changes nothing at all on QWERTY, where code and label agree", () => {
+    // The regression guard for the majority case: every pan position still reports its own letter,
+    // and the action row still answers to z c v b n.
+    for (const letter of ["w", "a", "s", "d"]) {
+      expect(physicalLetter(`Key${letter.toUpperCase()}`)).toBe(letter);
+    }
+    ["z", "c", "v", "b", "n"].forEach((letter, index) => {
+      const withCode = translateKey({ key: letter, code: `Key${letter.toUpperCase()}`, shift: false, ctrl: false });
+      const without = translateKey({ key: letter, shift: false, ctrl: false });
+      expect(withCode.action?.index).toBe(index);
+      expect(without.action?.index, "dropping the code changed the QWERTY answer").toBe(index);
+    });
+  });
+});

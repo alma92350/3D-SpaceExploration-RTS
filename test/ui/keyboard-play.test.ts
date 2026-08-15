@@ -1130,6 +1130,91 @@ describe("a keyboard mark on a padded world promises nothing (P7-T03)", () => {
    the mark and the ground under it in one gesture — and a decision nothing holds is a comment.
    ================================================================================================= */
 
+/* =================================================================================================
+   AN AZERTY PLAYER CAN PAN (PT-02)
+
+   The pure-function half is in `test/input/phase7-input.test.ts`. This is the reachability half the
+   board has required since P4-T13: a row is not done until a GESTURE produces the result, driven
+   through a real `Game`. The gesture here is the one a French keyboard actually sends — the key at
+   the physical W position, which reports `code: "KeyW"` and `key: "z"`.
+   ================================================================================================= */
+
+describe("the pan diamond is a position, not four letters (PT-02)", () => {
+  let restore: () => void;
+  let game: Game;
+  let d: ReturnType<typeof driver>;
+
+  beforeEach(() => {
+    restore = stubCanvas();
+    game = new Game(elements(), new RecordingRenderer(), "T0",
+      { tierOverride: null, edgeScroll: false, newGame: null, motion: "auto" },
+      { seed: SEED, worldId: "helix" });
+    d = driver(game);
+    d.step();
+  });
+
+  afterEach(() => {
+    game.stop();
+    document.body.replaceChildren();
+    restore();
+  });
+
+  /** What an AZERTY keyboard sends for the four positions QWERTY calls W, A, S, D. */
+  const AZERTY = [
+    { code: "KeyW", key: "z", axis: "y", sign: -1 },
+    { code: "KeyS", key: "s", axis: "y", sign: 1 },
+    { code: "KeyA", key: "q", axis: "x", sign: -1 },
+    { code: "KeyD", key: "d", axis: "x", sign: 1 },
+  ] as const;
+
+  it("pans from the physical diamond, with the letters a French keyboard really sends", () => {
+    for (const { code, key, axis, sign } of AZERTY) {
+      game.camera.focusOn(800, 800);
+      d.frame();
+      const before = { x: game.camera.targetX, y: game.camera.targetY };
+
+      d.press(key, { code });
+      d.frame();
+      document.body.dispatchEvent(new KeyboardEvent("keyup", { key, code, bubbles: true }));
+
+      const moved = axis === "x"
+        ? game.camera.targetX - before.x
+        : game.camera.targetY - before.y;
+      expect(Math.sign(moved), `${code} (which AZERTY sends as "${key}") did not pan the camera the `
+        + "way the physical diamond should").toBe(sign);
+    }
+  });
+
+  it("does not fire a HUD button while an AZERTY player pans", () => {
+    // The sharp edge of the defect: "z" IS the first positional action key, and it is what the
+    // physical W position emits on AZERTY. Panning up must not press Deploy.
+    d.cycleTo("colonyship");
+    expect(d.actions().length, "the opening colony ship offers no actions, so this proves nothing")
+      .toBeGreaterThan(0);
+    const before = d.buildings().length;
+
+    for (let i = 0; i < 6; i++) {
+      d.press("z", { code: "KeyW" });
+      d.frame();
+      document.body.dispatchEvent(new KeyboardEvent("keyup", { key: "z", code: "KeyW", bubbles: true }));
+    }
+    d.step();
+
+    expect(d.buildings().length, "panning up on an AZERTY keyboard deployed the colony ship")
+      .toBe(before);
+  });
+
+  it("still reaches the action row from the physical Z position", () => {
+    // The other half: the row stays reachable. On AZERTY that key is labelled W.
+    d.cycleTo("colonyship");
+    const before = d.buildings().length;
+    d.press("w", { code: "KeyZ" });
+    d.step();
+    expect(d.buildings().length, "the physical Z position no longer fires the first action")
+      .toBeGreaterThan(before);
+  });
+});
+
 describe("the wheel and the window edge, which are the pointer's half (P7-T03)", () => {
   let restore: () => void;
   let game: Game;
