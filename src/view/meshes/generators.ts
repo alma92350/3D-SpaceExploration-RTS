@@ -42,6 +42,9 @@ export const TRIANGLE_BUDGET: Readonly<Record<string, number>> = {
   civic: 60,
   plasmarig: 80,
   gate: 90,
+  // Phase 2's two remaining families (ADR-0014).
+  freighter: 50,
+  volatile: 30,
 };
 
 /** The nine types Phase 1 draws, plus the shared node and imposter meshes. */
@@ -54,6 +57,9 @@ export const MVP_MESHES = [
   "node", "imposter",
   // Phase 2's families. Nine meshes for the nineteen buildings the MVP did not draw (ADR-0013).
   "factory", "powerplant", "relay", "fortress", "works", "port", "civic", "plasmarig", "gate",
+  // One hull for the four logistics units, and a second deposit mesh (ADR-0014). `node` keeps its
+  // name and becomes the rock — renaming it would churn the perf baseline for nothing.
+  "freighter", "volatile",
 ] as const;
 
 /** Every mesh the game builds. `MVP_MESHES` kept its name; this is what to iterate. */
@@ -71,6 +77,43 @@ export type MeshId = (typeof MVP_MESHES)[number];
  * Fab from a Smelter by shape, they are being told "that shape is a factory", which is the read
  * that matters when scanning a base. Identity comes from the panel, not the roofline.
  */
+/**
+ * Engine commodity → the deposit mesh that draws it (ADR-0014).
+ *
+ * Two, not five and not three. Deposits never take the imposter path — `pushNodes` batches at
+ * `LOD_MESH` unconditionally — so every deposit mesh costs its batch at every zoom, and the
+ * metallic-versus-crystalline distinction is one a player makes in the build menu rather than by
+ * looking at the ground. Anything not listed is a rock.
+ */
+export const DEPOSIT_FAMILY: Readonly<Record<string, MeshId>> = {
+  ore: "node",
+  metals: "node",
+  crystals: "node",
+  radioactives: "node",
+  ice: "volatile",
+  gas: "volatile",
+  biomass: "volatile",
+  spice: "volatile",
+  relics: "volatile",
+};
+
+/** Which mesh draws a deposit of `com`. Unknown commodities are rock, which is the safe default. */
+export function meshIdForCommodity(com: string): MeshId {
+  return DEPOSIT_FAMILY[com] ?? "node";
+}
+
+/**
+ * Engine unit type → its mesh. The four logistics units share one hull (ADR-0014): they are the
+ * same silhouette at any distance a player cares about, and they differ in capacity, which is a
+ * number rather than a shape. Cargo is a per-instance shade, not a second mesh.
+ */
+export const UNIT_FAMILY: Readonly<Record<string, MeshId>> = {
+  hauler: "freighter",
+  heavyhauler: "freighter",
+  bulkfreighter: "freighter",
+  freighter: "freighter",
+};
+
 export const BUILDING_FAMILY: Readonly<Record<string, MeshId>> = {
   // Phase 1's five keep their own meshes: they are the ones a player acts on constantly.
   command: "command",
@@ -331,6 +374,29 @@ function refinery(): MeshData {
   return b.finish("refinery");
 }
 
+function freighter(): MeshData {
+  const b = new Builder();
+  // A hull with an open hold. The hold is the read: a laden freighter brightens (per-instance
+  // shade), so the shape has to have somewhere for cargo to visibly be.
+  b.box(3.2, 0, 2.0, 7.0, HULL[0], HULL[1], HULL[2], 0.35);
+  b.box(2.4, 2.0, 4.2, 4.6, DARK[0], DARK[1], DARK[2], 0.15);          // the hold
+  b.box(1.8, 2.0, 4.8, 1.6, TRIM[0], TRIM[1], TRIM[2], 0.9, 0, 5.2);   // the cab, forward
+  return b.finish("freighter");
+}
+
+function volatileNode(): MeshData {
+  const b = new Builder();
+  // Deliberately NOT a rock: a low, wide pool with a raised lip, so ice, gas and biomass read as
+  // "something pooled here" rather than "something to mine". Neutral, like the rock — a deposit
+  // must never be mistakable for a unit.
+  // Five-sided, like the rock, because six put it at 36 triangles against a 30 budget and the
+  // sixth side buys nothing at this size. The proportion is what separates the two, not the
+  // facet count: this is low and wide where the rock is tall and narrow.
+  b.prism(5, 10, 8.5, 0, 2.2, 0.38, 0.46, 0.52, 0);
+  b.prism(5, 7, 5.5, 2.2, 4.4, 0.46, 0.58, 0.62, 0);
+  return b.finish("volatile");
+}
+
 function node(): MeshData {
   const b = new Builder();
   // Resource nodes are neutral: no owner mix at all, so a deposit can never be mistaken for a unit.
@@ -440,6 +506,7 @@ const GENERATORS: Record<MeshId, () => MeshData> = {
   colonyship, worker, skiff, bastion, lancer, command, barracks, habitat, turret, refinery,
   node, imposter,
   factory, powerplant, relay, fortress, works, port, civic, plasmarig, gate,
+  freighter, volatile: volatileNode,
 };
 
 /** Build the whole MVP mesh set. Called once, at boot. */
@@ -455,7 +522,7 @@ export function buildMeshes(): MeshData[] {
  * a missing one does not crash, it renders as a small grey lump and nobody notices for a phase.
  */
 export function meshIdForType(type: string): MeshId {
-  const family = BUILDING_FAMILY[type];
+  const family = BUILDING_FAMILY[type] ?? UNIT_FAMILY[type];
   if (family) return family;
   return (MVP_MESHES as readonly string[]).includes(type) ? (type as MeshId) : "worker";
 }
