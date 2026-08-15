@@ -20,7 +20,8 @@
     "smoke": "playwright test",
     "smoke:chromium": "playwright test --project=chromium-software",
     "smoke:firefox": "playwright test --project=firefox-software",
-    "smoke:webkit": "playwright test --project=webkit"
+    "smoke:webkit": "playwright test --project=webkit",
+    "soak": "node perf/soak.mjs"
   },
   "dependencies": {
     "three": "0.185.1"
