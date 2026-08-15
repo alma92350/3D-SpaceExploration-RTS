@@ -99,6 +99,9 @@ export { NEEDS_REPAIR, HEALED, pickRepairTarget, countRepairJobs } from "@engine
 
 export { LOGI_PRIORITIES, countLogistics, aiUpkeepRate } from "@engine/engine/haul.js";
 
-export { PLASMA_VEINS, SURVEY_RADIUS, YIELD_TIERS, locationRichness, rigInfo } from "@engine/engine/rig.js";
+export {
+  PLASMA_VEINS, SURVEY_RADIUS, YIELD_TIERS, locationRichness, rigInfo, rigSurvey,
+} from "@engine/engine/rig.js";
+export type { RigInfo, RigSurvey, YieldTier } from "@engine/engine/rig.js";
 
 export { PLANETS, COM } from "@engine/data.js";
