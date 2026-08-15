@@ -435,6 +435,32 @@ changes what this phase IS:*
 | P4-T14 | The build menu is five buildings of twenty-nine | TODO | — | Every building the engine defines and the player can afford is offerable; `prereqsMet` does the gating, not a hand-written list | **Found by asking what a player can actually build today: five buildings and five units.** `MVP_BUILDINGS` is a hardcoded Phase 1 subset — Command Center, Barracks, Habitat, Refinery, Turret — and Phase 2 shipped meshes, panels and economy logic for all 29 types without ever widening it. The consequence compounds through the tech tree: **Foundry, Arsenal, Spaceport and Star Dock are all unbuildable**, so of 18 unit types only Worker, Ranger, Colony Ship, Skiff and Bastion can be trained. **Of ADR-0016's nine new silhouettes — measured, mutation-tested, perf-gated — exactly one (the Ranger) is reachable in play**, and the Helium Bomb's two-ring blast warning sits behind a Star Dock four buildings deep in a tree with no entrance. It also quietly undermines the deferred playtests: `combat.md` asks testers to tell a Mender from a Ranger, which no tester could build. The fix is to stop hand-writing the list — `prereqsMet` and `canAfford` already exist and the HUD already calls the latter, so a hardcoded subset is doing work the engine does better |
 | P4-T12 | Phase 4 playtest script | TODO | P4-T03 … P4-T08 | Script exists; written and left UNRUN under ADR-0011 | Same shape as `combat.md`. The starmap is the first screen in this project that is not the battlefield, so "where am I" is a real question to ask |
 
+## Phase 4 exit gate — status
+
+Checked against PRD §5 (Phase 4): *"a player can settle a second world and run both; the galaxy save
+round-trips; background simulation holds its frame budget while the active world renders."*
+
+| Criterion | Status | Evidence |
+|---|---|---|
+| Settle a second world and run both | **PASS** | `jumpCapital` reachable end-to-end: `Y` opens the plate, a world opens the approach view, the confirm jumps. The determinism fixture crosses a jump and settles Verdani (P4-T04, T05, T13) |
+| The galaxy save round-trips | **PASS** | 15 tests over a galaxy that has *diverged* — a second world settled, three background colonies 65 s off their opening, a lane that has delivered, a policy that has sold. Eleven mutations against `persist.js`, restored byte-exactly (P4-T09) |
+| Background sim holds its budget | **PASS, measured** | Ten settled worlds at 281 entities each: **2.3 ms per background world-step, 1.9 ms/frame amortised, ~7 ms on the busiest frame, frame p95 10–11 ms against 33 ms** (P4-T10) |
+| Determinism still bit-identical | **PASS** | 7 400 ticks, 35 orders, every one provably moving the hash — after the digest had to widen from the seat to the whole galaxy (P4-T11) |
+| Q-03 answered | **PASS** | ADR-0019, decided on a measurement, with its premise pinned by a test that fires on a second coordinate under any name (P4-T02, T03) |
+| Every screen is reachable | **PASS, and it was not** | The rule is installed, not the instance fixed: a runtime import-graph scan plus a real `Game` in a real DOM (P4-T13) |
+| The galaxy is *legible* | **NOT MEASURED** | `docs/playtests/galaxy.md` written and unrun. It owns ADR-0019's supersede trigger |
+
+**760 unit tests, 15 browser tests.** Two rows exist because the phase found its own gaps rather than
+because the PRD asked: **P4-T13** (reachability, which recurred four rows running) and **P4-T14**
+(the build menu was five of twenty-nine, so one of ADR-0016's nine silhouettes was reachable in a
+real game).
+
+**Engine defects found and pinned rather than forked (ADR-0003):** the post-battle market price-book
+drift (P4-T09), `galaxyStatus` reporting `income: 0` for an earning pacified colony (P4-T06), and
+`snapLandingPoint` not being idempotent across its clamp band (P4-T05). **And one live defect in our
+own code, fixed**: HUD buttons captured their command at node creation, so Pause/Resume had been
+sending the same payload since P2-T09 — found only when someone finally pressed the buttons.
+
 ## Phase 5 — The long game
 
 Not yet decomposed. Headings: diplomacy, the Antimatter Gate, the rival Gate, milestones and
