@@ -32,3 +32,47 @@ export declare function issueHoldFormation(units: Unit[], shape?: string, leader
 
 /** Put units into scout mode (engine/scout.js). */
 export declare function issueScout(units: Unit[]): void;
+
+// --- Phase 5's parity close-out (PARITY.md §5.2) -------------------------------------------------
+//
+// Five of the ten orders with no way in were not declared here at all, which is why the enumeration
+// could see them in the JS and the client could not reach them. Signatures read off
+// `engine/commands.js` directly, not inferred from the names.
+
+/**
+ * Send builders to finish a building already under construction.
+ *
+ * Gated on `canBuildCategory(u.type, BUILDINGS[buildingType].category)`, so the TYPE is needed as
+ * well as the id — the engine looks the category up from it rather than from the placed building.
+ */
+export declare function issueAssistBuild(
+  units: Unit[], buildingId: string, buildingType: string, queue?: boolean,
+): void;
+
+/** Send logistics units to ferry a freighter's hold. Logistics types only, like `issueRepair`. */
+export declare function issueFerryFreighter(units: Unit[], freighterId: string, queue?: boolean): void;
+
+/**
+ * Override which Command Center a hauler calls home — the multi-base control.
+ *
+ * The engine's own comment: "an explicit player override for `zoneFirst`'s usual nearest-CC guess".
+ * Accepts logistics, support and freighter roles, which is wider than `issueRepair`'s set.
+ */
+export declare function issueSetHomeBase(units: Unit[], ccId: string): void;
+
+/**
+ * Park a freighter as a collection point, anchored where it stands.
+ *
+ * Freighters only. `nearestGatherDrop` already honours the result (P2-T07 names the landed
+ * collection-point freighter that can beat a nearer Command Center to the drop-off) — this is the
+ * cause the client has been reading the consequence of since Phase 2.
+ */
+export declare function issueSetCollectPoint(units: Unit[], on: boolean): void;
+
+/**
+ * Hand a freighter over to the AI hauler.
+ *
+ * Takes `state` because switching it ON is gated on the owner having researched `FREIGHTER_AI_TECH`
+ * — the engine refuses silently otherwise, so a control must ask before it offers.
+ */
+export declare function issueSetAILogistics(units: Unit[], on: boolean, state: State): void;

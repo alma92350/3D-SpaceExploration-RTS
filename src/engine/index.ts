@@ -205,3 +205,33 @@ export {
 } from "@engine/engine/galaxy.js";
 
 export { FACTIONS, PLAYABLE_FACTIONS, factionTrait } from "@engine/engine/factions.js";
+
+// ---------------------------------------------------------------------------------------------
+// Phase 5's parity close-out (P5-T13 … P5-T16).
+//
+// `docs/planning/PARITY.md` §5.2 is the reason these are here: **ten of the engine's own twenty-eight
+// orders had no gesture, no button and no intent**, a third of the verb list the 2D game gives a
+// player, and five of the ten did not cross this façade at all. That is the number the checklist was
+// written to make visible, and it is the one Phase 5's exit criterion turns on.
+//
+// Two of them are worth naming, because the client has already been caught reading their
+// consequences while unable to set their causes:
+//
+//   • `issueSetCollectPoint` — P2-T07 documents that a landed collection-point freighter can win the
+//     drop-off over a nearer Command Center, and `nearestGatherDrop` honours it. The client has read
+//     that answer since Phase 2 and has never been able to make one.
+//   • `issueSetRally` takes a `nodeId` as well as a point: rally-to-node, so a worker spawns already
+//     mining. A rally intent carrying only x/y would be a rally point that is quietly worse than
+//     upstream's for exactly the unit that needs it most.
+export {
+  issueAssistBuild, issueFerryFreighter, issueSetHomeBase, issueSetCollectPoint, issueSetAILogistics,
+} from "@engine/engine/commands.js";
+
+export { FREIGHTER_AI_TECH, assignFerry } from "@engine/engine/haul.js";
+
+export { updateScoutMode } from "@engine/engine/scout.js";
+
+// The new-game screen (row 104). `WorldOptions` has accepted `difficulty` and `playerFaction` since
+// Phase 1 and `main.ts` has never passed either, so every session ever played has been medium /
+// frontier. The roster and the tuning tables are the engine's own; nothing here picks a default.
+export { DIFFICULTY_OPTIONS } from "@engine/engine/aiDifficulty.js";
