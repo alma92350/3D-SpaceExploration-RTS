@@ -49,6 +49,13 @@ export { COLONY_SHIP_WORKERS, deployColonyShip, hasColonyShip } from "@engine/en
 
 export { supplyUsed, supplyCap } from "@engine/engine/supply.js";
 
+// P2-T07 needs the drop-off the gather loop actually picks, not a re-derivation of it. `updateGather`
+// calls `nearestGatherDrop` every "toDrop" tick, and it is NOT simply the nearest Command Center: a
+// landed collection-point freighter can win, and buildings are scanned before units so an equidistant
+// building takes the tie. A test that re-implemented "nearest CC" would agree with the engine on the
+// one-base opening and diverge on exactly the cases the rule exists for.
+export { nearestGatherDrop, nearestCommandCenter } from "@engine/engine/gather.js";
+
 export {
   SAVE_VERSION, GALAXY_SAVE_VERSION, serializeGalaxy, serializeGalaxyString, deserializeGalaxy,
 } from "@engine/engine/persist.js";

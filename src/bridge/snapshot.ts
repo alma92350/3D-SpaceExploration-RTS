@@ -96,7 +96,7 @@ export class EntityTable {
   flags: Uint8Array;
   /** Veterancy rank 0–3 for units; Spaceport-style tier for buildings. Drives the chevron overlay. */
   rank: Uint8Array;
-  /** 0..1 — build progress for buildings, cargo fullness for workers. */
+  /** 0..1 — build progress for buildings, cargo fullness for anything with a hold. */
   progress: Float32Array;
 
   constructor(capacity: number) {
@@ -315,6 +315,28 @@ export function isBuildingId(numeric: number): boolean {
   return numeric < 0;
 }
 
+/**
+ * How full a unit's hold is, 0..1 — the cargo cue's whole input (P2-T05, P2-T07).
+ *
+ * The denominator is the engine's own `tripCapacity` rule (`cargoCap ?? cargoHold`, engine/haul.js).
+ * It used to be the literal `10`, which is the Worker's `cargoCap` and nothing else's: a Hauler
+ * holds 250 and a Bulk Freighter 1600, so ten crates aboard — four percent, or half of one — read
+ * as a **full** hold. Every logistics unit in the game showed a laden cue from its first crate and
+ * never changed again, which is precisely the state P2-T05's shade was added to distinguish.
+ *
+ * Zero-capacity units are real: the scenario-spawned `freighter` defines neither field, so the
+ * engine's own rule gives it 0 and it can never legitimately load. Fullness is undefined there, not
+ * infinite — and the arithmetic matters more than it looks, because this number rides the instance
+ * `shade` into a vertex buffer, where one NaN corrupts a whole batch rather than one unit.
+ */
+export function cargoFullness(u: Unit): number {
+  if (!u.cargo || !(u.cargo.qty > 0)) return 0;
+  const def = UNITS[u.type] as { cargoCap?: number; cargoHold?: number } | undefined;
+  const cap = def?.cargoCap ?? def?.cargoHold ?? 0;
+  if (!(cap > 0)) return 0;
+  return Math.min(1, u.cargo.qty / cap);
+}
+
 export interface ExtractOptions {
   /** Which side's fog decides visibility. Always "player" in the MVP; an argument for Observer Mode. */
   viewer: OwnerId;
@@ -444,7 +466,7 @@ export class SnapshotExtractor {
         | (moved > 1e-4 ? FLAG_MOVING : 0)
         | (selected.includes(u.id) ? FLAG_SELECTED : 0);
       e.rank[n] = rankOf(u.kills ?? 0);
-      e.progress[n] = u.cargo ? Math.min(1, u.cargo.qty / 10) : 0;
+      e.progress[n] = cargoFullness(u);
       const p = snap.production;
       p.recipe[n] = -1;
       p.fed[n] = 0;

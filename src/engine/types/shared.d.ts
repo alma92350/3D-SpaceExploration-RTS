@@ -64,6 +64,15 @@ declare global {
     y?: number;
     targetId?: string;
     nodeId?: string;
+    /**
+     * Where an order is in its own cycle — the engine stores this ON the order and mutates it in
+     * place. A gather order walks "toNode" → "mining" → "toDrop" (engine/gather.js); haul and
+     * service orders use their own words on the same field. It is read-only from this side: the
+     * view may *observe* the leg a worker is on, and writing it would be steering the sim from the
+     * renderer (ADR-0008).
+     */
+    phase?: string;
+    buildingId?: string;
   }
 
   interface Unit {
