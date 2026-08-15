@@ -83,6 +83,18 @@ export const ACTIVITY_IDLE = 2;
  */
 export const POWER_NONE = 0;
 
+/**
+ * Where a deposit came from (P3-T08, P3-T09, ADR-0018).
+ *
+ * The engine turns battlefield debris and bomb craters into ordinary `ResourceNode`s carrying a
+ * `wreck` or `crater` flag, and is explicit that they are otherwise indistinguishable from natural
+ * ground. Both flags reached the bridge and were discarded here — exactly as `comIndex` was before
+ * P2-T17 — so salvage rendered as an ore seam and a crater as ground that had always been there.
+ */
+export const NODE_NATURAL = 0;
+export const NODE_SALVAGE = 1;
+export const NODE_CRATER = 2;
+
 const CONCERN_CODES: Record<string, number> = {
   noPower: CONCERN_NO_POWER,
   noFuel: CONCERN_NO_FUEL,
@@ -179,6 +191,14 @@ export class NodeTable {
   y: Float32Array;
   /** Remaining fraction 0..1 — the mesh shrinks as a deposit is worked out. */
   remaining: Float32Array;
+  /**
+   * Where the deposit came from: `NODE_NATURAL`, `NODE_SALVAGE` or `NODE_CRATER` (ADR-0018).
+   *
+   * The engine makes all three the same kind of object on purpose — `bomb.js` says a crater is
+   * "indistinguishable to gather.js/rendering/fog from anything engine/map.js generated" — so this
+   * byte is the only thing that separates a battlefield from a landscape.
+   */
+  kind: Uint8Array;
 
   constructor(capacity: number) {
     this.capacity = capacity;
@@ -187,6 +207,7 @@ export class NodeTable {
     this.x = new Float32Array(capacity);
     this.y = new Float32Array(capacity);
     this.remaining = new Float32Array(capacity);
+    this.kind = new Uint8Array(capacity);
   }
 
   ensure(needed: number): void {
@@ -200,6 +221,7 @@ export class NodeTable {
     this.x = grown.x;
     this.y = grown.y;
     this.remaining = grown.remaining;
+    this.kind = grown.kind;
   }
 }
 
@@ -884,6 +906,9 @@ export class SnapshotExtractor {
       nodes.x[n] = node.x;
       nodes.y[n] = node.y;
       nodes.remaining[n] = node.max > 0 ? node.amount / node.max : 0;
+      // Origin, straight off the engine's own flags. A node with neither reads as natural, which is
+      // the safe default: a false "a fight happened here" is worse than a missed one.
+      nodes.kind[n] = node.wreck ? NODE_SALVAGE : node.crater ? NODE_CRATER : NODE_NATURAL;
       n++;
     }
     nodes.count = n;

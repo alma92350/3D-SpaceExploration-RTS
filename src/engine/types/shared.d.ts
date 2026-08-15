@@ -40,6 +40,16 @@ declare global {
     y: number;
     home?: boolean;
     hidden?: boolean;
+    /**
+     * Battlefield debris that matured into a deposit (engine/wreckage.js). The engine treats it as
+     * an ordinary node in every other respect; this flag is the only thing that says a fight
+     * happened here.
+     */
+    wreck?: boolean;
+    /** A Helium Bomb crater that matured into a deposit (engine/bomb.js). Same shape as `wreck`. */
+    crater?: boolean;
+    /** Workers currently assigned, written by the sim's own per-tick tally. Read-only from here. */
+    miners?: number;
   }
 
   interface GameMap {

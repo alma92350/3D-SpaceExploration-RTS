@@ -16,8 +16,11 @@
 //     triangles a frame, which a software rasteriser can carry; 200 × 600 is not.
 
 import { type MeshData } from "../renderer/port.js";
+import { NODE_CRATER, NODE_SALVAGE } from "../../bridge/snapshot.js";
 
 /** Per-mesh triangle ceilings. Exceeding one is a test failure, not a judgement call. */
+export { NODE_CRATER, NODE_NATURAL, NODE_SALVAGE } from "../../bridge/snapshot.js";
+
 export const TRIANGLE_BUDGET: Readonly<Record<string, number>> = {
   colonyship: 70,
   worker: 40,
@@ -48,6 +51,10 @@ export const TRIANGLE_BUDGET: Readonly<Record<string, number>> = {
   // Phase 3 — the nine units that had no mesh at all and rendered as Workers (ADR-0016).
   // Budgets sized by how many are on screen at once: a Ranger scouts alone and a Leviathan is a
   // capital ship you own two of, while a Wraith comes in packs.
+  // Phase 3 — battlefield ground (ADR-0018). Tight: a long fight leaves a lot of these, and a
+  // deposit mesh is paid at every zoom because deposits never LOD.
+  salvage: 34,
+  crater: 30,
   ranger: 40,
   wraith: 40,
   mender: 55,
@@ -77,6 +84,8 @@ export const MVP_MESHES = [
   // ADR-0014's families simply does not bind here.
   "ranger", "wraith", "mender", "breacher", "heliumbomb", "aegis", "colossus", "dreadnought",
   "leviathan",
+  // Phase 3 — salvage and craters stop looking like natural ground (ADR-0018).
+  "salvage", "crater",
 ] as const;
 
 /** Every mesh the game builds. `MVP_MESHES` kept its name; this is what to iterate. */
@@ -636,12 +645,44 @@ function leviathan(): MeshData {
   return b.finish("leviathan");
 }
 
+function salvage(): MeshData {
+  const b = new Builder();
+  // Wreckage: a scatter of angular plates at broken angles, low and untidy. Every natural deposit
+  // in the game is one clean prism — this is deliberately several, deliberately not aligned, so it
+  // reads as "something was destroyed here" rather than as ground.
+  // Three pieces, not four: the fourth put this at 41 triangles against a 34 budget, and the
+  // precedent (the volatile deposit, P2-T17) is to cut the mesh rather than raise the number — a
+  // budget that moves whenever a shape wants it to is not a budget. Three plates at broken angles
+  // still read as debris; it is the disorder that carries it, not the count.
+  b.prism(4, 3.6, 2.8, 0, 2.0, DARK[0], DARK[1], DARK[2], 0.1, 0.4);
+  b.prism(3, 2.8, 1.2, 0, 3.2, HULL[0], HULL[1], HULL[2], 0.15, 1.1);
+  b.box(2.8, 0, 1.0, 1.3, HULL[0], HULL[1], HULL[2], 0.12, 2.4, -2.0);
+  return b.finish("salvage");
+}
+
+function crater(): MeshData {
+  const b = new Builder();
+  // A broad, flat SCAR — and deliberately not "a hole", which is what the first two attempts tried
+  // to be. `Builder.prism` always caps its top, so every shape it makes is a solid: a concave bowl
+  // needs a rim ring plus a separate floor, which measured 60 triangles against a 30 budget. An
+  // inverted frustum was the second try and the winding test rejected it outright — reversing the
+  // y-span winds every side face inward, and the mesh enclosed negative volume.
+  //
+  // So the cue is PROPORTION rather than depth: the widest and by some margin the flattest thing on
+  // the ground, where the rock, the volatile and the salvage all stand up. That is a real
+  // distinction and it is a weaker one than excavation would have been; whether it reads as bomb
+  // damage is a question for the playtest (P3-T18), not for this comment.
+  b.prism(8, 10.8, 9.6, 0, 0.5, DARK[0], DARK[1], DARK[2], 0.08);
+  return b.finish("crater");
+}
+
 const GENERATORS: Record<MeshId, () => MeshData> = {
   colonyship, worker, skiff, bastion, lancer, command, barracks, habitat, turret, refinery,
   node, imposter,
   factory, powerplant, relay, fortress, works, port, civic, plasmarig, gate,
   freighter, volatile: volatileNode,
   ranger, wraith, mender, breacher, heliumbomb, aegis, colossus, dreadnought, leviathan,
+  salvage, crater,
 };
 
 /** Build the whole MVP mesh set. Called once, at boot. */
@@ -656,6 +697,22 @@ export function buildMeshes(): MeshData[] {
  * a worker-sized block, which is why a test asserts every engine building type is in the table —
  * a missing one does not crash, it renders as a small grey lump and nobody notices for a phase.
  */
+/**
+ * Which mesh a deposit draws with, from its commodity AND its origin (ADR-0018).
+ *
+ * **Origin beats contents.** A wreck of metals and a wreck of ore are both wreckage, and that — not
+ * what it holds — is what a player needs off a glance at a battlefield. The commodity is still on
+ * the panel and in the build menu; the origin was nowhere at all.
+ *
+ * An unrecognised origin falls back to natural, deliberately: that is how these nodes rendered
+ * before this ADR, and a false "a fight happened here" is worse than a missed one.
+ */
+export function meshIdForNode(com: string, kind: number): MeshId {
+  if (kind === NODE_SALVAGE) return "salvage";
+  if (kind === NODE_CRATER) return "crater";
+  return meshIdForCommodity(com);
+}
+
 export function meshIdForType(type: string): MeshId {
   const family = BUILDING_FAMILY[type] ?? UNIT_FAMILY[type];
   if (family) return family;
