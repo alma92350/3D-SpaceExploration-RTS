@@ -9,7 +9,7 @@
 // anything, and at 60 fps it must not touch a node whose text has not changed. Browsers are fast
 // but layout is not free, and this runs inside the same 16.6 ms as the renderer.
 
-import { BUILDINGS, PLANETS, UNITS, canBuildType, prereqsMet } from "../engine/index.js";
+import { BUILDINGS, PLANETS, UNITS, canAfford, canBuildType, prereqsMet } from "../engine/index.js";
 import { type BuildingPanelModel, buildingPanelModel } from "./building-panel.js";
 import { type Intent } from "../bridge/commands.js";
 import { colonyIncomeModel, colonyPolicyModel, policyPreview } from "./colony-panel.js";
@@ -202,6 +202,44 @@ function buildableTypes(state: State | undefined, builderTypes: readonly string[
 }
 
 /**
+ * What this building may be told to train right now (P5-T14).
+ *
+ * **`buildableTypes` one row later, and the same bug one menu over.** P4-T14 deleted the
+ * hand-written *building* list; the *unit* menu kept its own, and it was wrong in the way a
+ * re-derivation is always wrong — it knew half the engine's rule. `queueProduction` gates on
+ * `def.odysseyOnly && !state.endless`, **and every world in this game is endless** (`galaxy.js`
+ * creates them so, which is also why `score-panel.ts` reports no clock). The menu dropped the
+ * second half of that `&&` and filtered `odysseyOnly` outright, so `queueProduction` returned
+ * **true** for six of eighteen units the player was never shown: the Colony Ship, the three
+ * freight hulls, the Leviathan and the **Helium Bomb** — whose arming path, blast rings and mesh
+ * P3-T10 built, and which no player could ever own, because nothing but this menu mints one for
+ * the player while `aiIndustry.js` happily mints them for the AI.
+ *
+ * So this asks instead. It is `queueProduction`'s own gate in the engine's own order, minus the
+ * two conditions that are **shown rather than obeyed**: affordability and supply leave the button
+ * on screen and let the engine refuse it (see `HudAction`). `prereqsMet` is a filter for the same
+ * reason it is one in `buildableTypes` — a unit whose Arsenal is not up is not a decision yet.
+ *
+ * Without a `State` there is nothing to ask, so the answer is the engine's answer for the weakest
+ * state it has: a skirmish with nothing built. That is an under-approximation rather than an
+ * opinion — a unit with no `odysseyOnly` and no `requires` is one `queueProduction` accepts in
+ * *every* state, which is the property `test/ui/production-menu.test.ts` pins.
+ */
+function producibleTypes(state: State | undefined, buildingType: string): string[] {
+  const out: string[] = [];
+  // The roster is the engine's, never ours: `produces` is the same array `queueProduction` checks
+  // membership of before anything else, so a unit added upstream arrives here on its own.
+  for (const unitType of BUILDINGS[buildingType]?.produces ?? []) {
+    const def = UNITS[unitType];
+    if (!def) continue;
+    if (state ? def.odysseyOnly && !state.endless : !!def.odysseyOnly) continue;
+    if (state ? !prereqsMet(state, "player", def) : !!def.requires?.length) continue;
+    out.push(unitType);
+  }
+  return out;
+}
+
+/**
  * `state` is optional and only widens the build menu (P4-T14): with it, the offer is the engine's
  * own answer for this builder; without it, the Phase 1 subset. Optional rather than required
  * because every existing caller passes a snapshot alone, and the precedent for a model reading
@@ -228,25 +266,35 @@ export function hudModel(snap: Snapshot, state?: State): HudModel {
   }
 
   const res = snap.resources;
-  const affordable = (cost: Resources | undefined): boolean => {
-    if (!cost) return true;
-    for (const [com, qty] of Object.entries(cost)) {
-      const have = com === "ore" ? res.ore : com === "crystals" ? res.crystals : com === "radioactives" ? res.radioactives : 0;
-      if (have < qty) return false;
-    }
-    return true;
-  };
+  /**
+   * Can the player pay for this? (P5-T14.)
+   *
+   * **`canAfford` is the engine's own answer and it already crosses the façade**, so the only thing
+   * left to decide is what bag to hand it. That is `snap.stockpile`, not `snap.resources`: the four
+   * hot numbers in `resources` are the ones the resource bar reads every frame, and the menu that
+   * used to read them knew **three commodities of twenty-three** — everything else fell through a
+   * chain of ternaries to `have = 0`, so the Wraith (gas), the Aegis (ice), the Colossus (relics),
+   * the Plasma Rig (machinery + electronics + AI) and the Torpedo Battery (alloys) rendered struck
+   * through **forever**, at any stockpile. The buttons still fired, because `bind()` only toggles a
+   * class — a lie in the HUD rather than a lock, which is the harder kind to notice.
+   *
+   * `snap.stockpile` is every commodity the engine knows, absent meaning 0 (P2-T01), so this stays a
+   * pure function of the snapshot — F-07 — while the *rule* belongs to the engine.
+   *
+   * `?? {}` is a total-function guard rather than a rule: every def in the roster carries a `cost`,
+   * and the one that carries an empty one (the lane Freighter) is priced free by `canAfford` anyway.
+   * It is written this way instead of `!cost || …` because a short-circuit no data can reach is a
+   * branch no test can pin — a mutation survived on exactly that and was deleted rather than argued.
+   */
+  const affordable = (cost: Resources | undefined): boolean => canAfford(snap.stockpile, cost ?? {});
 
   const production: ProductionOption[] = [];
   const singleBuilding = selection.length > 0 && selection.every((s) => s.isBuilding && s.type === selection[0]!.type)
     ? selection[0]!
     : null;
   if (singleBuilding) {
-    for (const unitType of BUILDINGS[singleBuilding.type]?.produces ?? []) {
-      const def = UNITS[unitType];
-      // Odyssey-gated units (colony ships, freighters) are Phase 4's; showing a button that the
-      // engine will refuse is worse than not showing it (F-07: every number the HUD shows is real).
-      if (!def || def.odysseyOnly) continue;
+    for (const unitType of producibleTypes(state, singleBuilding.type)) {
+      const def = UNITS[unitType]!;   // `producibleTypes` only yields keys it resolved
       production.push({
         unitType, label: def.name, costText: costText(def.cost), affordable: affordable(def.cost),
       });
