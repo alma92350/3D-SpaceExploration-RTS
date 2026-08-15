@@ -14,6 +14,8 @@ import {
   issueBuild, issueCancelRecycle, issueGather, issueHold, issueMove, issuePatrol, issueRecycle,
   UPGRADES, committedDoctrine, researchUpgrade,
   FORMATION_SHAPES, LEADER_POSITIONS, issueEscort, issueHoldFormation, lightFuse,
+  canJumpTo, jumpCost, jumpCapital, spaceportTier, upgradeSpaceport, SPACEPORT_MAX_TIER,
+  createLane, deleteLane, assignShipToLane, unassignShipFromLane, setColonyPolicy,
   issueSetLogiPriority, issueSetRally, issueStop, prereqsMet, queueProduction, researchTech,
   sampleTerrain, sell, tradeables,
 } from "../engine/index.js";
@@ -48,7 +50,21 @@ export type Intent =
   | { kind: "moveInFormation"; x: number; y: number; shape: string; leaderPos: string; queue: boolean }
   // --- Phase 3, the Helium Bomb (P3-T10) ---
   | { kind: "armBomb"; unitId: string; armed: boolean }
-  | { kind: "detonate"; unitId: string };
+  | { kind: "detonate"; unitId: string }
+  // --- Phase 4, the galaxy (P4-T04 … P4-T08) ---
+  //
+  // These are the first intents that act on the GALAXY rather than on the seat, which is why
+  // `applyIntent` has taken a `galaxy` argument since Phase 2's trade. A jump changes
+  // `galaxy.activeId`, so it is the one intent in this union that changes which world the next
+  // intent applies to — recorded in the stream like everything else, which is what keeps a replay
+  // that crosses a jump reproducible (P4-T11).
+  | { kind: "jump"; destId: string; landingX?: number; landingY?: number }
+  | { kind: "upgradeSpaceport"; buildingId: string }
+  | { kind: "createLane"; from: string; to: string; commodities: string[] }
+  | { kind: "deleteLane"; laneId: string }
+  | { kind: "assignLane"; laneId: string; unitId: string }
+  | { kind: "unassignLane"; laneId: string; unitId: string }
+  | { kind: "colonyPolicy"; planetId: string; patch: Record<string, unknown> };
 
 /**
  * Apply one intent. Returns a player-facing reason when the engine refused, or null on success.
@@ -159,6 +175,58 @@ export function applyIntent(state: State, intent: Intent, galaxy: Galaxy): strin
       lightFuse(state, bomb);
       return null;
     }
+
+    // --- The galaxy (P4-T04 … P4-T08) -------------------------------------------------------
+    //
+    // Every one asks the engine and reports its refusal; none re-derives a rule. `jumpCapital`
+    // returns null for *every* reason it can refuse — no port and nowhere to fall back, not enough
+    // credits, same world — so the phrasing below asks the engine's own predicates to find out
+    // WHICH, rather than guessing. A message naming the wrong reason is worse than none.
+    case "jump": {
+      if (intent.destId === galaxy.activeId) return null;
+      if (!canJumpTo(galaxy, intent.destId)) {
+        return "No Spaceport here, and no base to fall back to on that world";
+      }
+      const cost = jumpCost(galaxy, intent.destId);
+      if (galaxy.credits < cost) return `A jump there costs ${Math.ceil(cost)} credits`;
+      const landingPoint = intent.landingX !== undefined && intent.landingY !== undefined
+        ? { x: intent.landingX, y: intent.landingY }
+        : undefined;
+      return jumpCapital(galaxy, intent.destId, { landingPoint }) ? null : "The jump was refused";
+    }
+
+    case "upgradeSpaceport": {
+      const b = state.buildings.get(intent.buildingId);
+      if (!b || b.owner !== "player") return null;
+      if (b.type !== "spaceport") return null;
+      if (spaceportTier(b) >= SPACEPORT_MAX_TIER) return "The pad is already at its highest tier";
+      return upgradeSpaceport(state, b) ? null : "Not enough ore to extend the pad";
+    }
+
+    case "createLane":
+      return createLane(galaxy, intent.from, intent.to, intent.commodities)
+        ? null
+        : "That lane cannot be opened";
+
+    case "deleteLane":
+      deleteLane(galaxy, intent.laneId);
+      return null;
+
+    case "assignLane":
+      return assignShipToLane(galaxy, intent.laneId, intent.unitId)
+        ? null
+        : "That ship cannot be crewed onto the lane";
+
+    case "unassignLane":
+      unassignShipFromLane(galaxy, intent.laneId, intent.unitId);
+      return null;
+
+    case "colonyPolicy":
+      // `sanitizePolicy` is the engine's own validator and `setColonyPolicy` runs it. Clamping up
+      // here would put a second opinion beside it — and `MAX_WORKER_TARGET` is a clamp a UI must
+      // SHOW rather than silently apply, which is a panel's job, not this module's.
+      setColonyPolicy(galaxy, intent.planetId, intent.patch);
+      return null;
 
     case "stop":
       issueStop(selectedUnits(state));

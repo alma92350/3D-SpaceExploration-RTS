@@ -9,7 +9,7 @@
 // The second is not a substitute for the first — it cannot see fill rate — but it is what makes a
 // regression in the batching path fail fast, in seconds, on any machine.
 
-import { PerfScene, type SceneSpec } from "./scene.js";
+import { PerfScene, type BackgroundReport, type SceneSpec } from "./scene.js";
 import { type FrameStats, type Renderer } from "../src/view/renderer/port.js";
 import { TIERS } from "../src/view/renderer/tiers.js";
 import { percentile } from "../src/view/renderer/tiers.js";
@@ -29,6 +29,46 @@ export interface PerfResult {
   fogUploads: number;
   /** Sim time per RENDERED frame, which is the number ADR-0006 caps at 6 ms for T0. */
   simMsPerFrame: number;
+  /**
+   * P4-T10: what the settled background galaxy costs, or **explicitly null** for a scene that
+   * settles nothing.
+   *
+   * Null rather than absent, for the same reason `Baseline.p95` is: an optional field that a scene
+   * quietly stops filling in is a measurement that quietly stops happening, and every entry in this
+   * harness's list of things it silently was not measuring started exactly that way.
+   */
+  background: BackgroundCost | null;
+}
+
+/**
+ * The background galaxy's cost, per world and per frame (P4-T10).
+ *
+ * `BackgroundReport` is stated in GALAXY TICKS, because that is the unit `stepGalaxy` schedules in
+ * and the only unit the scene can measure honestly. The budget, though, is a FRAME budget — so the
+ * conversion happens here, where the harness knows how many galaxy ticks a frame runs, rather than
+ * in the scene, which does not.
+ */
+export interface BackgroundCost extends BackgroundReport {
+  /**
+   * One settled world's share of one frame, amortised: `perWorldStepMs × ticksPerFrame / period`.
+   *
+   * A world steps once every `period` galaxy ticks, and a frame runs `ticksPerFrame` of them, so
+   * this is the honest long-run cost of keeping one more world alive in the background — the
+   * number a phase plans capacity against.
+   */
+  perWorldFrameMs: number | null;
+  /** Every settled world's amortised share together. */
+  allWorldsFrameMs: number | null;
+  /**
+   * …and what the round-robin actually delivers to the unluckiest frame: `perWorldStepMs ×
+   * maxWorldsPerStep`.
+   *
+   * This is the number `allWorldsFrameMs` hides. The background cost is not spread evenly over
+   * frames — it arrives in lumps, on the frames that happen to carry a galaxy tick in the busiest
+   * phase, and that lump is what has to fit inside the budget alongside the render. Reporting only
+   * the amortised figure would be the flattering-average mistake this scene exists to avoid.
+   */
+  peakFrameMs: number | null;
 }
 
 export interface RunOptions {
@@ -56,10 +96,14 @@ export function runScene(
   let tickDebt = 0;
   for (let f = 0; f < warmup; f++) {
     tickDebt += ticksPerFrame;
-    while (tickDebt >= 1) { scene.tick(); tickDebt -= 1; }
+    while (tickDebt >= 1) { scene.tick(opts.now); tickDebt -= 1; }
     scene.render(renderer, 0);
     renderer.flush?.();
   }
+  // The background probe warms up on the same terms as everything else: its first galaxy steps pay
+  // for JIT exactly as the first frames do, and a per-world cost that included them would be a
+  // report on startup. It keeps the schedule it learned; only the timings are dropped.
+  scene.beginMeasurement();
 
   const frameTimes: number[] = [];
   let simTotal = 0;
@@ -72,7 +116,7 @@ export function runScene(
     const frameStart = opts.now();
     tickDebt += ticksPerFrame;
     const simStart = opts.now();
-    while (tickDebt >= 1) { scene.tick(); tickDebt -= 1; }
+    while (tickDebt >= 1) { scene.tick(opts.now); tickDebt -= 1; }
     simTotal += opts.now() - simStart;
 
     const stats = scene.render(renderer, tickDebt);
@@ -100,6 +144,19 @@ export function runScene(
     terrainUploads: last?.terrainUploads ?? 0,
     fogUploads: last?.fogUploads ?? 0,
     simMsPerFrame: round(simTotal / totalFrames),
+    background: backgroundCost(scene.backgroundReport(), ticksPerFrame),
+  };
+}
+
+function backgroundCost(report: BackgroundReport | null, ticksPerFrame: number): BackgroundCost | null {
+  if (!report) return null;
+  const per = report.perWorldStepMs;
+  const perFrame = per === null ? null : round(per * ticksPerFrame / report.period);
+  return {
+    ...report,
+    perWorldFrameMs: perFrame,
+    allWorldsFrameMs: perFrame === null ? null : round(perFrame * report.worlds),
+    peakFrameMs: per === null ? null : round(per * report.maxWorldsPerStep),
   };
 }
 

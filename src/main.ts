@@ -96,5 +96,34 @@ function buildTierPicker(
   return { select };
 }
 
-if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
-else boot();
+/**
+ * Boot, and say so when it fails.
+ *
+ * `boot` removes `#boot` on its LAST line, so anything that throws before then leaves the loading
+ * message on screen permanently — a page that looks blank, with the reason only in the console.
+ * That is not hypothetical: it is what a mis-set GitHub Pages source looked like from the outside,
+ * and the absence of this handler is why diagnosing it needed the browser's network log.
+ *
+ * The message shows the real error text rather than a friendly substitute. Whoever is looking at
+ * this screen is the person who has to fix it, and "something went wrong" would waste their time.
+ * The watchdog in `index.html` covers the other half — a failure so early that this never runs.
+ */
+function bootOrExplain(): void {
+  try {
+    boot();
+  } catch (err) {
+    console.error(err);
+    const boot0 = document.getElementById("boot");
+    if (!boot0) throw err;                     // it got far enough to clear the notice; not ours
+    boot0.textContent = "";
+    const title = document.createElement("strong");
+    title.textContent = "The game failed to start.";
+    const detail = document.createElement("p");
+    detail.textContent = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+    detail.style.cssText = "max-width:46ch;text-align:center;line-height:1.5;letter-spacing:normal";
+    boot0.append(title, detail);
+  }
+}
+
+if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", bootOrExplain);
+else bootOrExplain();

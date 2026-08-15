@@ -64,3 +64,4 @@ Template: [`0000-template.md`](0000-template.md). Keep it to a page. Sections:
 | [0016](0016-the-nine-units-get-their-own-silhouettes.md) | The nine unmeshed units get their own silhouettes | Accepted |
 | [0017](0017-a-shot-is-a-diff-not-an-event.md) | A shot is a diff, not an event | Accepted |
 | [0018](0018-salvage-and-craters-are-their-own-deposits.md) | Salvage and craters are their own deposit meshes | Accepted |
+| [0019](0019-the-starmap-is-a-diagram-not-a-scene.md) | The starmap is a 2.5D diagram on a plate, because the galaxy has one coordinate | Accepted |

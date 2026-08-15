@@ -33,6 +33,17 @@
 // squad standing still on a coordinate the script names. A unit that arrives at a scripted
 // destination and stops has erased how it got there, and every positional order before it replays
 // away to nothing.
+//
+// P4-T11 added an eighth, and it is a rule about the CLOCK rather than about a coordinate: the
+// Barracks' `pause` and its un-cancelled `recycle` are now at 7190/7220 rather than 2130/2160,
+// because a building recycle completes in half its build time (10 seconds for a Barracks) and the
+// jump needed 5 200 more ticks in front of it. Left where they were, the recycle would have
+// finished at tick ~2360 and taken three claims with it: `paused` is a flag nothing but the hash
+// reads, so a razed Barracks makes that order permanently uncoverable; the un-cancelled recycle's
+// only mark is its in-progress `rc=` timer; and — found the hard way — a Foundry needs a Barracks
+// standing, so the whole Phase 4 build-out was refused with "Foundry needs a prerequisite
+// building" until those two moved. Both keep their original design intent, which was always "the
+// LAST write, left set at the final tick"; the final tick simply moved.
 // ---------------------------------------------------------------------------------------------
 
 import { writeFileSync } from "node:fs";
@@ -40,10 +51,11 @@ import { describe, expect, it } from "vitest";
 import { type Intent, checkPlacement } from "../../src/bridge/commands.js";
 import { MVP_WORLD, WorldBridge } from "../../src/bridge/world.js";
 import { STEP_SECONDS } from "../../src/app/loop.js";
-import { FIXTURE_PATH, hashState } from "./replay.js";
+import { JUMP_LOAD_RADIUS, jumpCost, jumpManifestAll, playerSpaceports } from "../../src/engine/index.js";
+import { FIXTURE_PATH, galaxyOf, hashGalaxy } from "./replay.js";
 
 const SEED = 20260814;
-const TICKS = 2200;                   // 110 sim-seconds at 20 Hz. It was 1400 through Phase 2 —
+const TICKS = 7400;                   // 370 sim-seconds at 20 Hz. It was 2200 through Phase 3 —
                                       // long enough for a Barracks to finish and put two Skiffs on
                                       // the field, which is all the economy orders needed.
                                       //
@@ -63,6 +75,21 @@ const TICKS = 2200;                   // 110 sim-seconds at 20 Hz. It was 1400 t
                                       // a halt on the leg, and a chase-down attack on a target
                                       // parked outside auto-acquire range, with 400 ticks left
                                       // after it so the kill and its aftermath are in the hash.
+                                      //
+                                      // P4-T11's jump then costs 5 200 more, and every one of them
+                                      // is ORE. A jump needs a Spaceport, a Spaceport needs a
+                                      // Foundry behind it, and the two together are 475 ore on top
+                                      // of ~70 more sold at the market for the 342-credit fuel
+                                      // (`jumpCost` to Verdani, not `JUMP_COST`). This world's
+                                      // opening pays about 1.7 ore a second — three colonists on a
+                                      // seam whose near deposits are exhausted by tick 2 200 — so
+                                      // 545 ore is a little over four minutes of mining however
+                                      // the orders are arranged, and the recorder was written
+                                      // against a measured curve rather than a guess. Training
+                                      // more colonists does NOT shorten it and was tried: the
+                                      // seam's `minerSoftCap` is 3, so a fourth digger on it earns
+                                      // `minerFalloff` and three extra workers moved the income
+                                      // curve by nothing at all while costing 150 ore.
 
 /**
  * The squad size the combat half of the scenario is written for.
@@ -86,6 +113,23 @@ const SQUAD = 3;
  */
 const OUT_OF_AGGRO = 220;
 
+/**
+ * Where the expedition jumps (P4-T11).
+ *
+ * Verdani, and each half of that is a measured choice rather than a name picked off the starmap:
+ *
+ *   • CHEAPEST. `jumpCost` scales with the distance across `data.js`'s planet line, and Verdani
+ *     (x=5) is one step from Helix Belt (x=6) — 342 credits, against 387 for Ferros and 400 for the
+ *     far side. Every credit of that is ore sold at the market, and ore is what the whole tail of
+ *     this scenario is short of.
+ *   • DORMANT for this seed. `createGalaxy` brings up only `BACKGROUND_WORLDS` neighbours
+ *     (ferros, nimbus and kybernet here), so Verdani does not exist in `galaxy.planets` at all
+ *     until `jumpCapital` calls `addPlanet` on arrival. The destination therefore enters the hash
+ *     as a world that was not there before — the clearest possible mark for the one order this row
+ *     is about, and one a same-seed replay cannot produce any other way.
+ */
+const JUMP_DEST = "verdani";
+
 const NOTE = "The MVP demo recorded as data, plus Phase 2's economy orders and Phase 3's combat "
   + "orders: land on Helix Belt, deploy the colony ship, put the colonists on the nearest ore seam, "
   + "raise a Barracks, train three Skiffs from it, sell ore on the market and buy some back, set the "
@@ -93,8 +137,10 @@ const NOTE = "The MVP demo recorded as data, plus Phase 2's economy orders and P
   + "first Skiff east alone and halt it halfway, then form the three up in a wedge, re-form them "
   + "into a line while they are still closing, ring the leader with escorts and walk it forward, "
   + "patrol the open ground west of the enemy, halt on the leg, run down an enemy worker standing "
-  + "outside auto-acquire range, and leave the Barracks paused and recycling. Entity ids are the "
-  + "engine's own and depend "
+  + "outside auto-acquire range, then raise a Foundry and a Spaceport off four minutes of mining, "
+  + "sell the ore that fuels the jump, leave the Barracks paused and recycling, and jump the "
+  + "colonists to Verdani — leaving the squad and every building behind on a Helix Belt that keeps "
+  + "running as a background colony. Entity ids are the "
   + "on WHEN each order is issued, so this file is generated by test/determinism/record.test.ts "
   + "rather than hand-written. Regenerate it only when the vendored engine ref changes, in its own "
   + "commit, naming the new ref.";
@@ -126,6 +172,8 @@ describe.skipIf(!shouldRecord)("fixture recorder", () => {
     let attackTargetId: string | null = null;
     /** The colonist the recycle/cancel pair is aimed at — resolved at 760, cancelled at 780. */
     let recycledWorkerId: string | null = null;
+    /** The world the expedition launches FROM. After the jump `bridge.state` is no longer it. */
+    const origin = bridge.state;
 
     for (let tick = 0; tick < TICKS; tick++) {
       switch (tick) {
@@ -161,7 +209,7 @@ describe.skipIf(!shouldRecord)("fixture recorder", () => {
           // worker) where.
           const workers = mine("worker");
           const builder = workers[workers.length - 1]!;
-          const spot = firstLegalSpot(bridge, builder);
+          const spot = firstLegalSpot(bridge, builder, "barracks");
           expect(spot, "no legal Barracks site near the base — the scenario cannot proceed").not.toBeNull();
           at(140, { kind: "select", ids: [builder.id], additive: false });
           at(140, { kind: "build", buildingType: "barracks", x: spot!.x, y: spot!.y });
@@ -416,8 +464,65 @@ describe.skipIf(!shouldRecord)("fixture recorder", () => {
         case 1820:
           expect(squadOrders(), "nobody took the attack order").toEqual(["attack", "attack", "attack"]);
           break;
-        case 2130:
-          // The Barracks' own last two orders, and this is the ONLY write to `paused` in the whole
+        // --- Phase 4: the launch pad, and the jump (P4-T04, P4-T11) --------------------------------
+        //
+        // Everything from here to the jump exists to satisfy ONE precondition the engine will not
+        // let a fixture fake: `canJumpTo` needs a completed Spaceport on this world (there is no
+        // fall-back, because Helix Belt is the only world the player holds a foothold on), a
+        // Spaceport needs a completed Foundry, and both need ore this world pays out at 1.7 a
+        // second. The recorder cannot hand the player a pad — the fixture records a seed and a
+        // script and nothing else, so anything placed by hand would not exist on replay — which is
+        // the same rule that keeps research and the Helium Bomb out of this scenario. Here it is
+        // affordable, barely, and the tick numbers below are where a measured run crosses each
+        // threshold with ~20 ore of margin, not round numbers.
+        case 2700: {
+          // The Foundry, the Spaceport's own prerequisite. Selected onto the LAST colonist for the
+          // same reason tick 140 does: `applyBuild` takes the first builder in the SELECTION, the
+          // selection at this point is the three Skiffs (set at 1580, and none of them can build),
+          // and `firstLegalSpot` searches outward from whichever worker this names — so this one
+          // line decides both who builds and where.
+          const workers = mine("worker");
+          const builder = workers[workers.length - 1]!;
+          const spot = firstLegalSpot(bridge, builder, "foundry");
+          expect(spot, "no legal Foundry site near the colonists — the Phase 4 build-out cannot start")
+            .not.toBeNull();
+          expect(bridge.state.players.player.resources.ore ?? 0,
+            "the Foundry is unaffordable at tick 2700 — the ore curve moved and this beat must too")
+            .toBeGreaterThanOrEqual(175);
+          at(2700, { kind: "select", ids: [builder.id], additive: false });
+          at(2700, { kind: "build", buildingType: "foundry", x: spot!.x, y: spot!.y });
+          break;
+        }
+        case 6320: {
+          // The Spaceport, and NO select in front of it — deliberately, and for exactly the reason
+          // the deleted Barracks select at 560 is documented above. The selection has held this one
+          // colonist since 2700 and nothing has touched it since, so a second identical select
+          // could not move the hash and would be decoration in a file whose whole rule is that it
+          // has none.
+          const builder = mine("worker")[mine("worker").length - 1]!;
+          const spot = firstLegalSpot(bridge, builder, "spaceport");
+          expect(spot, "no legal Spaceport site — there is nowhere to launch the expedition from")
+            .not.toBeNull();
+          expect(bridge.state.players.player.resources.ore ?? 0,
+            "the Spaceport is unaffordable at tick 6320 — re-measure the ore curve before moving it")
+            .toBeGreaterThanOrEqual(300);
+          at(6320, { kind: "build", buildingType: "spaceport", x: spot!.x, y: spot!.y });
+          break;
+        }
+        case 7000: {
+          // The fuel. `jumpCost` is what the treasury has to cover, and it is NOT `JUMP_COST`
+          // (P4-T04): 342 credits for a one-step hop to Verdani off a Tier-1 pad, against the
+          // constant's 400. The scenario has 62 credits left after Phase 2's buy, so this sells the
+          // ore that pays the difference — and the sale is the second half of the make-here/pay-
+          // there loop the market beats at 600/610 opened.
+          expect(playerSpaceports(bridge.state).length,
+            "the pad has not finished by tick 7000 — the fuel is being raised for a jump that "
+            + "cannot launch").toBeGreaterThan(0);
+          at(7000, { kind: "trade", com: "ore", qty: 70, side: "sell" });
+          break;
+        }
+        case 7190:
+          // The Barracks' own last two orders. This is the ONLY write to `paused` in the whole
           // fixture — deliberately, because a second one could not be covered.
           //
           // `paused` is a plain flag on a Barracks — `updateProductionQueue` never reads it (it
@@ -426,14 +531,76 @@ describe.skipIf(!shouldRecord)("fixture recorder", () => {
           // Phase 2 fixture paused at 640 and resumed at 700, and the pause replayed
           // byte-identically when withheld because the resume overwrote it either way. One order,
           // left set at the end, is the honest version of that beat.
-          at(2130, { kind: "pause", buildingId: barracksId(bridge), paused: true });
+          //
+          // It also has to be the last write on the ORIGIN world, and therefore in front of the
+          // jump: `applyIntent` addresses a building through the ACTIVE state, so this same order
+          // issued after tick 7240 would look up a Helix Belt id in Verdani's building map, find
+          // nothing, and return null — a recorded order that silently does nothing at all.
+          at(7190, { kind: "pause", buildingId: barracksId(bridge), paused: true });
           break;
-        case 2160:
+        case 7220:
           // A recycle that is NOT cancelled, left running at the final tick so the hash carries its
           // progress. The cancelled pair at 760/780 exercises both halves of the order on a unit;
           // this is the building path, and `rc=` in the hash is the only thing that sees it.
-          at(2160, { kind: "recycle", entityId: barracksId(bridge) });
+          //
+          // 180 ticks from the end, and the margin is arithmetic rather than taste: a building's
+          // recycle runs for half its build time (`RECYCLE_TIME_FRAC`), so a 20-second Barracks
+          // finishes at 7420 — 20 ticks after the recording stops. Let it complete and the Barracks
+          // is razed, which erases `paused` above along with this order's own timer.
+          at(7220, { kind: "recycle", entityId: barracksId(bridge) });
           break;
+        case 7240: {
+          // THE JUMP (P4-T11).
+          //
+          // Nothing about it is scripted except the destination: who rides is `jumpManifestAll`'s
+          // answer, and that answer is a function of where the colonists happen to be standing in
+          // their gather cycle when the order lands — which is itself downstream of every order in
+          // this file, including the one-second recycle stall at 760. The pad went up beside the
+          // seam they work, so they stage themselves by mining rather than by a scripted move to a
+          // coordinate, which is what keeps the structural rule at the top of this file intact
+          // through the last order in the fixture.
+          //
+          // What leaves and what stays is the whole shape of the beat: the colonists ride, the
+          // Skiffs are 800 units away in the enemy's half of the map and stay exactly where the
+          // chase left them, and NO building moves — `jumpCapital` never relocates a base. So Helix
+          // Belt keeps the Command Center, the Barracks mid-recycle, the Foundry, the pad and the
+          // squad, and becomes a background colony that goes on ticking at `BG_STEP` cadence. That
+          // is why the hash had to widen to every world (see `hashGalaxy`): hashing the seat alone
+          // would have thrown all of that away at this exact tick.
+          const galaxy = galaxyOf(bridge);
+          const pad = playerSpaceports(bridge.state)[0]!;
+          const manifest = jumpManifestAll(bridge.state);
+          expect(galaxy.planets.has(JUMP_DEST),
+            `${JUMP_DEST} is already instantiated — it is no longer a dormant world for this seed, `
+            + "so the jump no longer proves that the destination is built on arrival").toBe(false);
+          expect(jumpCost(galaxy, JUMP_DEST),
+            "the destination is free, which means it has already been reached — this is a return "
+            + "trip, not the settlement the scenario is written for").toBeGreaterThan(0);
+          expect(galaxy.credits,
+            `the treasury cannot fund the ${jumpCost(galaxy, JUMP_DEST)}-credit jump — sell more ore `
+            + "at 7000, or move the sale earlier").toBeGreaterThanOrEqual(jumpCost(galaxy, JUMP_DEST));
+          expect(manifest.riders.length,
+            `nothing is staged within ${JUMP_LOAD_RADIUS} of the pad at ${pad.x.toFixed(0)},`
+            + `${pad.y.toFixed(0)} — the jump would move no unit at all, and half of what it proves `
+            + "would be missing").toBeGreaterThan(0);
+          at(7240, { kind: "jump", destId: JUMP_DEST });
+          break;
+        }
+        case 7241: {
+          // One tick later, because the intent queue drains at the TOP of a step: at 7240 the order
+          // has been enqueued and not yet applied. These are the facts the fixture is recorded
+          // for, asserted while the run is still in hand.
+          const galaxy = galaxyOf(bridge);
+          expect(galaxy.activeId, "the seat did not move — the jump was refused").toBe(JUMP_DEST);
+          expect(galaxy.planets.has(JUMP_DEST), "the destination world was never built").toBe(true);
+          expect([...bridge.state.units.values()].filter((u) => u.owner === "player").length,
+            "the expedition did not arrive on the destination").toBeGreaterThan(0);
+          expect([...origin.units.values()].filter((u) => u.owner === "player" && u.type === "worker").length,
+            "every colonist is still on the world the expedition left — nothing actually rode").toBe(0);
+          expect([...origin.buildings.values()].filter((b) => b.owner === "player").length,
+            "the world we left lost its buildings — a jump moves units, never a base").toBeGreaterThan(0);
+          break;
+        }
         default:
           break;
       }
@@ -445,13 +612,17 @@ describe.skipIf(!shouldRecord)("fixture recorder", () => {
 
     expect(problems, `the recorded scenario must not contain refused orders:\n  ${problems.join("\n  ")}`).toEqual([]);
 
-    // The two end-state facts the hash cannot state for itself.
+    // The end-state facts the hash cannot state for itself — asked of the ORIGIN world, not of
+    // `bridge.state`. After the jump the seat is Verdani, where there is no corpse and no squad, so
+    // `bridge.state.units.get(attackTargetId)` would be `undefined` for the wrong reason entirely
+    // and the strongest assertion in this file would pass vacuously.
     expect(
-      bridge.state.units.get(attackTargetId!),
+      origin.units.get(attackTargetId!),
       `the attack target ${attackTargetId} was still alive at the final tick — the attack order is `
         + "decoration, and withholding it would move the hash only by whatever the chase happened to disturb",
     ).toBeUndefined();
-    expect(squad().length, "the squad did not survive to the end of the recording — the last orders "
+    const survivors = [...origin.units.values()].filter((u) => u.owner === "player" && u.type === "skiff");
+    expect(survivors.length, "the squad did not survive to the end of the recording — the last orders "
       + "were issued to fewer units than the scenario is written for").toBe(SQUAD);
 
     const fixture = {
@@ -460,7 +631,7 @@ describe.skipIf(!shouldRecord)("fixture recorder", () => {
       ticks: TICKS,
       note: NOTE,
       script,
-      hash: hashState(bridge.state),
+      hash: hashGalaxy(galaxyOf(bridge)),
     };
     writeFileSync(FIXTURE_PATH, JSON.stringify(fixture, null, 2) + "\n");
     console.log(`determinism fixture written: ${script.length} orders, hash ${fixture.hash}`);
@@ -475,13 +646,19 @@ function barracksId(bridge: WorldBridge): string {
   return barracks.id;
 }
 
-/** The first buildable Barracks site near a worker, searched in a fixed order so it is repeatable. */
-function firstLegalSpot(bridge: WorldBridge, worker: Unit): { x: number; y: number } | null {
-  for (const distance of [70, 90, 110, 130]) {
+/**
+ * The first buildable site of `type` near a worker, searched in a fixed order so it is repeatable.
+ *
+ * The type is a parameter rather than a constant because Phase 4 places three different footprints
+ * through it, and a Spaceport's radius is wider than a Barracks' — the 150 ring exists for that:
+ * `canPlaceBuilding` refuses the closer offsets where the Barracks fitted.
+ */
+function firstLegalSpot(bridge: WorldBridge, worker: Unit, type: string): { x: number; y: number } | null {
+  for (const distance of [70, 90, 110, 130, 150]) {
     for (const [dx, dy] of [[1, 0], [0, 1], [-1, 0], [0, -1], [1, 1], [-1, -1]] as const) {
       const x = worker.x + dx * distance;
       const y = worker.y + dy * distance;
-      if (checkPlacement(bridge.state, "barracks", x, y).valid) return { x, y };
+      if (checkPlacement(bridge.state, type, x, y).valid) return { x, y };
     }
   }
   return null;

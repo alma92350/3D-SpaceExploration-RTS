@@ -23,6 +23,9 @@ function result(over: Partial<PerfResult> = {}): PerfResult {
     terrainUploads: 1,
     fogUploads: 30,
     simMsPerFrame: 0.7,
+    // Explicitly null, not omitted: T0 settles no roster, and `PerfResult.background` says so out
+    // loud for the same reason `Baseline.p95` does (P4-T10).
+    background: null,
     ...over,
   };
 }

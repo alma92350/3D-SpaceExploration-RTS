@@ -10,14 +10,14 @@
 
 import { WorldBridge, MVP_WORLD } from "../src/bridge/world.js";
 import { STEP_SECONDS } from "../src/app/loop.js";
-import { BUILDINGS, UNITS, makeBuilding, makeUnit } from "../src/engine/index.js";
+import { BUILDINGS, ODYSSEY_WORLDS, UNITS, addPlanet, makeBuilding, makeUnit } from "../src/engine/index.js";
 import { CameraRig } from "../src/input/camera.js";
 import { SceneComposer } from "../src/view/scene.js";
 import { elevationFieldFrom, type ElevationField } from "../src/view/terrain/elevation.js";
 import { buildTerrainMesh } from "../src/view/terrain/mesh.js";
 import { buildMeshes } from "../src/view/meshes/generators.js";
 import { type FrameStats, type Renderer, type TerrainMesh, type Tier } from "../src/view/renderer/port.js";
-import { TIERS } from "../src/view/renderer/tiers.js";
+import { TIERS, percentile } from "../src/view/renderer/tiers.js";
 
 export const PERF_SEED = 20260814;
 
@@ -69,6 +69,30 @@ export interface SceneSpec {
    * rather than two rings), and a real fuse lasts four seconds — 80 of the 600 frames.
    */
   readonly armedBombs?: number;
+  /**
+   * Bring up the WHOLE world roster and give every world off the seat this same scene's economy,
+   * so the background galaxy the bridge has been stepping since Phase 1 is finally loaded (P4-T10).
+   *
+   * `createGalaxy` already lives every scene: it brings up `BACKGROUND_WORLDS` (3) neighbours and
+   * `stepGalaxy` has ticked them from the first perf run this repo ever recorded. So why is this
+   * flag not redundant? Because of what those three worlds CONTAIN. An `unsettled` world is stripped
+   * of the player and left with the AI's opening — measured, **one unit and zero buildings**. Three
+   * worlds holding one colony ship each is an empty loop with a `tick()` around it, and every perf
+   * number this project has published so far has quietly included it and called that "the background
+   * simulation running". That is the fourth time this harness would have reported measuring
+   * something it was not, and the point of this scene is to stop it being the fourth.
+   *
+   * So: every roster world is instantiated, and each one off the seat is populated with THIS spec's
+   * own `units`/`buildings` recipe. Deliberately the same load as the active world, because PRD
+   * §6.2's counts are the only entity counts this project has a budget written against — a
+   * background world sized to anything else would produce a number nobody could check. It is a
+   * pessimistic load and should be read as one: a real colony is smaller than a battlefield.
+   *
+   * Never `packed`, and never `armedBombs`. Packing exists to force a fight in front of the camera;
+   * on ten unrendered worlds it would only accelerate the mutual annihilation that `PerfScene.tick`
+   * already has to watch for (see `BACKGROUND_SURVIVAL_FLOOR`).
+   */
+  readonly settledRoster?: boolean;
 }
 
 /** The gated scenes. PRD §6.2's own numbers; changing one is a PRD change, not a tuning knob. */
@@ -91,10 +115,328 @@ export const SCENES: Readonly<Record<string, SceneSpec>> = {
     tier: "T0", units: 200, buildings: 80, width: 1280, height: 720,
     unitTypes: "all", packed: true, armedBombs: 3,
   },
+  // PRD §5's Phase 4 exit criterion (P4-T10): "a galaxy with the full roster settled holds the T0
+  // budget while the active world renders". Deliberately T0's spec with ONE field added, so the two
+  // rows of `npm run perf` output can be read against each other — the whole difference between
+  // them is the ten settled worlds, which makes the aggregate background cost visible without any
+  // arithmetic at all. The per-world half of the criterion needs arithmetic, and `BackgroundReport`
+  // below is that.
+  P4: {
+    tier: "T0", units: 200, buildings: 80, width: 1280, height: 720,
+    settledRoster: true,
+  },
 };
 
 const UNIT_MIX = ["skiff", "bastion", "lancer", "worker"] as const;
 const BUILDING_MIX = ["barracks", "habitat", "turret", "refinery"] as const;
+
+// ---------------------------------------------------------------------------------------------
+// P4-T10 — what the settled background costs, per world.
+//
+// The exit criterion is a MEASUREMENT, not a build: `WorldBridge.stepWorld` has called `stepGalaxy`
+// rather than `tick` since Phase 1, on purpose, so the background simulation already runs. What has
+// never existed is a number for it — and the row asks for that number **per world, not in
+// aggregate**, which is the part that decides how everything below is shaped.
+//
+// Why per-world is not just aggregate-divided-by-N: `stepGalaxy` spreads the background roster
+// round-robin by fixed roster index, so a world steps once every `BG_STEP` galaxy ticks and only
+// ~ceil(N/BG_STEP) of them step on any one tick. Frame N and frame N+1 therefore do DIFFERENT
+// amounts of background work, and a mean over frames reports a load that no single frame ever
+// carries. Sizing a phase against that mean would under-budget every frame that lands on the
+// heaviest step. So the cost is bucketed by the round-robin phase and the marginal cost of one
+// world is read off the difference between phases that step different numbers of worlds.
+//
+// The round-robin's PERIOD is measured, never imported. `BG_STEP` is upstream's constant and a
+// harness that hard-codes 4 would keep reporting a tidy four-phase cycle after upstream changed it
+// — which is precisely the class of silent mis-measurement this file's other comments are about.
+// It is read back out of the gaps between the ticks on which each world actually advanced.
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * The share of its starting entities the settled background must still hold, on every tick.
+ *
+ * The two sides on a background world fight, exactly as they do on the rendered one, and by the end
+ * of a 10-second gate run the roster is down to roughly two thirds of the units it started with.
+ * That erosion is honest — it is what a settled world does — but it is also the ingredient that
+ * turns a run's tail into a cheaper scene than its head, and this harness has twice shipped numbers
+ * that were flattering for exactly that reason. `maxDrawCalls` had the same hole and got the same
+ * treatment (see `armedBombs`): a scene that erased itself halfway would still report the peak it
+ * reached first. So the floor is asserted rather than assumed, and the report carries the start and
+ * end entity counts so a reader can see the erosion instead of being told about it.
+ *
+ * 0.4 rather than something tighter because this must fail on a COLLAPSE, not on a balance patch.
+ */
+const BACKGROUND_SURVIVAL_FLOOR = 0.4;
+
+/** Galaxy ticks by which every settled world must have been scheduled at least once. */
+const SCHEDULE_GRACE_TICKS = 16;
+
+/** Samples a group needs before its median may carry the marginal-cost estimate. */
+const MIN_GROUP_SAMPLES = 8;
+
+/** One phase of the background round-robin: how many worlds it steps, and what that step costs. */
+export interface BackgroundPhase {
+  /** `galaxy.tick % period`. */
+  readonly phase: number;
+  /** Background worlds this phase steps — the round-robin's whole point is that this varies. */
+  readonly worlds: number;
+  readonly ticks: number;
+  readonly p50: number;
+  readonly p95: number;
+}
+
+export interface BackgroundReport {
+  /** Settled background worlds: the roster minus the seat. */
+  readonly worlds: number;
+  readonly entitiesAtStart: number;
+  readonly entitiesAtEnd: number;
+  /** The round-robin period in galaxy ticks, MEASURED (upstream calls it `BG_STEP`). */
+  readonly period: number;
+  readonly galaxyTicks: number;
+  readonly phases: readonly BackgroundPhase[];
+  /** The most background worlds any one galaxy tick stepped — the spike, not the average. */
+  readonly maxWorldsPerStep: number;
+  /**
+   * Cost of ONE background world-step, in milliseconds.
+   *
+   * Marginal, and it has to be: `stepGalaxy` ticks the seat and the scheduled colonies inside one
+   * call, and nothing outside it can time the two halves apart. So this is the median step cost of
+   * the ticks that ran the most worlds minus that of the ticks that ran the fewest, over the
+   * difference in world count — everything the two groups share (the seat's own tick, the snapshot
+   * extraction, the drain) cancels. Medians rather than means because upstream's galaxy-wide scans
+   * run on a ~1/sec schedule that lands on one phase, and a mean would fold that into per-world
+   * cost; a median of 50 samples shrugs off the 5% of ticks that carry it.
+   *
+   * Null when every tick stepped the same number of worlds, which leaves nothing to difference.
+   */
+  readonly perWorldStepMs: number | null;
+  /** Whole-bridge-step cost, over galaxy ticks. Includes the seat — see `perWorldStepMs`. */
+  readonly stepP50: number;
+  readonly stepP95: number;
+}
+
+/**
+ * Bring up every roster world and give the ones off the seat a real economy. Returns their ids.
+ *
+ * `addPlanet(..., { unsettled: true })` is upstream's own "a world the player has not landed on"
+ * constructor — the same call `createGalaxy` makes for its three live neighbours — so this settles
+ * the roster the way the game does, not by hand-building states the engine would never produce.
+ */
+function settleRoster(galaxy: Galaxy, spec: SceneSpec): string[] {
+  for (const id of ODYSSEY_WORLDS) if (!galaxy.planets.has(id)) addPlanet(galaxy, id, { unsettled: true });
+  const background: string[] = [];
+  for (const id of ODYSSEY_WORLDS) {
+    if (id === galaxy.activeId) continue;
+    const state = galaxy.planets.get(id);
+    if (!state) throw new Error(`perf scene: roster world ${id} did not come up`);
+    populate(state, { ...spec, packed: false, armedBombs: 0, settledRoster: false });
+    background.push(id);
+  }
+  return background;
+}
+
+/**
+ * The bridge's galaxy, which it deliberately does not expose.
+ *
+ * `WorldBridge` keeps the galaxy private and hands out only the seat (`state`) — correctly, since
+ * ADR-0008's whole point is that nothing above the bridge reasons about the meta-layer. This scene
+ * is not above the bridge; it is a measuring instrument clamped around it, and it needs the galaxy
+ * for two things neither of which the game ever wants: settling the roster, and reading each
+ * colony's clock to see which ones a step actually advanced. `populate` already reaches through
+ * `bridge.state` to build the world by hand, so the boundary being crossed here is the same one.
+ *
+ * The shape is CHECKED rather than trusted. A cast that silently produced `undefined` after a
+ * rename would leave this scene settling nothing and reporting a background cost of zero — a green
+ * gate proving nothing at all, which is the exact failure this file keeps a list of.
+ */
+function galaxyOf(bridge: WorldBridge): Galaxy {
+  const galaxy = (bridge as unknown as { galaxy?: Galaxy }).galaxy;
+  if (!galaxy || !(galaxy.planets instanceof Map) || typeof galaxy.tick !== "number") {
+    throw new Error(
+      "perf scene: WorldBridge no longer keeps its galaxy in a `galaxy` field with a `planets` map "
+      + "and a `tick` counter. The P4 scene settles the roster through it and reads each colony's "
+      + "clock to see which ones a step advanced; without it the scene would settle nothing and "
+      + "report a background cost of zero. Re-point `galaxyOf`.",
+    );
+  }
+  return galaxy;
+}
+
+/**
+ * The instrument. Straddles `bridge.step` and records, per galaxy tick, how long the step took and
+ * which background worlds it advanced.
+ *
+ * "Which worlds advanced" is read from each colony's own `state.time`, not predicted from the
+ * schedule. Predicting it would mean reimplementing `stepGalaxy`'s round-robin here, and a
+ * reimplementation agrees with the engine right up until the moment the measurement matters.
+ */
+class BackgroundProbe {
+  private readonly states: State[];
+  /** `state.time` per world, as of the top of the current step. Reused; never reallocated. */
+  private readonly before: number[];
+  /** The galaxy tick each world last advanced on, or -1 — the period is read off the gaps. */
+  private readonly lastStep: number[];
+  private readonly gaps: number[] = [];
+  private readonly stepMs: number[] = [];
+  private readonly stepTick: number[] = [];
+  private readonly stepWorlds: number[] = [];
+  private ticksSeen = 0;
+  readonly entitiesAtStart: number;
+
+  constructor(private readonly galaxy: Galaxy, private readonly ids: readonly string[]) {
+    this.states = ids.map((id) => {
+      const state = galaxy.planets.get(id);
+      if (!state) throw new Error(`perf scene: background world ${id} is not in the galaxy`);
+      return state;
+    });
+    this.before = this.states.map(() => 0);
+    this.lastStep = this.states.map(() => -1);
+    this.entitiesAtStart = this.entities();
+    // PREMISE ONE: the worlds are actually inhabited. An `unsettled` world holds one colony ship
+    // and nothing else, and ten of those cost almost exactly nothing to tick — a background number
+    // measured against them would be a measurement of an empty loop, reported as a measurement of
+    // a settled galaxy. Asserted at construction because `settledRoster` failing to reach a world
+    // is silent everywhere else.
+    for (let i = 0; i < this.states.length; i++) {
+      const state = this.states[i]!;
+      if (state.units.size > 1 && state.buildings.size > 0) continue;
+      throw new Error(
+        `perf scene: background world ${this.ids[i]} came up with ${state.units.size} units and `
+        + `${state.buildings.size} buildings — that is upstream's bare \`unsettled\` opening, not a `
+        + `settled colony, and the background cost measured against it would be the cost of an `
+        + `empty loop. \`settleRoster\` did not populate it.`,
+      );
+    }
+  }
+
+  /** Total units and buildings across the settled background. */
+  private entities(): number {
+    let n = 0;
+    for (const state of this.states) n += state.units.size + state.buildings.size;
+    return n;
+  }
+
+  beforeStep(): void {
+    for (let i = 0; i < this.states.length; i++) this.before[i] = this.states[i]!.time;
+  }
+
+  afterStep(ms: number): void {
+    const tick = this.galaxy.tick;
+    let stepped = 0;
+    for (let i = 0; i < this.states.length; i++) {
+      if (this.states[i]!.time === this.before[i]) continue;
+      stepped++;
+      if (this.lastStep[i]! >= 0) this.gaps.push(tick - this.lastStep[i]!);
+      this.lastStep[i] = tick;
+    }
+    this.stepMs.push(ms);
+    this.stepTick.push(tick);
+    this.stepWorlds.push(stepped);
+    this.ticksSeen++;
+
+    // PREMISE TWO: the galaxy really is being stepped, and every settled world is on the schedule.
+    // This is the assertion the whole row rests on — `stepWorld` calling `tick` instead of
+    // `stepGalaxy` would cost nothing, break nothing visible, and turn this scene into T0 with ten
+    // idle worlds sitting in memory. It would also be the single easiest regression to introduce.
+    if (this.ticksSeen === SCHEDULE_GRACE_TICKS) {
+      const idle = this.ids.filter((_, i) => this.lastStep[i]! < 0);
+      if (idle.length) {
+        throw new Error(
+          `perf scene: ${idle.length} settled world(s) never advanced in ${SCHEDULE_GRACE_TICKS} `
+          + `galaxy ticks (${idle.join(", ")}). Either the bridge stopped calling \`stepGalaxy\`, or `
+          + `the round-robin no longer reaches them. Either way the background cost this scene is `
+          + `about is not being paid, and the number it would print is a fiction.`,
+        );
+      }
+    }
+
+    // PREMISE THREE: the load is still there. See `BACKGROUND_SURVIVAL_FLOOR`.
+    const left = this.entities();
+    if (left < this.entitiesAtStart * BACKGROUND_SURVIVAL_FLOOR) {
+      throw new Error(
+        `perf scene: the settled background has fallen from ${this.entitiesAtStart} entities to `
+        + `${left} — below ${Math.round(BACKGROUND_SURVIVAL_FLOOR * 100)}% of what it started with. `
+        + `The tail of this run is measuring a galaxy that annihilated itself, and averaging it with `
+        + `the head produces a per-world cost no settled world ever had.`,
+      );
+    }
+  }
+
+  /** Drop the warm-up samples. Called once the harness starts measuring; see `runScene`. */
+  restart(): void {
+    this.stepMs.length = 0;
+    this.stepTick.length = 0;
+    this.stepWorlds.length = 0;
+    this.gaps.length = 0;
+  }
+
+  report(): BackgroundReport {
+    // The period, read back out of the schedule rather than imported from upstream. The gaps are
+    // the distances between consecutive advances of the same world, so their mode IS `BG_STEP`.
+    const period = Math.max(1, mode(this.gaps));
+    const phases: BackgroundPhase[] = [];
+    for (let p = 0; p < period; p++) {
+      const ms: number[] = [];
+      let worlds = 0;
+      for (let i = 0; i < this.stepMs.length; i++) {
+        if (this.stepTick[i]! % period !== p) continue;
+        ms.push(this.stepMs[i]!);
+        worlds = Math.max(worlds, this.stepWorlds[i]!);
+      }
+      if (!ms.length) continue;
+      phases.push({ phase: p, worlds, ticks: ms.length, p50: round2(percentile(ms, 0.5)), p95: round2(percentile(ms, 0.95)) });
+    }
+
+    // Marginal cost, grouped by the number of worlds a tick actually stepped rather than by phase:
+    // two phases can step the same count, and it is the COUNT the cost is a function of.
+    const byWorlds = new Map<number, number[]>();
+    for (let i = 0; i < this.stepMs.length; i++) {
+      const k = this.stepWorlds[i]!;
+      const bucket = byWorlds.get(k) ?? [];
+      bucket.push(this.stepMs[i]!);
+      byWorlds.set(k, bucket);
+    }
+    const usable = [...byWorlds.entries()]
+      .filter(([, ms]) => ms.length >= MIN_GROUP_SAMPLES)
+      .sort((a, b) => a[0] - b[0]);
+    const lo = usable[0];
+    const hi = usable[usable.length - 1];
+    const perWorldStepMs = lo && hi && hi[0] > lo[0]
+      ? round2((percentile(hi[1], 0.5) - percentile(lo[1], 0.5)) / (hi[0] - lo[0]))
+      : null;
+
+    return {
+      worlds: this.ids.length,
+      entitiesAtStart: this.entitiesAtStart,
+      entitiesAtEnd: this.entities(),
+      period,
+      galaxyTicks: this.stepMs.length,
+      phases,
+      maxWorldsPerStep: this.stepWorlds.reduce((a, b) => Math.max(a, b), 0),
+      perWorldStepMs,
+      stepP50: round2(percentile(this.stepMs, 0.5)),
+      stepP95: round2(percentile(this.stepMs, 0.95)),
+    };
+  }
+}
+
+/** The most common value in `values`, ties going to the smallest. 0 for an empty list. */
+function mode(values: readonly number[]): number {
+  const counts = new Map<number, number>();
+  for (const v of values) counts.set(v, (counts.get(v) ?? 0) + 1);
+  let best = 0;
+  let bestCount = 0;
+  for (const [v, n] of [...counts.entries()].sort((a, b) => a[0] - b[0])) {
+    if (n > bestCount) { best = v; bestCount = n; }
+  }
+  return best;
+}
+
+function round2(v: number): number {
+  return Math.round(v * 100) / 100;
+}
+
+const NOW = (): number => performance.now();
 
 export class PerfScene {
   readonly composer: SceneComposer;
@@ -105,10 +447,23 @@ export class PerfScene {
   private frame = 0;
   /** The armed bombs' ids, so `tick` can prove the scene is still the scene. See `armedBombs`. */
   private readonly bombIds: string[] = [];
+  /** P4-T10's instrument, or null for a scene that settles nothing. */
+  private readonly background: BackgroundProbe | null;
 
   constructor(readonly spec: SceneSpec) {
     this.bridge = new WorldBridge({ seed: PERF_SEED, worldId: MVP_WORLD });
     const state = this.bridge.state;
+
+    // The settled roster goes up BEFORE the seat is populated (P4-T10): `addPlanet` re-bases the
+    // engine's global entity-id counter past everything already in the galaxy, so bringing the ten
+    // colonies up first leaves the seat's own ids minted from one settled counter rather than
+    // interleaved with eleven re-basings.
+    let background: BackgroundProbe | null = null;
+    if (spec.settledRoster) {
+      const galaxy = galaxyOf(this.bridge);
+      background = new BackgroundProbe(galaxy, settleRoster(galaxy, spec));
+    }
+    this.background = background;
 
     // Populate to the budgeted counts directly rather than playing the game up to them: a scripted
     // 60-second match reaches a different army every time upstream touches the AI, and the gate
@@ -127,9 +482,26 @@ export class PerfScene {
     this.rig = new CameraRig({ mapWidth: state.map.width, mapHeight: state.map.height }, this.field);
   }
 
-  /** Advance the simulation one tick. Called at 20 Hz, as in the real loop. */
-  tick(): void {
-    this.bridge.step(STEP_SECONDS);
+  /**
+   * Advance the simulation one tick. Called at 20 Hz, as in the real loop.
+   *
+   * `now` is the harness's own clock rather than a second one, so the background timing below and
+   * the frame timing in `runScene` cannot drift apart or disagree about what a millisecond is.
+   */
+  tick(now: () => number = NOW): void {
+    // The background probe straddles `bridge.step` and NOTHING else, because `bridge.step` is where
+    // `stepGalaxy` runs. Timing it from inside `runScene`'s frame loop instead would fold the
+    // render into the number; timing it in the constructor would put the whole background cost in
+    // setup, where the criterion — "while the active world renders" — says it must not be.
+    const bg = this.background;
+    if (bg) {
+      bg.beforeStep();
+      const t0 = now();
+      this.bridge.step(STEP_SECONDS);
+      bg.afterStep(now() - t0);
+    } else {
+      this.bridge.step(STEP_SECONDS);
+    }
     // A detonation would not fail this gate on its own — `maxDrawCalls` is a maximum, so a scene
     // that erased itself halfway through would still report the peak it reached before it did, and
     // the run would come out GREEN with two thirds of its frames measuring an empty map. So the
@@ -182,6 +554,16 @@ export class PerfScene {
     renderer.registerMeshes(buildMeshes());
     renderer.setTier(this.spec.tier);
     renderer.resize(this.spec.width, this.spec.height, 1);
+  }
+
+  /** Throw away the warm-up's background samples; the harness calls this once measuring starts. */
+  beginMeasurement(): void {
+    this.background?.restart();
+  }
+
+  /** P4-T10's numbers, or null for a scene with no settled roster. */
+  backgroundReport(): BackgroundReport | null {
+    return this.background?.report() ?? null;
   }
 }
 
