@@ -595,6 +595,26 @@ code before a row was written for it:*
 
 ---
 
+## Phase 7 — Release hardening
+
+**There is no Phase 7 in the PRD.** §5 ends at Phase 6, and Phase 6 is merged. This section is not a
+new phase of the product; it is **the backlog Phase 6 wrote down about itself**, collected into rows
+so it stops being a set of paragraphs nobody owns. Every row below is a gap already recorded in
+`RELEASE.md`, an ADR, or a Notes cell — **nothing here is invented scope**, and the first row is the
+one `RELEASE.md` names in those words as "the one a release should close first".
+
+The reason to do this as a phase rather than as a list: five phases running, this project's most
+expensive defects were things a guard could not see, and every row here is a guard that is currently
+narrower than the claim it stands behind.
+
+| ID | Task | Status | Depends | Definition of done | Notes |
+|---|---|---|---|---|---|
+| P7-T01 | Firefox and WebKit in CI, not just Chromium | TODO | — | `npm run smoke` runs the e2e suite on all three engines in CI, and any real cross-browser defect is fixed or filed | **`RELEASE.md`'s N-04 row says this is the gap to close first.** `playwright.config` declares one project, `chromium-software`. Firefox and Safari are covered by the renderer port's conformance suite and by there being no browser-specific code — which is an argument, not an execution. The renderer is the surface most likely to disagree: WebGL2 support, `ShaderMaterial` defaults, `EXT_disjoint_timer_query`, canvas sizing and `matchMedia` all differ, and P6-T04 already had to guard `matchMedia` for jsdom |
+| P7-T02 | The two defects Phase 6 measured and deliberately did not change | TODO | — | The imposter quad's proportions and the armed-bomb tracer are fixed or ruled on with an ADR | Both were left on purpose and both are recorded with numbers. **The imposter quad** uses `radius × 2.2` for its HEIGHT on a roster mostly wider than tall — a Skiff is 12.4 wide and 2.4 high — so the swap is wrong at every distance and no threshold fixes it (P6-T07 measured 0.73–10.35× the mesh's screen area). It was left because it is a visual decision with an owner. **The armed-bomb tracer**: ADR-0023 §158 records 1 tracer before and 0 after, because `performAttack` returns early when the target is an armed Helium Bomb — the engine sets the bomb off, resets the shooter's cooldown and announces nothing, so there is no `attackHit` to read |
+| P7-T03 | The two controls still pointer-only | TODO | — | Zoom and the approach screen's landing mark are reachable from the keyboard | P6-T11 made play keyboard-only and named these two as the remainder rather than waving them away: **the wheel is still the only zoom control in the app**, and the approach screen's landing mark takes screen pixels through `pointAt`, so a jump works but always lands on the engine's default site. N-05 says keyboard-navigable; a control with no keyboard path is the same clause P6-T03 and P6-T11 each closed half of |
+| P7-T04 | The four PARTIAL rows, closed or reclassified | TODO | P7-T01 | Each of P1-T23, P2-T20, P3-T03 and P3-T16 is DONE, or PARKED with the reason and the trigger | They have been PARTIAL for four phases. Two are perf gates whose missing half is a browser measurement P7-T01 makes possible; two are playtest-dependent and belong with P6-T09. **A status that has meant the same thing for four phases is not a status** — it is the board hygiene failure that had P4-T13 reading TODO while every phase cited it |
+| P7-T05 | Re-derive `RELEASE.md` and close its stale lines | TODO | P7-T01 … P7-T04 | Every row re-checked against the command beside it; no line describes a gap that has since been closed | Its N-05 row already says "keyboard-only PLAY is not yet true — filed as P6-T11", and P6-T11 is done. **That is the file's own warning about itself coming true within one phase**, and it is exactly what `PARITY.md` was wrong about twice. The file says "if a row here disagrees with the command beside it, the command is right" — so run them |
+
 ## Open questions
 
 Answer before the phase in brackets. Discussion belongs in the PRD §10 entry; the answer belongs
