@@ -89,11 +89,8 @@ passed (ADR-0011). This list only grows until someone runs the checks.
 
 **What the next session should pick up, in order:**
 
-1. **Decide the reachability question** (the section under Phase 3). It is the only row in the table
-   above that does not need a person or a GPU, it is the largest known gap in the project, and both
-   deferred playtest scripts are partly un-runnable until it is settled. Phase 4 is UI-first, so it
-   is the natural place — but the decision is *whether to wire the panels or to write the model-layer
-   bar into the definition of done*, and either answer unblocks the scripts.
+1. ~~Decide the reachability question~~ — **done, as P4-T01**: the panels are wired, both phases
+   carry an enumeration test, and all three playtest scripts are now runnable end to end.
 2. **P1-T24 and P3-T18 in one sitting** — run the three playtest scripts with five people, now that
    there is a URL: https://alma92350.github.io/3D-SpaceExploration-RTS/ They gate S1, S6 and Phase 3's
    own legibility criterion, and they are the only things that can say whether the meshes and
@@ -106,8 +103,9 @@ passed (ADR-0011). This list only grows until someone runs the checks.
    and compare the hash; and record `P3`'s p95 from one CI run, since this container reports 1.7×
    the runner's figures on identical commits.
 
-Items 2–4 need a person or a machine this project does not have in CI. Item 1 does not, which is why
-it is first.
+Every remaining item needs a person or a machine this project does not have in CI. The one that did
+not — reachability — is closed, which means the playtest scripts are now the only thing standing
+between this board and an honest answer about whether any of it reads.
 
 ## Phase 2 — The economy
 
@@ -373,11 +371,12 @@ consequence: **"DONE" on this board has meant "the logic exists and is proven", 
 it"**, and the two deferred playtest scripts are the first things that need the second meaning.
 
 Phase 3's half is closed — `f`/`t`/`p`/`o` and the digit row, Space for the alert board, wired in
-`game.ts`, with a test that fails when any Phase 3 intent has no gesture producing it. **Phase 2's
-half is not**, and it is now the largest known gap in the project: seven panels' worth of economy
-commands that a player cannot issue. It is not folded into Phase 3's exit gate, because it is not
-Phase 3's; it is named here so Phase 4 starts by deciding whether to pay it down or to write the
-"model layer only" rule into the definition of done where it can be read.
+`game.ts`, with a test that fails when any Phase 3 intent has no gesture producing it.
+
+**Phase 2's half is closed too, as P4-T01**, and the answer was *wire them* rather than write the
+model-layer bar into the definition of done. Both phases now carry an enumeration test that fails
+**by name** when an intent has no control, which is the part that stops this recurring — the reason
+it went unnoticed for two whole phases is simply that nothing in the suite was asking the question.
 
 ## Phase 4 — The galaxy
 
