@@ -5,6 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Stellar Frontier: Odyssey 3D</title>
     <link rel="stylesheet" href="/src/style.css" />
+    <!-- N-05's stylesheet half (P6-T03, P6-T04): a focus you can see, and the reduced-motion hook.
+         Second, so its focus rules win over `style.css`'s button styling on equal specificity. -->
+    <link rel="stylesheet" href="/src/a11y.css" />
     <script>
       // A boot watchdog, and it exists because of a real incident rather than a hypothetical.
       //
@@ -63,6 +66,11 @@
       <canvas id="scene"></canvas>
       <canvas id="overlay"></canvas>
       <div id="boot">Loading the Odyssey…</div>
+      <!-- P6-T05. The one place the game speaks after boot: a lost WebGL context, a frame that
+           threw, a click that did not survive. Empty and `hidden` until there is something to say;
+           `src/app/failure.ts` fills and styles it (inline, so a banner never depends on the
+           stylesheet having loaded). Outside #hud on purpose — the HUD may be the broken thing. -->
+      <div id="failure" role="alert" aria-live="assertive" hidden></div>
     </div>
 
     <div id="hud"></div>
@@ -87,6 +95,10 @@
         <b>Y</b> opens the starmap — <b>click a world</b> to approach it, <b>move</b> to mark the
         landing, then the confirm button (or <b>Z</b>) jumps.
       </p>
+      <!-- P6-T06. Filled by `src/app/build.ts` from the version `vite.config.ts` injects, so no
+           human ever retypes it. Every playtest script asks a tester which build they were on, and
+           until this line the honest answer was "the one that was up on Tuesday". -->
+      <p class="hint" id="build">Build unknown</p>
     </aside>
 
     <script type="module" src="/src/main.ts"></script>

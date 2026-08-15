@@ -116,8 +116,9 @@ function galaxyInMotion() {
   galaxy.claims.set(claimedId, "syndicate");
 
   // A RIVAL GATE, charging. `galaxy.rivalGate` is transient galaxy bookkeeping that the hand-written
-  // declarations do not describe, so it is set through a narrow cast — the same move the bridge
-  // makes for `attackTimer`. `rivalGateStatus` reads the charge off the building every call.
+  // declarations do not describe, so it is set through a narrow cast — the same move a test makes
+  // for any transient the hand-written `.d.ts` leaves out. `rivalGateStatus` reads the charge off
+  // the building every call.
   const gate = makeBuilding("antimatter_gate", "ai", spot.x + 200, spot.y);
   (gate as unknown as { charge: number }).charge = 0.42;
   colony.buildings.set(gate.id, gate);

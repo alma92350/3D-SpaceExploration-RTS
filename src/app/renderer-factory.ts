@@ -42,19 +42,30 @@ export function createRenderer(opts: FactoryOptions): RendererChoice {
       // The probe said yes and construction still failed — a context limit, a driver reset, a
       // policy that blocks the second context. Falling through is the whole point of having a
       // fallback: an exception here must not be the player's first impression.
-      return {
-        renderer: new Canvas2DRenderer(opts.fallbackCanvas),
-        tier: "T0",
-        fallbackReason: `3D acceleration failed to start (${(err as Error).message}); running the compatibility renderer.`,
-      };
+      return compatibilityRenderer(
+        opts.fallbackCanvas,
+        `3D acceleration failed to start (${(err as Error).message}); running the compatibility renderer.`,
+      );
     }
   }
 
-  return {
-    renderer: new Canvas2DRenderer(opts.fallbackCanvas),
-    tier: "T0",
-    fallbackReason: "WebGL is unavailable in this browser; running the compatibility renderer.",
-  };
+  return compatibilityRenderer(
+    opts.fallbackCanvas,
+    "WebGL is unavailable in this browser; running the compatibility renderer.",
+  );
+}
+
+/**
+ * The Canvas2D renderer, chosen deliberately rather than reached by a failed probe (P6-T05).
+ *
+ * Both of `createRenderer`'s fallbacks are this call, and so is the button on the lost-context
+ * banner — a context that never comes back is the same predicament as a context that never started,
+ * and it deserves the same answer rather than a second, subtly different construction of it. T0 is
+ * not a guess: `Canvas2DRenderer` draws the reduced feature set ADR-0005 specifies, and the tiers
+ * above it describe work it does not do.
+ */
+export function compatibilityRenderer(canvas: HTMLCanvasElement, reason: string): RendererChoice {
+  return { renderer: new Canvas2DRenderer(canvas), tier: "T0", fallbackReason: reason };
 }
 
 export function probe(): DetectionInputs {

@@ -327,13 +327,17 @@ export const FUSE_UNLIT = -1;
  * Helium Bombs the player is entitled to see, and where they will reach (P3-T10).
  *
  * **Derived from unit state, not from the `bombFused` event — and that is the opposite of the answer
- * ADR-0017 gave for shots.** The two are worth contrasting because the reasoning is symmetric. A
- * shot leaves no trace: nothing in the state says "this unit fired", only a timer that was reset, so
- * a diff is the only honest signal. A fuse is the reverse — `bomb.fuseUntil` is a real field that
- * persists for the whole four seconds, and the event fires *once*, on the tick it lights. A warning
- * built on the event would be correct for one tick in eighty: a player who looked away, or whose
- * camera was elsewhere, would get no warning at all. Worse, disarming cuts a lit fuse and emits
- * nothing, so an event-driven warning would keep counting down to a blast that is never coming.
+ * ADR-0023 gives for shots.** The two are worth contrasting, because the rule is not "always read
+ * the event": it is *read the thing that describes what you are drawing*. A tracer is a MOMENT, and
+ * `attackHit` is a moment — one per landed hit, carrying both ends of the line. A blast warning is a
+ * STATE that lasts four seconds, and `bombFused` is a moment too: it fires *once*, on the tick the
+ * fuse lights, so a warning built on it would be correct for one tick in eighty and a player who
+ * looked away would get none at all. `bomb.fuseUntil` is the field that persists for the whole four
+ * seconds. Worse, disarming cuts a lit fuse and emits nothing, so an event-driven warning would keep
+ * counting down to a blast that is never coming.
+ *
+ * (ADR-0017 drew the same contrast the other way round, on a premise PARITY §7.1 disproved: it said
+ * a shot leaves no trace and a diff was the only honest signal. It leaves `attackHit`.)
  *
  * Both radii cross, because the engine's own `bombDetonated` event carries both. One ring cannot
  * describe this blast: at `core` everything dies outright, at `blast` the damage has fallen to zero,
@@ -387,21 +391,30 @@ export class BombTable {
 }
 
 /**
- * Shots fired this tick (P3-T05, ADR-0017).
+ * Shots that landed this tick (P6-T01, ADR-0023 — which supersedes ADR-0017).
  *
- * The engine emits no shot event — thirteen event types exist and the only combat one is
- * `entityKilled` — so the bridge derives one by diffing `attackTimer`, which `combat.js` only ever
- * decrements toward zero or resets to `def.cooldown`. A rise is a shot, exactly.
+ * **A shot is the engine's own `attackHit` event, read rather than derived.** `combat.js:187`
+ * pushes one inside `performAttack` — shared by mobile units, workers and turrets — carrying
+ * `fromX`/`fromY` (the shooter) and `x`/`y` (the target), **both stamped before the corpse is
+ * removed**. So the tracer's two endpoints arrive with the shot and nothing has to be looked up.
  *
- * `dropped` is not diagnostics. **12.9% of shots in a measured fight have a target that no longer
- * exists** by the time this runs, because the engine applies damage and removes the corpse inside
- * the same tick — so the killing shot is precisely the one a lookup-and-skip implementation loses.
- * A counter that stays zero is the only evidence the `prevPos` fallback is still working.
+ * ADR-0017 derived a shot by diffing `attackTimer` instead, on a premise PARITY §7.1 checked
+ * against the source and found false. Measured cost of the derivation, on a Skiff right-clicked
+ * onto a Worker: **10 shots, 0 tracers, 10 `dropped`** — because the endpoint came from
+ * `unit.autoTarget` and an explicitly ordered attack takes its target off `unit.order`, leaving
+ * `combat.js:65` (the only line in the engine that writes `autoTarget`) unreachable. Two more
+ * losses the ADR did not know about are recorded in ADR-0023's Context.
+ *
+ * **`dropped` survives, with a narrower job.** It no longer counts an endpoint that could not be
+ * resolved — the event carries both, so there is nothing to resolve. It counts an `attackHit` whose
+ * four coordinates are not all finite numbers, which is the single assumption this whole design
+ * rests on: if upstream ever ships a hit without both endpoints, the tracer set shrinks silently and
+ * this is what says so. It must stay 0.
  */
 export class ShotTable {
   capacity: number;
   count = 0;
-  /** How many shots could not be given an endpoint at all. Must stay 0. */
+  /** `attackHit` events whose endpoints were not four finite numbers. Must stay 0. */
   dropped = 0;
   fromX: Float32Array;
   fromY: Float32Array;
@@ -443,11 +456,11 @@ export class ShotTable {
  * effect; the engine's own comment says the flags "are read only by the UI layer".
  *
  * ADR-0017 opens by stating there is no combat event but `entityKilled`. PARITY §7.1 checked that
- * against the vendored source and it is false — sixteen event types, and this is one of them. **The
- * ADR's decision is untouched here**: a tracer is still derived by diffing `attackTimer`, because
- * that path is built, mutation-tested and allocation-free, and rebuilding it would be churn with no
- * measurement behind it. What changes is that the payload the ADR's premise assumed away now
- * crosses the bridge.
+ * against the vendored source and it is false — sixteen event types, and this is one of them. P5-T15
+ * left the tracer's derivation alone and read the event only for the three cue flags; **P6-T01 then
+ * measured the derivation's cost and ADR-0023 moved the tracer onto this same event.** So this table
+ * and `ShotTable` are now two readings of one payload, and they gate on different halves of it on
+ * purpose — see the fog paragraph below.
  *
  * All three fields are the engine's answers, copied and not re-derived (ADR-0012 §5). That matters
  * most for `splashRadius`: it is `def.splash.radius`, a WEAPON property, and the alternative — the
@@ -457,14 +470,15 @@ export class ShotTable {
  * **Fog: live vision at the impact point, and deliberately not the `explored` rule `DeathTable`
  * uses.** A death leaves a wreck deposit the player will walk up to later, so remembering one is
  * honest. A hit is a fight happening *now*: a mark on remembered-but-unseen ground would say "an
- * enemy is standing exactly here, this instant" — the same leak ADR-0017 §4 rejects for tracers,
- * and worse, because a ring is a point rather than a line. The rule is also never more generous
- * than the tracer already is: the shot's endpoint is this same position.
+ * enemy is standing exactly here, this instant" — the same leak ADR-0017 §4 rejects for tracers and
+ * ADR-0023 §3 carries forward, and worse, because a ring is a point rather than a line.
  *
- * One thing it buys back, worth naming because ADR-0017 filed the opposite as a known cost: a
- * player shot from the dark now sees the impact on their own unit, which is always visible to them,
- * even though the tracer is (correctly) suppressed. "Something is hitting me and I cannot see what"
- * is a true statement and a far better cue than silence.
+ * **The two gates read the same event and ask different questions of it, deliberately.** A tracer is
+ * gated on `fromX`/`fromY` (can I see the shooter?) and an impact on `x`/`y` (can I see where it
+ * landed?), which is what lets a player shot from the dark see the hit on their own unit — always on
+ * ground they can see — while the line that would point straight back at the artillery stays
+ * suppressed. ADR-0017 filed "shot from the dark shows nothing" as a known cost; this is the half of
+ * it that is bought back, and it survives ADR-0023 unchanged.
  */
 export class ImpactTable {
   capacity: number;
@@ -637,7 +651,7 @@ export interface Snapshot {
   auras: AuraTable;
   /** Armed Helium Bombs the player is entitled to see (P3-T10). */
   bombs: BombTable;
-  /** Shots fired this tick, derived (P3-T05, ADR-0017). */
+  /** Shots that landed this tick, from the engine's own `attackHit` (P6-T01, ADR-0023). */
   shots: ShotTable;
   /** Hits that landed this tick, from the engine's own `attackHit` (P5-T15, rows 66–68). */
   impacts: ImpactTable;
@@ -878,14 +892,14 @@ export class SnapshotExtractor {
   /** Reused buffer records, so selecting and deselecting all day allocates nothing. */
   private readonly bufferPool: BuildingBuffers[] = [];
   private powerHash = -1;
-  /** numeric id → offset into `prevBuf`, rebuilt from the previous extraction each tick. */
-  private readonly prevPos = new Map<number, number>();
   /**
-   * numeric id → last tick's `attackTimer`. The whole basis of shot detection (ADR-0017): the
-   * engine only ever decrements this field or resets it to `def.cooldown` on firing, so a rise is a
-   * shot. Kept here rather than in the snapshot because it is bookkeeping, not something to draw.
+   * numeric id → offset into `prevBuf`, rebuilt from the previous extraction each tick.
+   *
+   * **Interpolation only, since ADR-0023.** ADR-0017 also used it to place the endpoint of a killing
+   * shot, which is what made `extractShots` ordering-sensitive; the `attackHit` event carries that
+   * endpoint itself, so nothing in the shot path consults this any more.
    */
-  private readonly prevAttack = new Map<number, number>();
+  private readonly prevPos = new Map<number, number>();
   private prevBuf: Float32Array;
   private fogHash = -1;
 
@@ -1004,8 +1018,13 @@ export class SnapshotExtractor {
 
     e.count = n;
     this.diffLifetimes();
-    // `extractShots` FIRST, and it is the one ordering in this method that is load-bearing — see its
-    // own doc comment. `extractImpacts` has no such constraint and says why.
+    // **No ordering here is load-bearing any more, and that is a change worth stating rather than a
+    // comment worth deleting.** Until ADR-0023 this line read "`extractShots` FIRST", because a
+    // killing shot's endpoint came out of `prevPos` and `rememberPreviousPositions` refills it.
+    // Shots are now read off `attackHit`, which stamps both endpoints before the corpse is removed,
+    // so every extractor below reads only `state` and this tick's events. The three that consume
+    // `state.events` — shots, impacts, deaths — must still run before `WorldBridge.step` drains the
+    // list, which it does after `refresh()` returns, not inside this method.
     this.extractShots(state, fog);
     this.extractImpacts(state, fog);
     this.extractDeaths(state, fog);
@@ -1233,80 +1252,68 @@ export class SnapshotExtractor {
   }
 
   /**
-   * Shots fired this tick, derived from `attackTimer` rising (P3-T05, ADR-0017).
+   * Shots that landed this tick, read off `attackHit` (P6-T01, ADR-0023) — see `ShotTable`.
    *
-   * **Must run before `rememberPreviousPositions`.** That is not an ordering nicety: a target killed
-   * this tick is gone from `state.units` but still in `prevPos` with the position it died at, and
-   * 12.9% of shots in a measured fight are exactly that case. Resolving the endpoint by lookup alone
-   * would drop every killing shot — the ones a player most needs to see.
+   * **No ordering constraint, and the removal of one is the point.** ADR-0017's version had to run
+   * before `rememberPreviousPositions` because a killing shot's endpoint came out of `prevPos`. The
+   * event stamps `x`/`y` from the target and `fromX`/`fromY` from the attacker *before*
+   * `removeEntity`, so a target that died on this tick needs no fallback and nothing here reads
+   * `prevPos` at all. The only remaining requirement is the one `extractImpacts` and `extractDeaths`
+   * already share: `state.events` must not have been drained yet, and `WorldBridge.step` drains it
+   * after extraction (P3-T07).
+   *
+   * **This set is "shots that landed", not "shots that were fired", and the difference is exactly
+   * one case.** `performAttack` has a single early return before the push — `detonateIfAttacked` —
+   * so a hit on an ARMED Helium Bomb resets the shooter's cooldown and emits no `attackHit`. That
+   * shot draws no tracer, which is a real regression against the diff and is argued in ADR-0023 §4
+   * rather than assumed away; `test/bridge/shots.test.ts` pins the early return against the source
+   * so a miss chance added upstream cannot widen the gap silently.
    */
   private extractShots(state: State, fog: Fog): void {
     const shots = this.snapshot.shots;
     shots.count = 0;
     shots.dropped = 0;
-
-    // Sized to the entity count rather than grown per shot: the peak measured 33 in a 120-unit
-    // fight, and a table that can hold "everyone fired at once" can never need to grow mid-loop.
-    shots.ensure(state.units.size + state.buildings.size);
-
-    for (const u of state.units.values()) this.pushShot(state, fog, u, u.autoTarget ?? null);
-    for (const b of state.buildings.values()) this.pushShot(state, fog, b, b.targetId ?? null);
-
-    // Anything that survived to the end of the tick keeps its timer; anything that did not is
-    // pruned so the map cannot grow for the length of a match.
-    if (this.prevAttack.size > (state.units.size + state.buildings.size) * 2) {
-      for (const id of [...this.prevAttack.keys()]) {
-        if (!this.livingIds.has(id)) this.prevAttack.delete(id);
+    const events = state.events ?? [];
+    // Sized to the whole event list, exactly as `extractImpacts` and `extractDeaths` are: one pass,
+    // no counting pass, and the over-estimate is bounded by a tick's events. It is also SMALLER than
+    // ADR-0017's `units + buildings` in every scene measured — 622 hits across 400 ticks of a
+    // 120-unit fight, against a table cut for 120 shooters firing at once, every tick.
+    shots.ensure(events.length);
+    for (const ev of events) {
+      if (ev.type !== "attackHit") continue;
+      const fromX = ev.fromX as number;
+      const fromY = ev.fromY as number;
+      const toX = ev.x as number;
+      const toY = ev.y as number;
+      // The one thing this design rests on, checked rather than trusted: a hit with both endpoints.
+      // Counted rather than skipped, because a tracer set that quietly shrinks is what P6-T01 was
+      // filed about (`ShotTable.dropped`). Before the fog gate, so a malformed event in the dark is
+      // still counted rather than swallowed by the gate.
+      if (!(Number.isFinite(fromX) && Number.isFinite(fromY) && Number.isFinite(toX) && Number.isFinite(toY))) {
+        shots.dropped++;
+        continue;
       }
+      // Fog: a tracer from an unseen shooter is a line pointing straight at it (ADR-0017 §4, carried
+      // forward by ADR-0023 §3). Gated on the SHOOTER's own position at the moment it fired, which
+      // the event states — `extractImpacts` gates the same event on where the shot landed.
+      if (ev.owner !== "player" && !isVisibleAt(fog, fromX, fromY)) continue;
+      const n = shots.count;
+      shots.fromX[n] = fromX;
+      shots.fromY[n] = fromY;
+      shots.toX[n] = toX;
+      shots.toY[n] = toY;
+      shots.owner[n] = ev.owner === "player" ? SNAP_PLAYER : SNAP_AI;
+      shots.count = n + 1;
     }
-  }
-
-  private readonly livingIds = new Set<number>();
-
-  private pushShot(state: State, fog: Fog, e: Entity, targetId: string | null): void {
-    const id = numericId(e.id);
-    this.livingIds.add(id);
-    const timer = (e as { attackTimer?: number }).attackTimer ?? 0;
-    const was = this.prevAttack.get(id) ?? 0;
-    this.prevAttack.set(id, timer);
-    if (!(timer > was + 1e-9)) return;              // no reset this tick — nothing was fired
-
-    // Fog: a tracer from an unseen shooter is a line pointing straight at it (ADR-0017 §4).
-    if (e.owner !== "player" && !isVisibleAt(fog, e.x, e.y)) return;
-    if (!targetId) { this.snapshot.shots.dropped++; return; }
-
-    const target = state.units.get(targetId) ?? state.buildings.get(targetId);
-    let tx: number;
-    let ty: number;
-    if (target) {
-      tx = target.x;
-      ty = target.y;
-    } else {
-      // Dead this tick. `prevPos` still holds where it stood, because this runs before the
-      // rebuild — which is the whole reason for the ordering above.
-      const off = this.prevPos.get(numericId(targetId));
-      if (off === undefined) { this.snapshot.shots.dropped++; return; }
-      tx = this.prevBuf[off]!;
-      ty = this.prevBuf[off + 1]!;
-    }
-
-    const shots = this.snapshot.shots;
-    const n = shots.count;
-    shots.fromX[n] = e.x;
-    shots.fromY[n] = e.y;
-    shots.toX[n] = tx;
-    shots.toY[n] = ty;
-    shots.owner[n] = e.owner === "player" ? SNAP_PLAYER : SNAP_AI;
-    shots.count = n + 1;
   }
 
   /**
    * Landed hits, from the engine's own `attackHit` events (P5-T15) — see `ImpactTable`.
    *
-   * **Unlike `extractShots`, this has no ordering constraint at all**, and the reason is worth
-   * stating next to a method that does: the event carries the impact position itself, so nothing
-   * here consults `prevPos` and a target that died on this same tick needs no fallback. That is the
-   * whole difference between reading an event and deriving one.
+   * Shares its whole input with `extractShots` since ADR-0023 and differs only in which endpoint it
+   * takes and which one it gates on. Neither has an ordering constraint: the event carries the
+   * impact position itself, so nothing here consults `prevPos` and a target that died on this same
+   * tick needs no fallback. That is the whole difference between reading an event and deriving one.
    *
    * The three payload fields are copied and never re-derived. `heavy` in particular is *not*
    * `owner !== target.owner && target is a building` or any other reconstruction: it is

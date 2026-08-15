@@ -1,10 +1,27 @@
 # ADR-0017: A shot is a diff, not an event
 
-**Status:** Accepted
+**Status:** Superseded by ADR-0023
 **Date:** 2026-08-15
 **Deciders:** @alma92350
-**Answers:** Q-12
+**Answers:** Q-12 (superseded — ADR-0023 re-answers it)
 **Relates to:** ADR-0006, ADR-0008, ADR-0012 §5, P3-T05, P3-T06, P3-T07
+
+## Superseded by ADR-0023 (P6-T01)
+
+> The correction below was written while the decision still stood. P6-T01 then measured the
+> derivation's cost and **ADR-0023 replaced it**: a shot is now the engine's `attackHit` event, read
+> rather than derived. The ordered attack draws 10 tracers out of 10 shots, and `dropped` is 0.
+>
+> **What ADR-0023 kept:** §4's fog rule verbatim, §3's preallocated parallel-array table, and §5's
+> "the engine's events survive the tick" — which is now load-bearing for tracers as well as deaths.
+> **What it retired:** §1's derivation, §2's `prevPos` endpoint (and with it the ordering constraint
+> inside the extractor), and the `attackTimer` invariant §1 rests on, which nothing in the bridge
+> depends on any more.
+>
+> **Two losses this ADR did not know it had** are recorded in ADR-0023 §2, both measured: `dropped`
+> was never actually zero in a real fight — the obligation below was discharged by reading the
+> counter once, after the loop, and it is reset every tick — and a shot whose SHOOTER died inside the
+> same tick was lost with no counter at all, because a per-entity diff has no entity left to read.
 
 ## Correction — the premise below is false (P5-T15, PARITY §7.1)
 
@@ -28,7 +45,8 @@
 > ordinary 12.9% case below, which is worse than the bug. The real fix is to read `attackHit`
 > instead of diffing `attackTimer`: it carries **both endpoints**, pushed *before* the corpse is
 > removed, so it answers point 4 below — the whole reason this design exists — and this defect at
-> once. That is a new decision rather than a patch, and it is filed as **P6-T01**.
+> once. That is a new decision rather than a patch, and it is filed as **P6-T01**. *(Done:
+> ADR-0023.)*
 >
 > Everything else here still holds: points 1, 2 and 3 were measured and remain true, the tracer path
 > is correct for every auto-acquired target, and no part of it has been touched.

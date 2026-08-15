@@ -62,8 +62,10 @@ Template: [`0000-template.md`](0000-template.md). Keep it to a page. Sections:
 | [0014](0014-the-frame-ceiling-is-derived-not-chosen.md) | The frame's draw-call ceiling is derived from the roster, not chosen | Accepted |
 | [0015](0015-building-state-is-a-shape-vocabulary.md) | Building state is a shape vocabulary behind a new overlay kind | Accepted |
 | [0016](0016-the-nine-units-get-their-own-silhouettes.md) | The nine unmeshed units get their own silhouettes | Accepted |
-| [0017](0017-a-shot-is-a-diff-not-an-event.md) | A shot is a diff, not an event | Accepted |
+| [0017](0017-a-shot-is-a-diff-not-an-event.md) | A shot is a diff, not an event | Superseded by ADR-0023 |
 | [0018](0018-salvage-and-craters-are-their-own-deposits.md) | Salvage and craters are their own deposit meshes | Accepted |
 | [0019](0019-the-starmap-is-a-diagram-not-a-scene.md) | The starmap is a 2.5D diagram on a plate, because the galaxy has one coordinate | Accepted |
 | [0020](0020-no-audio-yet-the-bridge-discards-the-events-it-would-speak-for.md) | No audio yet, because the bridge discards fifteen of the sixteen events it would speak for | Accepted |
 | [0021](0021-no-observer-mode-the-snapshot-has-one-viewer.md) | No Observer Mode — the snapshot has one viewer by construction | Accepted |
+| [0022](0022-no-update-check-the-version-is-stamped-at-build-time.md) | No update check — N-06 keeps its measured zero, and the version is stamped at build time | Accepted |
+| [0023](0023-a-shot-is-the-engines-own-attackhit-event.md) | A shot is the engine's own `attackHit` event — the tracer set is what landed, not what fired | Accepted (supersedes ADR-0017) |

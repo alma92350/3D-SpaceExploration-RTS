@@ -112,7 +112,7 @@ const NO_CAMPAIGN = {
   board: null,
   saves: { available: false, saves: [] },
   now: 0,
-  settings: { tierOverride: null, edgeScroll: true, newGame: null },
+  settings: { tierOverride: null, edgeScroll: true, newGame: null, motion: "auto" },
   currentTier: "T1",
   news: {
     entries: [], unseen: 0, toast: null, latestId: null,
@@ -419,7 +419,7 @@ describe("a gesture opens each Phase 4 screen", () => {
     hudRoot = els.hudRoot;
     viewport = els.viewport;
     renderer = new RecordingRenderer();
-    game = new Game(els, renderer, "T0", { tierOverride: null, edgeScroll: false, newGame: null },
+    game = new Game(els, renderer, "T0", { tierOverride: null, edgeScroll: false, newGame: null, motion: "auto" },
       { seed: SEED, worldId: SEAT });
 
     // A finished pad, so the destinations are genuinely reachable rather than reachable-looking.

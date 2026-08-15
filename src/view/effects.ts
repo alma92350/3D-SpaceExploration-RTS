@@ -17,6 +17,7 @@
 // so does this.
 
 import { type Snapshot } from "../bridge/snapshot.js";
+import { reducedMotion } from "./motion.js";
 
 /**
  * How long a tracer stays up, in seconds.
@@ -55,6 +56,54 @@ export const IMPACT_SECONDS = 0.3;
 export function impactReads(heavy: number, bonus: number, splashRadius: number): boolean {
   return heavy !== 0 || bonus !== 0 || splashRadius > 0;
 }
+
+/* -------------------------------------------------------------------------------------------
+   Reduced motion (P6-T04, N-05).
+
+   Three clocks leave this pool — a tracer's fade, a death mark's expansion, an impact's swell —
+   and they are the whole of the animation in the effect layer. Everything else a cue carries is a
+   FACT: where the shot came from, whose it was, that the hit was heavy, how far the splash reached.
+
+   So reduced motion freezes the clocks and keeps the facts. Every effect is still ingested, still
+   drawn, still expires on its own schedule; it simply holds one value for its whole life instead of
+   sweeping through them. Nothing is deleted, because deleting a tracer would take away the only
+   channel that says "you are being shot at from over there" — which is removing information rather
+   than motion, and the opposite of what the setting was asked for.
+
+   The frozen values are chosen for legibility in a STILL frame, which is what the player is now
+   getting, and each is the value a single frame of the animation would have to be true at.
+   ------------------------------------------------------------------------------------------- */
+
+/**
+ * A still tracer's fade: full strength for its whole life.
+ *
+ * The alternative — freezing part-way — would draw every tracer permanently dimmer than the
+ * animated one ever starts, which is a legibility loss dressed up as restraint. At 20 Hz a fight is
+ * already a stream of appearing and disappearing lines; holding each at full opacity is what stops
+ * that reading as a flicker.
+ */
+export const STILL_TRACER_FADE = 1;
+
+/**
+ * A still death mark's progress: a third of the way through.
+ *
+ * The renderer derives BOTH the ring's size (`0.35 + progress`) and its opacity (`1 - progress`)
+ * from this one number, and they pull in opposite directions — early is bright and small, late is
+ * large and faint. A third is where their product peaks, so a frozen mark puts the most ink on
+ * screen that any single frame of the animation ever does. The size STEP between a unit's mark and
+ * a building's is a ratio, so it survives any choice here and stays legible.
+ */
+export const STILL_BLAST_PROGRESS = 1 / 3;
+
+/**
+ * A still impact mark's progress: zero.
+ *
+ * Its two glyphs swell as they fade (`1 + 0.35·progress` at `1 - progress` opacity), so zero is
+ * fully opaque at the base size the glyph vocabulary was drawn for. The splash ring never animated
+ * at all — its radius is a measurement (P5-T15) — so freezing at zero also leaves it at exactly
+ * that radius, at full strength, which is the one frame of its life that was always true.
+ */
+export const STILL_IMPACT_PROGRESS = 0;
 
 export class CombatEffects {
   // --- tracers: a line from shooter to target, fading out ---
@@ -207,13 +256,15 @@ export class CombatEffects {
     }
   }
 
-  /** 1 when just fired, 0 at expiry. What the view fades on. */
+  /** 1 when just fired, 0 at expiry. What the view fades on — unless motion is reduced. */
   tracerFade(i: number): number {
+    if (reducedMotion()) return STILL_TRACER_FADE;
     return 1 - this.tAge[i]! / TRACER_SECONDS;
   }
 
   /** 0 at the moment of death, 1 at expiry — a blast EXPANDS as it fades. */
   blastProgress(i: number): number {
+    if (reducedMotion()) return STILL_BLAST_PROGRESS;
     return this.bAge[i]! / BLAST_SECONDS;
   }
 
@@ -225,6 +276,7 @@ export class CombatEffects {
    * on its last frame, which is the one nobody is looking at.
    */
   impactProgress(i: number): number {
+    if (reducedMotion()) return STILL_IMPACT_PROGRESS;
     return this.iAge[i]! / IMPACT_SECONDS;
   }
 
