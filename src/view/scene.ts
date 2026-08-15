@@ -194,15 +194,21 @@ export class SceneComposer {
     // imposter at all — and past T0's LOD distance that is a median 57% of the entities on screen.
     //
     // A rotation of θ about Y sends the normal to (sin θ, cos θ), and the eye sits at
-    // −(sin yaw, cos yaw) × horizontal from the look-at point, so θ = yaw + π points the quad at
-    // the camera. VIEW-PLANE aligned rather than eye-facing: one addition for the whole frame
-    // instead of an `atan2` per instance, and imposters that never rotate against each other.
+    // +(sin yaw, cos yaw) × horizontal from the look-at point, so **θ = yaw** points the quad at
+    // the camera. VIEW-PLANE aligned rather than eye-facing: no arithmetic at all for the whole
+    // frame instead of an `atan2` per instance, and imposters that never rotate against each other.
     // Measured after: front-facing and 21.10 px wide at all eight snaps, where the widest the old
     // code ever managed was 21.10 at two of them and 0.00 at two more.
     //
+    // **This line is derived from `eyePosition`'s sign and has now been wrong once because of it**
+    // (PT-01, ADR-0025): it read `yaw + π` while the eye sat on the −(sin, cos) side, and when that
+    // side was corrected the π became the very back-facing bug this comment was written to fix.
+    // `test/view/lod-imposter.test.ts` caught it on the same commit, which is the only reason the
+    // coupling is written down here rather than discovered again.
+    //
     // It cannot fix PITCH. `drawInstances` applies a Y rotation only, so a vertical quad under a
     // camera pitched 74° down stays foreshortened; a full billboard needs a renderer change.
-    const imposterYaw = camera.yaw + Math.PI;
+    const imposterYaw = camera.yaw;
 
     for (let i = 0; i < e.count; i++) {
       const x = this.interpX[i]!;

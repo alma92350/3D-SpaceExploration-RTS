@@ -1226,20 +1226,39 @@ describe("the wheel and the window edge, which are the pointer's half (P7-T03)",
     expect(game.camera.targetX, "the pointer at the edge did not scroll the battlefield")
       .toBeLessThan(before.x);
 
-    // The same pointer, on the picker. It marks the landing — that is what a pointer does on this
-    // screen, at every pixel — and it must not also fly the camera out from under the mark.
+    // The same pointer, on the picker. It marks the landing — and it must not also fly the camera
+    // out from under the mark.
+    //
+    // **Not "at every pixel", which this comment used to claim and which was never true** (PT-01).
+    // `approachRig` frames the LANDING SITE rather than the map centre, so the world is off-centre
+    // on screen and one vertical edge looks past it; `pointAt` returns false out there by design.
+    // Which edge that is flipped when ADR-0025 turned the camera the right way round, so the old
+    // pixel started missing — the claim moved, not the behaviour. The camera-stillness half is the
+    // orientation-independent one, so it is asserted at BOTH edges and the mark at the edge that
+    // is over the world.
     openApproach();
     const rig = d.approach().rig;
     const opened = { x: rig.targetX, y: rig.targetY };
     for (let i = 0; i < 5; i++) {
       els.viewport.dispatchEvent(new MouseEvent("pointermove", {
-        bubbles: true, clientX: 4, clientY: VIEW_H / 2, buttons: 0,
+        bubbles: true, clientX: VIEW_W - 4, clientY: VIEW_H / 2, buttons: 0,
       }));
       d.frame();
     }
     expect(d.approach().pick, "the pointer did not mark, so it is not really on this screen")
       .not.toBeNull();
     expect(rig.targetX, "the window edge flew the approach screen's camera").toBe(opened.x);
+    expect(rig.targetY).toBe(opened.y);
+
+    // The other edge, which may be off the world: the mark is allowed to be absent there, the
+    // camera is not allowed to move either way. That is the half this test is really about.
+    for (let i = 0; i < 5; i++) {
+      els.viewport.dispatchEvent(new MouseEvent("pointermove", {
+        bubbles: true, clientX: 4, clientY: VIEW_H / 2, buttons: 0,
+      }));
+      d.frame();
+    }
+    expect(rig.targetX, "the opposite window edge flew the approach screen's camera").toBe(opened.x);
     expect(rig.targetY).toBe(opened.y);
   });
 });

@@ -5,6 +5,7 @@ import {
   CameraRig, MAX_DISTANCE, MIN_DISTANCE, PITCH_FAR, PITCH_NEAR, TERRAIN_CLEARANCE, YAW_SNAP_COUNT, YAW_STEP,
 } from "../../src/input/camera.js";
 import { type ElevationField, elevation } from "../../src/view/terrain/elevation.js";
+import { pickGround } from "../../src/input/picking.js";
 
 const CELL = 40;
 
@@ -87,6 +88,69 @@ describe("CameraRig", () => {
     // what "push the world, not the axes" means.
     expect(Math.hypot(movedNorth.x, movedNorth.y)).toBeCloseTo(Math.hypot(movedTurned.x, movedTurned.y), 6);
     expect(movedNorth.x).not.toBeCloseTo(movedTurned.x, 2);
+  });
+
+  // **The direction a player would recognise, which nothing asserted for six phases** (PT-01,
+  // ADR-0025). The test above is the one that was here, and it is kept because it still says
+  // something true — but on its own it is exactly the shape of gate this project keeps catching:
+  // it compares a MAGNITUDE and an inequality, so it passed unchanged while pushing right moved the
+  // view left at six of the eight snaps. The one other assertion in the repo that pinned a pan sign
+  // stated it in SIM coordinates, which is the same mistake wearing a number: sim +X is only
+  // "rightward" if you already know which way the camera faces, and that was the broken thing.
+  //
+  // So this states it the way the complaint arrived — *"to see the left of the map I push the mouse
+  // to the RIGHT"* — by asking the renderer's own `pickGround` what is actually under each screen
+  // edge, and requiring the view to travel toward the edge the player pushed. Nothing here mentions
+  // X or Y, which is the point: it cannot be satisfied by a mirrored basis that happens to add up.
+  it("moves the view toward the screen edge the player pushes, at every yaw snap", () => {
+    const W = 1280;
+    const H = 720;
+
+    for (let yawIndex = 0; yawIndex < YAW_SNAP_COUNT; yawIndex++) {
+      const rig = new CameraRig(limits, flat);
+      rig.yawIndex = yawIndex;
+      rig.focusOn(flat.width / 2, flat.height / 2);
+      const camera = rig.update(W, H);
+
+      // The screen's own axes, in world units, read off the frame the renderer would draw.
+      const ground = (px: number, py: number) => {
+        const hit = pickGround(camera, flat, px, py);
+        expect(hit.hit, `yaw snap ${yawIndex}: the ground under (${px}, ${py}) could not be read, `
+          + "so this snap proves nothing").toBe(true);
+        return { x: hit.x, y: hit.y };
+      };
+      const right = ground(W - 4, H / 2);
+      const left = ground(4, H / 2);
+      const bottom = ground(W / 2, H - 4);
+      const top = ground(W / 2, 4);
+      const screenRight = { x: right.x - left.x, y: right.y - left.y };
+      const screenDown = { x: bottom.x - top.x, y: bottom.y - top.y };
+
+      for (const [dx, dy, want] of [
+        [1, 0, "right"], [-1, 0, "left"], [0, 1, "down"], [0, -1, "up"],
+      ] as const) {
+        const r = new CameraRig(limits, flat);
+        r.yawIndex = yawIndex;
+        r.focusOn(flat.width / 2, flat.height / 2);
+        const from = { x: r.targetX, y: r.targetY };
+        r.pan(dx * 40, dy * 40);
+        const moved = { x: r.targetX - from.x, y: r.targetY - from.y };
+
+        // Project the travel onto the screen axes. Positive along `screenRight` means the view went
+        // right on screen, whatever that is in sim coordinates at this yaw.
+        const alongX = (moved.x * screenRight.x + moved.y * screenRight.y)
+          / Math.hypot(screenRight.x, screenRight.y);
+        const alongY = (moved.x * screenDown.x + moved.y * screenDown.y)
+          / Math.hypot(screenDown.x, screenDown.y);
+        const went = Math.abs(alongX) > Math.abs(alongY)
+          ? (alongX > 0 ? "right" : "left")
+          : (alongY > 0 ? "down" : "up");
+
+        expect(went, `at yaw snap ${yawIndex} a push ${want} moved the view ${went}. The player `
+          + "pushes an edge and the world goes the other way, which is PT-01 all over again.")
+          .toBe(want);
+      }
+    }
   });
 
   it("never lets the eye sink into terrain it is flying over (F-05)", () => {

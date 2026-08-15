@@ -90,8 +90,18 @@ export class CameraRig {
     const yaw = this.yaw;
     const cos = Math.cos(yaw);
     const sin = Math.sin(yaw);
-    this.targetX += screenDx * cos - screenDy * sin;
-    this.targetY += screenDx * sin + screenDy * cos;
+    // **Derived from `eyePosition`, not guessed** (PT-01, ADR-0025). With the eye on the
+    // +(sin, cos) side of the target, `lookAt` puts the screen axes on the ground at:
+    //
+    //   screen RIGHT = ( cos, −sin)      screen DOWN = ( sin,  cos)
+    //
+    // and a pan is just `screenDx · right + screenDy · down`. The signs below are that sum and
+    // nothing else, which is the point: the old ones were a rotation by +yaw against a basis that
+    // is a REFLECTION, so the error was a function of yaw rather than a constant — pushing right
+    // sent the view left, up, right, down around the eight snaps, correct at two of them by luck.
+    // If `eyePosition` ever moves, these two lines move with it or the controls silently rot.
+    this.targetX += screenDx * cos + screenDy * sin;
+    this.targetY += screenDy * cos - screenDx * sin;
     this.clampTarget();
   }
 
@@ -121,8 +131,13 @@ export class CameraRig {
     const yaw = this.yaw;
     const horizontal = Math.cos(pitch) * this.distance;
     const groundHeight = this.field ? elevation(this.field, this.targetX, this.targetY) : 0;
-    out.x = this.targetX - Math.sin(yaw) * horizontal;
-    out.z = this.targetY - Math.cos(yaw) * horizontal;
+    // PLUS, not minus (PT-01). The eye sits on the +(sin, cos) side of the target, so the look
+    // direction is −(sin, cos): at yaw 0 that is straight down −Y, which is what `yawIndex`'s own
+    // comment has claimed since Phase 0 and what `minimap.ts` has drawn all along. The minus signs
+    // this replaces put the eye on the wrong side and mirrored the rendered world against the
+    // minimap on both axes — see ADR-0025, and note that `pan` had to move with it.
+    out.x = this.targetX + Math.sin(yaw) * horizontal;
+    out.z = this.targetY + Math.cos(yaw) * horizontal;
     out.y = groundHeight + Math.sin(pitch) * this.distance;
 
     if (this.field) {
