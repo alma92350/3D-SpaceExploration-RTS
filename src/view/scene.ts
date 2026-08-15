@@ -25,6 +25,7 @@ import {
   type OwnerSlot, type Renderer, type TerrainMesh,
 } from "./renderer/port.js";
 import { type TierConfig } from "./renderer/tiers.js";
+import { hasStatusGlyph } from "./renderer/glyphs.js";
 
 const INITIAL_BATCH_CAPACITY = 64;
 const OWNER_SLOTS = 2;
@@ -245,6 +246,25 @@ export class SceneComposer {
       const rank = e.rank[i]!;
       if (!isBuilding && rank > 0) {
         this.overlays.get("chevron")!.push(x, height + entityBarHeight(e.radius[i]!, isBuilding) + 3, y, rank);
+      }
+
+      // The building-state badge (P2-T08). Same LOD gate as the health bar and for the same reason:
+      // a nine-pixel glyph at imposter range is noise, and a player reading their base's state is
+      // looking at their base.
+      //
+      // Both codes are passed through untouched and the *view* decides what to draw from them, so
+      // the bridge stays a reporter (ADR-0012 §5). A healthy working building has no badge, which
+      // is the only reason a 300-building base is readable at all — and it is filtered HERE, like
+      // the health bar above it, so the frame does not pack 1 500 floats to draw nothing.
+      //
+      // Constructing buildings are excluded: their state is already the scale ramp, and a badge on
+      // a half-risen shell reads as a fault rather than as progress.
+      const p = snap.production;
+      if (isBuilding && (flags & FLAG_CONSTRUCTING) === 0
+          && hasStatusGlyph(p.concern[i]!, p.activity[i]!)) {
+        this.overlays.get("status")!.push(
+          x, height + entityBarHeight(e.radius[i]!, isBuilding) + 5, y, p.concern[i]!, p.activity[i]!,
+        );
       }
     }
   }

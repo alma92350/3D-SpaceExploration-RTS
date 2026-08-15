@@ -12,6 +12,7 @@
 // not have.
 
 import { type CameraState, type OverlayLayer } from "./port.js";
+import { type Glyph, statusGlyph } from "./glyphs.js";
 import { projectToScreen } from "../../input/picking.js";
 
 /**
@@ -149,9 +150,52 @@ export function drawOverlayLayer(
       }
       break;
     }
+
+    case "status": {
+      // The building-state badge (P2-T08). One stroke colour for every state on purpose: the state
+      // is carried by the SHAPE (N-05), and giving each glyph its own colour would let a future
+      // change quietly drop the shapes and keep passing a visual review.
+      ctx.strokeStyle = "#ffd98a";
+      ctx.lineWidth = 1.4;
+      ctx.lineJoin = "round";
+      for (let i = 0; i < layer.count; i++) {
+        const off = i * layer.stride;
+        const glyph = statusGlyph(d[off + 3]! | 0, d[off + 4]! | 0);
+        if (!glyph) continue;
+        projectToScreen(camera, d[off]!, d[off + 1]!, d[off + 2]!, projected);
+        if (projected.behind) continue;
+        strokeGlyph(ctx, glyph, projected.x, projected.y, GLYPH_PIXELS);
+      }
+      break;
+    }
   }
 
   ctx.restore();
+}
+
+/** Badge size in CSS pixels — constant on screen, like every other overlay here. */
+const GLYPH_PIXELS = 9;
+
+/**
+ * Stroke one glyph centred on a screen point.
+ *
+ * Exported so the WebGL and Canvas2D paths cannot drift: both call this, through
+ * `drawOverlayLayer`, on the same glyph data.
+ */
+export function strokeGlyph(
+  ctx: CanvasRenderingContext2D, glyph: Glyph, cx: number, cy: number, size: number,
+): void {
+  for (const stroke of glyph.strokes) {
+    ctx.beginPath();
+    for (let i = 0; i < stroke.length; i += 2) {
+      const x = cx + stroke[i]! * size;
+      const y = cy + stroke[i + 1]! * size;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    if (glyph.closed) ctx.closePath();
+    ctx.stroke();
+  }
 }
 
 /**

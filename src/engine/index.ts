@@ -38,7 +38,12 @@ export {
   issueServiceBuilding, issueRepair,
 } from "@engine/engine/commands.js";
 
-export { BUILD_REACH, queueProduction, cancelProduction } from "@engine/engine/production.js";
+export { BUILD_REACH, queueProduction, cancelProduction, researchUpgrade } from "@engine/engine/production.js";
+
+// Refinery doctrines (P2-T12). `committedDoctrine` is the irreversible half: once an owner has
+// researched OR merely queued an upgrade on one path, the other two are closed for the match.
+export { UPGRADES, upgradeMult, committedDoctrine } from "@engine/engine/entities.js";
+export type { UpgradeDef } from "@engine/engine/entities.js";
 
 export { canPlaceBuilding, findPlacement, radiusOf } from "@engine/engine/colliders.js";
 
@@ -48,6 +53,13 @@ export { canPlaceBuilding, findPlacement, radiusOf } from "@engine/engine/collid
 export { COLONY_SHIP_WORKERS, deployColonyShip, hasColonyShip } from "@engine/engine/colony.js";
 
 export { supplyUsed, supplyCap } from "@engine/engine/supply.js";
+
+// P2-T07 needs the drop-off the gather loop actually picks, not a re-derivation of it. `updateGather`
+// calls `nearestGatherDrop` every "toDrop" tick, and it is NOT simply the nearest Command Center: a
+// landed collection-point freighter can win, and buildings are scanned before units so an equidistant
+// building takes the tie. A test that re-implemented "nearest CC" would agree with the engine on the
+// one-base opening and diverge on exactly the cases the rule exists for.
+export { nearestGatherDrop, nearestCommandCenter } from "@engine/engine/gather.js";
 
 export {
   SAVE_VERSION, GALAXY_SAVE_VERSION, serializeGalaxy, serializeGalaxyString, deserializeGalaxy,
@@ -87,6 +99,9 @@ export { NEEDS_REPAIR, HEALED, pickRepairTarget, countRepairJobs } from "@engine
 
 export { LOGI_PRIORITIES, countLogistics, aiUpkeepRate } from "@engine/engine/haul.js";
 
-export { PLASMA_VEINS, SURVEY_RADIUS, YIELD_TIERS, locationRichness, rigInfo } from "@engine/engine/rig.js";
+export {
+  PLASMA_VEINS, SURVEY_RADIUS, YIELD_TIERS, locationRichness, rigInfo, rigSurvey,
+} from "@engine/engine/rig.js";
+export type { RigInfo, RigSurvey, YieldTier } from "@engine/engine/rig.js";
 
 export { PLANETS, COM } from "@engine/data.js";

@@ -176,6 +176,39 @@ export function runConformance(opts: ConformanceOptions): ConformanceCase[] {
     return null;
   });
 
+  check("draws every building-state badge, including the codes it has no glyph for", () => {
+    // P2-T08. The badge is the one overlay whose payload is an ENUM rather than a measurement, so
+    // an implementation can pass "accepts every overlay kind at its contracted stride" above while
+    // silently drawing nothing for half the vocabulary — the stub there packs 100, 107, 114… and
+    // never lands on a real concern code at all.
+    //
+    // A healthy building's code pair has no glyph by design, and it must be a no-op rather than a
+    // throw: the scene filters those out today, and an implementation that fell over on one would
+    // break the moment that filter moved.
+    const stride = OVERLAY_STRIDE.status;
+    const codes = [0, 1, 2, 3, 4, 5, 6, 99];
+    const data = new Float32Array(codes.length * stride);
+    for (let i = 0; i < codes.length; i++) {
+      const off = i * stride;
+      data[off] = 40 + i * 3;
+      data[off + 1] = 1;
+      data[off + 2] = 40;
+      data[off + 3] = codes[i]!;
+      data[off + 4] = 0;
+    }
+    const r = fresh();
+    r.setFog(stubFog());
+    r.beginFrame(stubCamera());
+    r.drawTerrain(stubTerrain());
+    r.drawOverlay({ kind: "status", count: codes.length, stride, data });
+    const stats = r.endFrame();
+    r.dispose();
+    if (stats.overlayItems !== codes.length) {
+      return `expected ${codes.length} badge items, got ${stats.overlayItems}`;
+    }
+    return null;
+  });
+
   check("ignores an overlay with no items", () => {
     const r = fresh();
     r.beginFrame(stubCamera());

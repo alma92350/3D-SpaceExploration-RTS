@@ -17,9 +17,19 @@ import { buildTerrainMesh } from "../../src/view/terrain/mesh.js";
 import { elevationFieldFrom } from "../../src/view/terrain/elevation.js";
 import { CameraRig } from "../../src/input/camera.js";
 import { SnapshotExtractor } from "../../src/bridge/snapshot.js";
-import { activeState, createGalaxy, makeUnit } from "../../src/engine/index.js";
+import { UNITS, activeState, createGalaxy, makeUnit } from "../../src/engine/index.js";
 
 const SEED = 20260814;
+
+/**
+ * The Hauler's real hold (`UNITS.hauler.cargoHold`), read rather than written down.
+ *
+ * The first draft of this file used 10 for "full", because the extractor divided by a hardcoded 10
+ * — the *Worker's* `cargoCap`. Both halves of that were wrong together, so the test was green: a
+ * Hauler at 10 of 250 read as 100% full and the assertions could not tell. P2-T07 found it. Reading
+ * the number from the engine is what stops the same agreement forming again.
+ */
+const HOLD = (UNITS.hauler as { cargoHold: number }).cargoHold;
 
 /** One hauler at the base, carrying `qty` of ore (0 for empty). */
 function render(qty: number) {
@@ -54,7 +64,7 @@ function render(qty: number) {
 describe("a laden hauler", () => {
   it("is drawn with a different shade from an empty one", () => {
     const empty = render(0);
-    const laden = render(10);
+    const laden = render(HOLD);
 
     expect(empty.batch, "the hauler should be drawn with the freighter hull").toBeDefined();
     expect(laden.batch).toBeDefined();
@@ -68,7 +78,7 @@ describe("a laden hauler", () => {
     // The half that makes the first half worth having. A "laden" mesh would pass the test above
     // and fail this one, which is exactly the implementation this is written to rule out.
     const empty = render(0);
-    const laden = render(10);
+    const laden = render(HOLD);
     const keys = (r: typeof empty) =>
       new Set(r.renderer.lastFrame.batches.map((b) => `${b.mesh}|${b.owner}|${b.lod}`));
 
@@ -78,14 +88,14 @@ describe("a laden hauler", () => {
   it("scales with how full the hold is, not just whether it is carrying", () => {
     // The snapshot carries a 0..1 fullness, and throwing it away for a boolean would lose the
     // difference between a hauler on its way home and one that has barely started.
-    const light = render(2);
-    const full = render(10);
+    const light = render(HOLD * 0.1);
+    const full = render(HOLD);
     expect(light.batch!.shade[0]).not.toBeCloseTo(full.batch!.shade[0]!, 5);
   });
 
   it("leaves buildings alone — construction still owns the shade there", () => {
     // Construction progress already drives shade for buildings (P1-T09). Cargo must not fight it.
-    const { renderer } = render(10);
+    const { renderer } = render(HOLD);
     const command = renderer.lastFrame.batches.find((b) => b.mesh === "command");
     if (command) expect(command.shade[0]).toBeCloseTo(1, 5);
   });

@@ -1,14 +1,14 @@
 {
   "T0": {
     "p95": 2.77,
-    "maxDrawCalls": 15,
-    "recorded": "2026-08-14",
-    "reason": "Phase 1 MVP baseline: the full MVP scene (200 units / 80 buildings at T0, 400 / 200 at T2) measured against the recording renderer over the gate's fixed 10-second run."
+    "maxDrawCalls": 16,
+    "recorded": "2026-08-15",
+    "reason": "Draw calls 15 -> 16 for the P2-T08 building-state badge (ADR-0015), which adds one `status` overlay layer to any frame containing a badge. Re-recorded deliberately, per judge()'s own rule, and ONLY the draw-call count: p95 is untouched at Phase 1's number because nothing got slower. Measured rather than assumed — disabling the badge push and re-running returns T0 to exactly 15, T2 to 17 and P2 to 27, so the delta is the overlay layer and nothing else. The badge is filtered at push time, so it is one layer for the whole frame and not one per building: 6 badges on 80 buildings here, 64 on 300 in the P2 scene."
   },
   "T2": {
     "p95": 5.16,
-    "maxDrawCalls": 17,
-    "recorded": "2026-08-14",
-    "reason": "Phase 1 MVP baseline: the full MVP scene (200 units / 80 buildings at T0, 400 / 200 at T2) measured against the recording renderer over the gate's fixed 10-second run."
+    "maxDrawCalls": 18,
+    "recorded": "2026-08-15",
+    "reason": "Draw calls 17 -> 18 for the P2-T08 building-state badge (ADR-0015). Same single `status` overlay layer as T0, same measurement: with the badge push disabled this scene returns to exactly 17. p95 deliberately NOT re-recorded — the CI runner measured 5.10 ms against this 5.16 ms baseline, i.e. faster, so the local host's higher reading is the machine artefact judge() warns about and writing it here would blind the gate."
   }
 }
