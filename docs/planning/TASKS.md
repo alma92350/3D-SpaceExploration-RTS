@@ -463,9 +463,45 @@ sending the same payload since P2-T09 — found only when someone finally presse
 
 ## Phase 5 — The long game
 
-Not yet decomposed. Headings: diplomacy, the Antimatter Gate, the rival Gate, milestones and
-fireworks, relief, Observer Mode, full save/load UI, settings, onboarding, audio, the parity
-checklist.
+Goal: everything that makes an Odyssey a campaign. Exit criteria: PRD §5, Phase 5 — *feature parity
+with the 2D Odyssey; the parity checklist in `docs/planning/PARITY.md` is fully ticked.*
+
+*Amended from the vendored engine and from the repo itself, as Phases 2, 3 and 4 were:*
+
+- **`docs/planning/PARITY.md` does not exist.** Phase 5's exit criterion is "the parity checklist is
+  fully ticked" and there is no checklist — so **the criterion is currently unmeasurable, and the
+  document is not a deliverable of the phase but its specification.** That makes it P5-T01, and it
+  is the one row that must land before the others are even scoped: until it exists, "feature parity"
+  is an opinion.
+- **Most of the mechanics exist upstream, again.** `diplomacy.js` (31 exports — tribute, favours,
+  goodwill, `PEACE_THRESHOLD`), `wonder.js` (the Antimatter Gate's charge), `victory.js`
+  (`checkWinCondition`, endless win/loss, `scoreBreakdown`), and at the galaxy level
+  `checkGalaxyRescue` (relief), `surrenderGalaxy`, `checkGalaxyProgress` (milestones),
+  `checkDomination`, `checkRivalGate`. **Wiring and presentation for the fourth phase running.**
+- **Two things are genuinely new, and both are open questions**: Observer Mode (Q-04, open since
+  Phase 0) and audio (Q-06). Neither has any engine support — `grep` finds no `AudioContext`
+  anywhere in the vendored tree, so audio is not "reuse upstream's procedural WebAudio" until
+  someone checks whether upstream's even came with the engine. Q-06 must be answered on evidence
+  before a row is written against it.
+- **`scenarios.js` exists and the PRD's Phase 5 scope does not mention it** — escort, raider and
+  bounty setups with their own difficulty tables. Either it is parity surface the checklist must
+  cover or it is deliberately out of scope; **P5-T01 is where that gets decided**, not here.
+- **The reachability rule now applies from the start** (P4-T13): a row is not DONE until a gesture or
+  a control produces it, and the runtime import-graph scan will fail on any module nothing opens.
+
+| ID | Task | Status | Deps | Definition of done | Notes |
+|---|---|---|---|---|---|
+| P5-T01 | Write `docs/planning/PARITY.md` — the checklist Phase 5 is measured against | TODO | — | Every feature of the 2D Odyssey is listed, each marked present / absent / deliberately out of scope, each traceable to an engine export or a UI surface | **The phase's specification, not a deliverable.** Its exit criterion names this file and the file does not exist, so "feature parity" is unfalsifiable until it does. Derive it from the vendored engine's own surface rather than from memory of the 2D client — `Object.keys` over each module is a checklist nobody can argue with. Must also rule on `scenarios.js`, which the PRD's scope list omits entirely |
+| P5-T02 | **Q-06**: audio — reuse upstream's procedural WebAudio, or none | TODO | — | Answered on evidence: does upstream's audio exist in what was vendored, and what would reusing it cost | Open since Phase 0. **Check before deciding**: no `AudioContext` appears anywhere under `src/engine/`, so "reuse upstream's" may not be an available option. If it is not, the honest answers are "write a small procedural layer" or "none, and say so in the PRD" — not a row that quietly never happens |
+| P5-T03 | **Q-04**: Observer Mode, or is a free camera enough | TODO | — | Answered in an ADR with a measurement or a scoped experiment, not a preference | Open since Phase 0. The camera already exists; the question is what Observer Mode adds that `CameraRig` plus fog-off does not, and what it costs |
+| P5-T04 | Diplomacy: stances, tribute, gifts, favours | TODO | P5-T01 | `PEACE_THRESHOLD`, `APPEASE_TIME`, `TRIBUTE_BASE_COST`, `FAVOR_*` all reach the player; a favour's window is visible before it expires | Whole API upstream. **`FAVOR_WINDOW` (90 s) is the legibility risk**: an ask that expires unfulfilled with no visible clock is indistinguishable from one that was never offered. P4-T07's lane countdown is the precedent |
+| P5-T05 | The Antimatter Gate and the rival Gate race | TODO | P5-T01 | `updateWonder`'s charge is visible on both sides; `checkRivalGate`'s own state is reported, never re-derived | The Gate is a 150 s charge the whole match bends around. `chargingWonderOf`/`chargingPlayerWonder` answer who is building; the rival's is galaxy-level (`checkRivalGate`) and already carries a starmap alert the plate draws |
+| P5-T06 | Milestones, domination and the fireworks | TODO | P5-T01 | `checkGalaxyProgress` and `checkDomination` drive what is shown; `MILESTONE_IDS` round-trip | `DOMINATION_TARGET` is 4. The engine raises these itself — report them |
+| P5-T07 | Relief and surrender | TODO | P5-T01 | `checkGalaxyRescue` (with `RELIEF_COOLDOWN`) and `surrenderGalaxy` are reachable and their conditions legible | The anti-farm cooldown is the part a player must see, or relief looks broken rather than rate-limited |
+| P5-T08 | Victory, defeat and the score screen | TODO | P5-T01 | `checkWinCondition`, `checkEndlessWin`/`Loss` and `scoreBreakdown` are shown with the engine's own numbers | `DEFAULT_MATCH_TIME_LIMIT` is 2400 s. `scoreBreakdown` is the engine's own arithmetic — a score recomputed above the bridge disagrees with it the first time a weight moves |
+| P5-T09 | Full save/load UI | TODO | P5-T01, P4-T09 | A player can save, list and load a galaxy; the round-trip is P4-T09's, not a second implementation | P4-T09 already proved the round-trip and found the market price-book defect. This row is the UI over it — and must surface that defect rather than hide it |
+| P5-T10 | Settings and onboarding | TODO | P5-T01 | Settings persist through `loadSettings`/`saveSettings`; a first-time player is told what to press | `settings.ts` already guards a throwing `localStorage`. Onboarding is what P1-T24's playtest keeps asking for and no script has ever been able to test |
+| P5-T11 | Phase 5 playtest script | TODO | P5-T04 … P5-T10 | Script exists; written and left UNRUN under ADR-0011 | The fifth. By now the backlog of unrun scripts is itself a finding — see the deferred table |
 
 ## Phase 6 — Polish and release
 
