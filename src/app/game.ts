@@ -223,7 +223,7 @@ export class Game {
     this.renderer.setPower(this.ghost || this.showPower ? snap.power : null);
     this.composer.compose(this.renderer, snap, camera, TIERS[this.tier], this.terrain, alpha, this.ghost);
 
-    const hud = hudModel(snap);
+    const hud = hudModel(snap, this.bridge.state);
     this.hud.render(hud);
     this.refreshEconomy(hud, snap);
     this.hud.renderEconomy(this.economy);

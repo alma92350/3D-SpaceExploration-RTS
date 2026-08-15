@@ -9,7 +9,7 @@
 // anything, and at 60 fps it must not touch a node whose text has not changed. Browsers are fast
 // but layout is not free, and this runs inside the same 16.6 ms as the renderer.
 
-import { BUILDINGS, UNITS } from "../engine/index.js";
+import { BUILDINGS, UNITS, canBuildType, prereqsMet } from "../engine/index.js";
 import { type BuildingPanelModel, buildingPanelModel } from "./building-panel.js";
 import { type Intent } from "../bridge/commands.js";
 import { doctrinePanelModel } from "./doctrine-panel.js";
@@ -125,10 +125,53 @@ export interface HudModel {
   readonly actions: readonly HudAction[];
 }
 
-/** The MVP's build menu. A deliberate subset — the rest of the roster is Phase 2 (PRD §5). */
+/**
+ * The MVP's build menu — kept only as the fallback when no `State` is available (P4-T14).
+ *
+ * It was the whole menu until Phase 4, and that was the bug: **five of the engine's twenty-nine
+ * building types**, hand-written in Phase 1 and never widened, while Phase 2 shipped meshes, panel
+ * models and economy logic for all 29. The cost compounded through the tech tree — Foundry, Arsenal,
+ * Spaceport and Star Dock were all unbuildable, so of 18 unit types only five could be trained, and
+ * **exactly one of ADR-0016's nine new silhouettes (the Ranger) was reachable in a real game.**
+ */
 export const MVP_BUILDINGS = ["command", "barracks", "habitat", "refinery", "turret"] as const;
 
-export function hudModel(snap: Snapshot): HudModel {
+/**
+ * What this builder can put down right now (P4-T14).
+ *
+ * **Two engine predicates, no hand-written list.** `canBuildType` answers whether THIS builder's
+ * category covers the building — a Worker and a Colony Ship do not build the same things — and
+ * `prereqsMet` answers whether the tech behind it stands. Both already existed; the old menu was a
+ * constant doing their job badly.
+ *
+ * Unmet prerequisites are **filtered rather than greyed**, which is a judgement worth naming: 29
+ * buttons at t=0 is a wall, and the menu growing as a base techs up is how the genre teaches its
+ * own tree. The cost is that a player cannot see what is coming — if the playtest says that matters,
+ * the fix is to show the locked rows with their `requires` named, not to go back to a fixed list.
+ *
+ * Affordability is NOT a filter. A building you cannot yet pay for is a plan; one whose Foundry you
+ * have not built is not on the menu at all.
+ */
+function buildableTypes(state: State | undefined, builderTypes: readonly string[]): string[] {
+  if (!state) return [...MVP_BUILDINGS];
+  const out: string[] = [];
+  for (const type of Object.keys(BUILDINGS)) {
+    const def = BUILDINGS[type];
+    if (!def) continue;
+    if (!builderTypes.some((b) => canBuildType(b, type))) continue;
+    if (!prereqsMet(state, "player", def)) continue;
+    out.push(type);
+  }
+  return out;
+}
+
+/**
+ * `state` is optional and only widens the build menu (P4-T14): with it, the offer is the engine's
+ * own answer for this builder; without it, the Phase 1 subset. Optional rather than required
+ * because every existing caller passes a snapshot alone, and the precedent for a model reading
+ * `State` is already set — P2-T10's market panel does, and says why.
+ */
+export function hudModel(snap: Snapshot, state?: State): HudModel {
   const e = snap.entities;
   const selection: SelectionEntry[] = [];
   const byId = new Map<string, number>();
@@ -191,9 +234,11 @@ export function hudModel(snap: Snapshot): HudModel {
       : "Click your colony ship to select it.";
 
   const builds: BuildOption[] = [];
-  const hasWorker = selection.some((s) => !s.isBuilding && UNITS[s.type]?.buildCategories?.length);
-  if (hasWorker) {
-    for (const buildingType of MVP_BUILDINGS) {
+  const builders = selection
+    .filter((s) => !s.isBuilding && UNITS[s.type]?.buildCategories?.length)
+    .map((s) => s.type);
+  if (builders.length > 0) {
+    for (const buildingType of buildableTypes(state, builders)) {
       const def = BUILDINGS[buildingType];
       if (!def) continue;
       builds.push({
