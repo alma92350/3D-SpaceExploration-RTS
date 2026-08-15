@@ -26,6 +26,15 @@ across all 29 types plus 200 units across all 18 types, at T0, 1280×720.
 | ADR-0014's derived ceiling, today | 83 |
 | ADR-0014's derived ceiling, with nine more | 119 |
 
+> **Correction, 2026-08-15, after P3-T02 built the meshes and re-measured.** The two absolute
+> figures above are **understated: the honest numbers are 41 before and 59 after.** The measurement
+> scene placed 200 units as `uTypes[i % 18]` with owner `i % 2`, and 18 is even — so every unit type
+> only ever appeared for **one** owner, and each unit mesh was counted once instead of twice. The
+> buildings were unaffected (29 types against `i % 2` decorrelates). **The delta was right**: each of
+> the nine occupies exactly 2 slots, measured, for +18 — and 59 against a ceiling of 119 leaves the
+> conclusion below not merely intact but with more margin than it claimed. The original figures are
+> left visible rather than edited, because a corrected record is worth more than a tidy one.
+
 **The budget does not bind.** 55 against a ceiling of 83 — and the ceiling moves with the roster by
 construction, so it is 119 once the meshes exist. Nothing in the repo breaks: the hand-written
 buildings cap is 28 and is a *buildings* cap, untouched by units; the perf baselines are per-scene

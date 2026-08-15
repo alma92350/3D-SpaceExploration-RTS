@@ -45,6 +45,18 @@ export const TRIANGLE_BUDGET: Readonly<Record<string, number>> = {
   // Phase 2's two remaining families (ADR-0014).
   freighter: 50,
   volatile: 30,
+  // Phase 3 — the nine units that had no mesh at all and rendered as Workers (ADR-0016).
+  // Budgets sized by how many are on screen at once: a Ranger scouts alone and a Leviathan is a
+  // capital ship you own two of, while a Wraith comes in packs.
+  ranger: 40,
+  wraith: 40,
+  mender: 55,
+  breacher: 55,
+  heliumbomb: 70,
+  aegis: 60,
+  colossus: 60,
+  dreadnought: 70,
+  leviathan: 90,
 };
 
 /** The nine types Phase 1 draws, plus the shared node and imposter meshes. */
@@ -60,6 +72,11 @@ export const MVP_MESHES = [
   // One hull for the four logistics units, and a second deposit mesh (ADR-0014). `node` keeps its
   // name and becomes the rock — renaming it would churn the perf baseline for nothing.
   "freighter", "volatile",
+  // Phase 3 — nine silhouettes, one per unit, no families (ADR-0016). Measured: 37 batches today,
+  // 55 with these, against a derived ceiling of 83, so the budget that forced ADR-0013's and
+  // ADR-0014's families simply does not bind here.
+  "ranger", "wraith", "mender", "breacher", "heliumbomb", "aegis", "colossus", "dreadnought",
+  "leviathan",
 ] as const;
 
 /** Every mesh the game builds. `MVP_MESHES` kept its name; this is what to iterate. */
@@ -502,11 +519,129 @@ function gate(): MeshData {
   return b.finish("gate");
 }
 
+/* ---------------------------------------------------------------------------------------------
+   Phase 3 — the nine units that had no mesh (ADR-0016).
+
+   Shape follows FUNCTION, because function is what ADR-0016 spent 18 draw calls to make readable.
+   Size follows `UNITS[type].radius`, because that is the number collision, selection and the
+   imposter quad already use — art that drifts from it makes the picture lie about the game.
+
+   The two unarmed units are the sharp cases and get the most distinctive shapes in the roster: a
+   Mender that reads as a fighter gets focused by an enemy and abandoned by its own player, and a
+   Helium Bomb that reads as anything else is the most expensive misread available in this game.
+   --------------------------------------------------------------------------------------------- */
+
+function ranger(): MeshData {
+  const b = new Builder();
+  // The scout: 115 speed against a Worker's 60, and the unit a player tracks constantly across an
+  // unexplored map. A narrow spire — the smallest footprint in the roster carrying the tallest
+  // thing relative to its width, so it reads at the edge of vision where scouts actually live.
+  b.prism(4, 3.4, 2.2, 0, 1.6, DARK[0], DARK[1], DARK[2], 0.2, Math.PI / 4);
+  b.box(1.1, 1.6, 4.6, 1.1, HULL[0], HULL[1], HULL[2], 0.4);
+  b.box(0.55, 4.6, 6.4, 0.55, TRIM[0], TRIM[1], TRIM[2], 0.95);      // the sensor mast
+  return b.finish("ranger");
+}
+
+function wraith(): MeshData {
+  const b = new Builder();
+  // Fast striker: 104 speed, 22 attack, 84 hp — it arrives, kills something and leaves. A swept
+  // delta like the Skiff's, but with a raked dorsal fin that gives it a height the Skiff has not
+  // got, because the two are the same tactical shape and must not be the same visual one.
+  b.tri(0, 1.2, 5.6, 4.4, 0.5, -3.2, -4.4, 0.5, -3.2, HULL[0], HULL[1], HULL[2], 0.5);
+  b.tri(0, 1.2, 5.6, 0, 0, -2.0, 4.4, 0.5, -3.2, DARK[0], DARK[1], DARK[2], 0.2);
+  b.tri(0, 1.2, 5.6, -4.4, 0.5, -3.2, 0, 0, -2.0, DARK[0], DARK[1], DARK[2], 0.2);
+  b.tri(-4.4, 0.5, -3.2, 4.4, 0.5, -3.2, 0, 0, -2.0, DARK[0], DARK[1], DARK[2], 0.2);
+  b.box(0.45, 1.2, 5.0, 2.6, TRIM[0], TRIM[1], TRIM[2], 0.9, 0, -0.8);   // the fin
+  return b.finish("wraith");
+}
+
+function mender(): MeshData {
+  const b = new Builder();
+  // NO WEAPON. Nothing on this model points forward, which is the whole design: every armed unit in
+  // the roster has a barrel, a nose or a prow, and this one deliberately has none. A narrow stalk
+  // carrying a wide emitter dish — the only unit that is wider at the top than at the bottom, which
+  // is a silhouette no fighter can accidentally acquire.
+  b.prism(6, 2.2, 1.8, 0, 2.2, DARK[0], DARK[1], DARK[2], 0.15);
+  b.box(0.7, 2.2, 5.6, 0.7, HULL[0], HULL[1], HULL[2], 0.35);
+  b.prism(6, 4.6, 5.4, 5.6, 7.6, TRIM[0], TRIM[1], TRIM[2], 0.9);        // the dish, flaring UPWARD
+  return b.finish("mender");
+}
+
+function breacher(): MeshData {
+  const b = new Builder();
+  // Siege at 150 range and 50 speed: it sits still and hits things it cannot see the far side of.
+  // A long, low sled — the lowest profile of anything armed — with a forward-raked barrel that is
+  // most of its length.
+  b.box(4.6, 0, 1.6, 5.0, HULL[0], HULL[1], HULL[2], 0.4);
+  b.box(2.6, 1.6, 2.8, 3.0, TRIM[0], TRIM[1], TRIM[2], 0.8);
+  b.box(0.7, 1.9, 2.6, 6.0, DARK[0], DARK[1], DARK[2], 0.1, 0, 4.6);     // the barrel, overhanging the nose
+  return b.finish("breacher");
+}
+
+function heliumbomb(): MeshData {
+  const b = new Builder();
+  // A 3 000-damage blast in a radius, carried by something with no attack at all. The only sphere
+  // in the game: two tapered prisms meeting at the waist, so the widest point of the silhouette is
+  // its middle rather than its base. Nothing else in the roster has that profile, which is the
+  // point — this is the one unit whose identity a player must never have to guess at.
+  b.prism(8, 2.6, 6.6, 0.9, 4.2, DARK[0], DARK[1], DARK[2], 0.15);
+  b.prism(8, 6.6, 1.8, 4.2, 8.0, TRIM[0], TRIM[1], TRIM[2], 0.85);
+  b.box(2.2, 0, 1.1, 2.2, HULL[0], HULL[1], HULL[2], 0.3);               // the cradle it rides on
+  return b.finish("heliumbomb");
+}
+
+function aegis(): MeshData {
+  const b = new Builder();
+  // 26 range and 360 hp: it has to close, and it exists to be shot at. A wide forward shield plate,
+  // broader than it is deep and low to the ground — the opposite proportion to the Colossus, which
+  // is the unit it must never be confused with.
+  b.box(7.2, 0, 1.8, 3.0, HULL[0], HULL[1], HULL[2], 0.4);
+  b.box(4.6, 1.8, 2.6, 2.0, DARK[0], DARK[1], DARK[2], 0.2);
+  b.box(8.4, 0.5, 3.4, 0.8, TRIM[0], TRIM[1], TRIM[2], 0.9, 0, 2.8);     // the shield, spanning the front
+  return b.finish("aegis");
+}
+
+function colossus(): MeshData {
+  const b = new Builder();
+  // 185 range, 32 speed, 42 attack on 150 hp — a glass cannon that shells from beyond sight. The
+  // tallest unit in the game and the thinnest above its base: a vertical mortar tube, so the thing
+  // a player reads from across the field is "that one is aimed at the sky".
+  b.prism(6, 6.2, 5.0, 0, 2.2, DARK[0], DARK[1], DARK[2], 0.2);
+  b.prism(6, 3.4, 2.6, 2.2, 4.0, HULL[0], HULL[1], HULL[2], 0.4);
+  b.prism(6, 1.9, 1.7, 4.0, 12.8, TRIM[0], TRIM[1], TRIM[2], 0.85);      // the tube
+  return b.finish("colossus");
+}
+
+function dreadnought(): MeshData {
+  const b = new Builder();
+  // 340 hp, 26 attack, 68 range: the line-holder. Broad and layered — a stack of receding decks, so
+  // it reads as mass rather than as reach. Deliberately blockier than the Aegis, which is the other
+  // heavy, and much lower than the Colossus, which is the other big gun.
+  b.box(7.0, 0, 2.6, 5.2, HULL[0], HULL[1], HULL[2], 0.4);
+  b.box(5.2, 2.6, 4.6, 3.8, DARK[0], DARK[1], DARK[2], 0.25);
+  b.box(3.2, 4.6, 6.2, 2.4, TRIM[0], TRIM[1], TRIM[2], 0.85);
+  b.box(0.9, 3.0, 3.9, 4.4, DARK[0], DARK[1], DARK[2], 0.1, 0, 4.6);     // twin forward guns
+  return b.finish("dreadnought");
+}
+
+function leviathan(): MeshData {
+  const b = new Builder();
+  // 900 hp, 70 attack, 200 range, gated behind a Stardock: the capital ship, and the largest thing
+  // on the field short of a Command Center. A long slab hull with a raised spine and a prow that
+  // pushes its footprint well past everything else.
+  b.prism(6, 8.6, 7.2, 0, 3.6, HULL[0], HULL[1], HULL[2], 0.35);
+  b.box(4.4, 3.6, 6.4, 6.0, DARK[0], DARK[1], DARK[2], 0.25);
+  b.box(2.2, 6.4, 9.2, 3.0, TRIM[0], TRIM[1], TRIM[2], 0.85);
+  b.box(1.8, 0.8, 3.4, 4.0, DARK[0], DARK[1], DARK[2], 0.15, 0, 8.4);    // the prow
+  return b.finish("leviathan");
+}
+
 const GENERATORS: Record<MeshId, () => MeshData> = {
   colonyship, worker, skiff, bastion, lancer, command, barracks, habitat, turret, refinery,
   node, imposter,
   factory, powerplant, relay, fortress, works, port, civic, plasmarig, gate,
   freighter, volatile: volatileNode,
+  ranger, wraith, mender, breacher, heliumbomb, aegis, colossus, dreadnought, leviathan,
 };
 
 /** Build the whole MVP mesh set. Called once, at boot. */
