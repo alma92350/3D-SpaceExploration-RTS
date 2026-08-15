@@ -53,6 +53,27 @@ export const CONCERN_BUFFER_FULL = 5;
 export const CONCERN_THROTTLED = 6;
 
 /**
+ * What a building is *doing*, as opposed to what is *wrong* with it (P2-T08).
+ *
+ * These are ours, and they live in their own array rather than as extra `CONCERN_*` values, for the
+ * reason ADR-0012 §5 gives: `concern` is `buildingConcern`'s own answer, mapped to an integer and
+ * not otherwise touched, so that a badge can never disagree with the simulation. Appending a code
+ * we invented to that enum would quietly make it a *mixture* of the engine's answer and ours, and
+ * the next person to trust the comment would be wrong.
+ *
+ * The distinction they add is the one the board flagged as the failure mode worth designing
+ * against: a building with nothing wrong with it can still be **doing nothing**, and "idle" reading
+ * the same as "working" is how a player loses ten minutes to a Barracks they forgot to queue.
+ *
+ * `ACTIVITY_NONE` covers everything that has no work to have: a turret, a Habitat, a wall.
+ */
+export const ACTIVITY_NONE = 0;
+/** Producing or training right now. */
+export const ACTIVITY_WORKING = 1;
+/** Able to work and not working — an empty training queue, today's only case. */
+export const ACTIVITY_IDLE = 2;
+
+/**
  * Power bands, as stored per cell of the power field.
  *
  * `POWER_NONE` means "no grid reaches here" — either the owner has no active source at all, or
@@ -209,6 +230,8 @@ export class ProductionTable {
   output: Float32Array;
   /** One of the `CONCERN_*` codes. */
   concern: Uint8Array;
+  /** One of the `ACTIVITY_*` codes. Ours, not the engine's — see `ACTIVITY_IDLE`. */
+  activity: Uint8Array;
 
   constructor(capacity: number) {
     this.capacity = capacity;
@@ -216,6 +239,7 @@ export class ProductionTable {
     this.fed = new Float32Array(capacity);
     this.output = new Float32Array(capacity);
     this.concern = new Uint8Array(capacity);
+    this.activity = new Uint8Array(capacity);
   }
 
   ensure(needed: number): void {
@@ -228,6 +252,7 @@ export class ProductionTable {
     this.fed = grown.fed;
     this.output = grown.output;
     this.concern = grown.concern;
+    this.activity = grown.activity;
   }
 }
 
@@ -329,6 +354,34 @@ export function isBuildingId(numeric: number): boolean {
  * infinite — and the arithmetic matters more than it looks, because this number rides the instance
  * `shade` into a vertex buffer, where one NaN corrupts a whole batch rather than one unit.
  */
+/**
+ * What a building is doing (P2-T08) — `ACTIVITY_*`, derived here and clearly ours.
+ *
+ * A building is IDLE when it *could* be working and is not. Today that means one thing: it trains
+ * units (`def.produces`) and its queue is empty. That is deliberately narrower than it sounds — a
+ * factory with a recipe is never idle, because the engine always has a reason it is stopped and
+ * `buildingConcern` will have named it (starved, buffer full, no power). Reporting such a factory
+ * as *both* starved and idle would give the frame two badges saying different things about the same
+ * building, and the player would have to guess which one to act on.
+ *
+ * Anything under construction or being recycled reports NONE: it is mid-transition, its state is
+ * already carried by the construction cue, and a badge on a half-built shell reads as a fault.
+ */
+export function activityOf(b: Building, hasRecipe: boolean, concern: number): number {
+  if (b.constructing || b.recycling) return ACTIVITY_NONE;
+  const produces = BUILDINGS[b.type]?.produces;
+  if (produces && produces.length > 0) {
+    // Only `command`, `barracks` and `stardock` train, and none of the three has a recipe, so this
+    // branch and the next never overlap and no precedence between them has to be invented.
+    return b.queue.length > 0 ? ACTIVITY_WORKING : ACTIVITY_IDLE;
+  }
+  if (!hasRecipe) return ACTIVITY_NONE;
+  // A factory is WORKING only when nothing is stopping it. Reporting a starved smelter as working
+  // because it holds a recipe would put a lie in the data that today's view happens not to read —
+  // and the next reader would find it the hard way.
+  return concern === CONCERN_NONE || concern === CONCERN_THROTTLED ? ACTIVITY_WORKING : ACTIVITY_NONE;
+}
+
 export function cargoFullness(u: Unit): number {
   if (!u.cargo || !(u.cargo.qty > 0)) return 0;
   const def = UNITS[u.type] as { cargoCap?: number; cargoHold?: number } | undefined;
@@ -536,11 +589,13 @@ export class SnapshotExtractor {
     p.output[n] = outputCap > 0 ? clamp01(storeTotal(b) / outputCap) : 0;
 
     const concern = buildingConcern(state, b);
-    p.concern[n] = concern === null
+    const code = concern === null
       ? CONCERN_NONE
       : concern.level === "paused"
         ? CONCERN_PAUSED
         : (CONCERN_CODES[concern.code ?? ""] ?? CONCERN_NONE);
+    p.concern[n] = code;
+    p.activity[n] = activityOf(b, !!recipe, code);
   }
 
   /**
