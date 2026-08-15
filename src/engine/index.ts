@@ -36,7 +36,14 @@ export {
   issueMove, issueAttackMove, issueAttack, issueGather, issueStop, issueHold, issuePatrol,
   issueBuild, issueSetRally, issueRecycle, issueCancelRecycle, issueSetLogiPriority,
   issueServiceBuilding, issueRepair,
+  // Phase 3 (P3-T11, P3-T12). Both have existed upstream since before this project started and
+  // neither was ever exposed: formations and escorts are wiring, not invention.
+  issueEscort, issueHoldFormation, issueScout,
 } from "@engine/engine/commands.js";
+
+export {
+  FORMATION_SHAPES, LEADER_POSITIONS, formationSlots, pickLeader,
+} from "@engine/engine/formation.js";
 
 export { BUILD_REACH, queueProduction, cancelProduction, researchUpgrade } from "@engine/engine/production.js";
 

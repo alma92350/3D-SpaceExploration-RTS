@@ -13,6 +13,7 @@ import {
   deployColonyShip, getEntity, isElectrifiable, issueAttack, issueAttackMove,
   issueBuild, issueCancelRecycle, issueGather, issueHold, issueMove, issuePatrol, issueRecycle,
   UPGRADES, committedDoctrine, researchUpgrade,
+  FORMATION_SHAPES, LEADER_POSITIONS, issueEscort, issueHoldFormation,
   issueSetLogiPriority, issueSetRally, issueStop, prereqsMet, queueProduction, researchTech,
   sampleTerrain, sell, tradeables,
 } from "../engine/index.js";
@@ -40,7 +41,11 @@ export type Intent =
   | { kind: "cancelRecycle"; entityId: string }
   | { kind: "trade"; com: string; qty: number; side: "buy" | "sell" }
   | { kind: "logiPriority"; buildingId: string; priority: "high" | "normal" | "low" }
-  | { kind: "doctrine"; buildingId: string; upgradeId: string };
+  | { kind: "doctrine"; buildingId: string; upgradeId: string }
+  // --- Phase 3, combat (P3-T11, P3-T12) ---
+  | { kind: "escort"; targetId: string; queue: boolean }
+  | { kind: "holdFormation"; shape: string; leaderPos: string }
+  | { kind: "moveInFormation"; x: number; y: number; shape: string; leaderPos: string; queue: boolean };
 
 /**
  * Apply one intent. Returns a player-facing reason when the engine refused, or null on success.
@@ -76,6 +81,37 @@ export function applyIntent(state: State, intent: Intent, galaxy: Galaxy): strin
       const workers = selectedUnits(state).filter((u) => UNITS[u.type]?.canGather);
       if (workers.length === 0) return null;
       issueGather(workers, intent.nodeId, intent.queue);
+      return null;
+    }
+
+    case "escort": {
+      const target = getEntity(state, intent.targetId);
+      if (!target) return null;                      // it died between the click and the tick
+      // The target is filtered out of its own escort: a ship cannot ring itself, and the engine
+      // documents that the caller is the one who has to do it.
+      const units = selectedUnits(state).filter((u) => u.id !== intent.targetId);
+      if (units.length === 0) return null;
+      issueEscort(units, intent.targetId, intent.queue);
+      return null;
+    }
+
+    case "holdFormation": {
+      const units = selectedUnits(state);
+      if (units.length === 0) return null;
+      if (!FORMATION_SHAPES.includes(intent.shape)) return `Unknown formation ${intent.shape}`;
+      if (!LEADER_POSITIONS.includes(intent.leaderPos)) return `Unknown leader position ${intent.leaderPos}`;
+      issueHoldFormation(units, intent.shape, intent.leaderPos);
+      return null;
+    }
+
+    case "moveInFormation": {
+      const units = selectedUnits(state);
+      if (units.length === 0) return null;
+      if (!FORMATION_SHAPES.includes(intent.shape)) return `Unknown formation ${intent.shape}`;
+      if (!LEADER_POSITIONS.includes(intent.leaderPos)) return `Unknown leader position ${intent.leaderPos}`;
+      // `issueMove` has taken a formation argument since before this project existed; the MVP just
+      // never passed one (P3-T11).
+      issueMove(units, intent.x, intent.y, intent.queue, { shape: intent.shape, leaderPos: intent.leaderPos });
       return null;
     }
 
