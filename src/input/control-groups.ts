@@ -1,11 +1,19 @@
 // Control groups (P3-T13).
 //
-// **These are client state and must never become simulation state.** `state.selection` IS sim
-// state — `applyIntent` reads it, `hashState` hashes it, and every recorded determinism fixture
-// replays against it. Storing a control group there would change the hash for a purely local,
-// per-player convenience and invalidate every fixture in the repo. So a group lives here, holds
-// engine ids, and reaches the simulation only by being replayed through the ordinary `select`
-// intent — the same path a mouse drag takes.
+// **These are client state and must never become simulation state.** `state.selection` IS sim state:
+// it lives on `State`, `applyIntent` reads it to decide who every order applies to, and the
+// determinism fixture replays `select` intents through the same queue as everything else. So a
+// control group stored there would be a purely local, per-player convenience deciding what the
+// simulation does. A group lives here instead, holds engine ids, and reaches the simulation only by
+// being replayed through the ordinary `select` intent — the same path a mouse drag takes.
+//
+// **Correction (P3-T17).** An earlier version of this comment also said `hashState` hashes the
+// selection. It does not, and the difference matters in both directions. It means a control group
+// written into `state.selection` would NOT be caught by the determinism fixture — the argument above
+// stands on its own and never rested on the hash. And the omission is deliberate rather than an
+// oversight: hashing the selection would make every `select` trivially "covered" by P3-T17's
+// per-order check, which is exactly how that check found two selects in the Phase 2 fixture that no
+// later order ever read.
 //
 // Nothing in the engine knows this exists, which is the point.
 

@@ -6,9 +6,13 @@
 // engine rather than deciding anything — the slots asserted are `formationSlots`' own.
 //
 // Control groups are the opposite: they exist nowhere, and the whole task is a constraint.
-// `state.selection` IS simulation state — `hashState` hashes it and every recorded fixture replays
-// against it — so a control group stored there would change the determinism hash for a purely local
-// convenience. The last describe is that rule, asserted.
+// `state.selection` IS simulation state — it lives on `State` and `applyIntent` reads it to decide
+// who every order applies to — so a control group stored there would be a local, per-player
+// convenience deciding what the simulation does. The last describe is that rule, asserted.
+//
+// **Correction (P3-T17): `hashState` does NOT hash the selection**, and an earlier version of this
+// comment said it did. So the determinism fixture would not catch a control group written into
+// `state.selection` — the rule stands on its own and never rested on the hash.
 
 import { describe, expect, it } from "vitest";
 import { ControlGroups, GROUP_COUNT } from "../../src/input/control-groups.js";
@@ -194,10 +198,13 @@ describe("control groups (P3-T13)", () => {
   });
 
   it("NEVER touches simulation state — the constraint is the whole task", () => {
-    // `state.selection` is sim state: `hashState` hashes it and every determinism fixture replays
-    // against it. A control group stored there changes the hash for a local convenience and
-    // invalidates every recorded fixture in the repo. It reaches the sim only through the ordinary
-    // `select` intent, which is the same path a mouse drag takes.
+    // `state.selection` is sim state: it lives on `State` and `applyIntent` reads it to decide who
+    // every order applies to. A control group stored there is a local convenience deciding what the
+    // simulation does. It reaches the sim only through the ordinary `select` intent, which is the
+    // same path a mouse drag takes.
+    //
+    // Note this is asserted HERE and not inferred from a determinism hash — `hashState` does not
+    // include the selection (see the file header), so nothing else in the repo would catch it.
     const { bridge } = squad();
     const before = [...bridge.state.selection];
     const g = new ControlGroups();

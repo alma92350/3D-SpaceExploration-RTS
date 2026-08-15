@@ -111,6 +111,16 @@ declare global {
      * it names WHO is being shot at, never THAT a shot occurred — the timer above says that.
      */
     autoTarget?: string | null;
+    /**
+     * Being scrapped back into resources. **Units recycle too** — `beginRecycle` takes an *entity*,
+     * not a building, and only `Building` declared this until P3-T17 needed a recycling colonist.
+     *
+     * The distinction that gap was hiding is a real one: a recycling BUILDING stays fully
+     * functional, which is why P2-T19's recycle/cancel pair on a Barracks cancelled out to a
+     * byte-identical world, while a recycling UNIT cannot act at all, so one second of it shifts a
+     * gather cycle permanently.
+     */
+    recycling?: { progress: number; time: number } | null;
     // --- role "bomb" only (engine/bomb.js, P3-T10). Absent on every other unit in the game. ---
     /**
      * Armed. An unarmed Helium Bomb is inert in all three of its trigger paths — it can be shot,
