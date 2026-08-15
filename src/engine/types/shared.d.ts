@@ -126,6 +126,18 @@ declare global {
     researchQueue?: Array<{ techId: string; progress: number }>;
     /** Which end of the logistics queue this building sits at (`LOGI_PRIORITIES`). */
     logiPriority?: "high" | "normal" | "low";
+    // --- Plasma Rig (engine/rig.js). Written by `updatePlasmaRig`, read through `rigInfo`. ---
+    /** 0..1 through the current dig cycle. */
+    digProgress?: number;
+    /** Completed digs. Half of `rollTier`'s hash key, which is why a rig's luck is stable. */
+    digCount?: number;
+    /**
+     * The `YIELD_TIERS` name the last dig ROLLED. Report it; never re-derive it from `lastYield` —
+     * that division agrees today and diverges silently the first time a multiplier moves.
+     */
+    lastTier?: string | null;
+    /** What the last dig actually banked, after every multiplier. */
+    lastYield?: number;
     /**
      * Committed job tallies, written by `countLogistics` — which is a MUTATOR, not a query.
      * Read these; never call it from above the bridge (see src/ui/operations-panel.ts).

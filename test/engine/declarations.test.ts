@@ -91,6 +91,72 @@ describe("engine declarations", () => {
     expect(engine.radiusOf(unit)).toBeGreaterThan(0);
   });
 
+  it("exports every Phase 2 economy name the panels call", () => {
+    // Added alongside the declarations they cover, per this file's own rule. Each of these was
+    // declared by hand against JS that is never edited here, so a rename upstream is silent until
+    // something like this looks.
+    const required = [
+      "nearestGatherDrop", "nearestCommandCenter",
+      "researchUpgrade", "committedDoctrine", "upgradeMult",
+      "pickRepairTarget", "countRepairJobs",
+      "rigSurvey", "rigInfo", "locationRichness",
+    ] as const;
+    const missing = required.filter((n) => typeof (engine as Record<string, unknown>)[n] !== "function");
+    expect(missing, `declared but not exported by the vendored engine: ${missing.join(", ")}`).toEqual([]);
+
+    // The doctrine table's shape is load-bearing twice over: `.doctrine` is what separates a real
+    // path from `hardEdge` (the AI's, which must never read as a commitment), and the tier fields
+    // are what the panel orders by.
+    const doctrines = new Set(Object.values(engine.UPGRADES).filter((u) => u.doctrine).map((u) => u.doctrine));
+    expect(doctrines, "the three Refinery doctrines").toEqual(new Set(["assault", "bulwark", "logistics"]));
+    expect(engine.UPGRADES.hardEdge?.doctrine, "hardEdge must carry no doctrine").toBeUndefined();
+    expect(engine.YIELD_TIERS.map((t) => t.name)).toEqual(["low", "medium", "good", "overwhelming"]);
+    expect(engine.SURVEY_RADIUS).toBeGreaterThan(0);
+    expect(engine.NEEDS_REPAIR).toBeLessThan(engine.HEALED);
+  });
+
+  it("a gather order really carries the `phase` the view reads", () => {
+    // `UnitOrder.phase` is declared because P2-T07 reads which leg of a round trip a worker is on.
+    // The engine sets it inside `updateGather` rather than at issue time, so this drives a real
+    // order rather than inspecting a freshly issued one.
+    const galaxy = engine.createGalaxy({ seed: FIXED_SEED, startId: "helix" });
+    const state = engine.activeState(galaxy);
+    const worker = engine.makeUnit("worker", "player", 100, 100);
+    state.units.set(worker.id, worker);
+    const node = state.map.nodes.find((n) => n.amount > 0)!;
+    worker.x = node.x;
+    worker.y = node.y;
+    engine.issueGather([worker], node.id, false);
+
+    for (let i = 0; i < 40 && !worker.order?.phase; i++) engine.stepGalaxy(galaxy, 0.05);
+    expect(worker.order?.phase, "UnitOrder.phase is declared but the engine never sets it").toBeDefined();
+    expect(["toNode", "mining", "toDrop"]).toContain(worker.order!.phase);
+  });
+
+  it("a Plasma Rig really carries the dig fields `rigInfo` reports", () => {
+    // `digProgress`, `digCount`, `lastTier` and `lastYield` are written by `updatePlasmaRig`, not by
+    // `makeBuilding`, so a rig has to actually dig before any of them exists. That is the whole
+    // reason this is a test and not a glance at the constructor.
+    const galaxy = engine.createGalaxy({ seed: FIXED_SEED, startId: "helix" });
+    const state = engine.activeState(galaxy);
+    const base = state.map.bases.player;
+
+    const reactor = engine.makeBuilding("reactor", "player", base.x + 40, base.y);
+    reactor.input = { radioactives: 5000 };
+    state.buildings.set(reactor.id, reactor);
+    const rig = engine.makeBuilding("plasmarig", "player", base.x + 90, base.y);
+    state.buildings.set(rig.id, rig);
+    state.players.player.resources.radioactives = 100000;
+
+    for (let i = 0; i < 4000 && !rig.lastTier; i++) engine.stepGalaxy(galaxy, 0.05);
+
+    expect(rig.digProgress, "Building.digProgress is declared but never written").toBeDefined();
+    expect(rig.lastTier, "the rig never completed a dig, so the declaration is unverified").toBeTruthy();
+    expect(engine.YIELD_TIERS.map((t) => t.name)).toContain(rig.lastTier);
+    expect(rig.lastYield).toBeGreaterThan(0);
+    expect(rig.digCount).toBeGreaterThan(0);
+  });
+
   it("the MVP roster exists in the engine's own definitions", () => {
     // The nine types Phase 1 draws (PRD §5, Phase 1). A typo here would surface as a missing mesh
     // at runtime; here it is a named failure.
