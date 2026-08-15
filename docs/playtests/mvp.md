@@ -96,21 +96,33 @@ novelty.
 | What did they ask that the interface should have answered? | *"i cannot activate the scout feature as there is none for the ranger"* · *"cannot see any progression"* (unit production) · *"i cannot change the location where they are going to land"* |
 | One-sentence summary | *"it feels good. it is fast. graphic could be improved for the skiff. some tuning needed"* |
 
-### Findings, verbatim — verdicts pending source verification
+### Findings — verbatim, then verified against source
 
 A playtest report is a symptom, not a diagnosis. *"There is no scout feature"* can mean the feature
-does not exist, or that it exists and could not be found, and those are different tasks filed
-against different layers — so the tester's words are recorded here unedited and **the verdicts are
-not written until the code has been read**. Recording a verdict from the report alone is how a
-playtest turns into a rumour.
+does not exist, or that it exists and could not be found, and those are different tasks against
+different layers. So the tester's words were recorded unedited and **every verdict below was read
+out of the code afterwards**, never inferred from the report.
 
-| # | Verbatim | What must be checked before this gets a verdict |
+**It changed the answer on three of five.** Two features the tester reported as missing are fully
+implemented and simply unreachable through the interface, and the one hypothesis this file itself
+proposed for the pan complaint — that the camera's rotation was confusing a correct control — was
+tested and is wrong. That is the argument for the verification step: the report was right about the
+symptom every time and right about the cause less than half the time.
+
+| # | Verbatim | Verdict |
 |---|---|---|
-| 1 | *"to pan to see the left part of the map, i need to move my mouse all the way to the opposit side of the screen ie right side … same for the arrows, should be inverted"* | Whether the edge-scroll sign is genuinely inverted against the RTS convention, **or** whether pan is computed in world space rather than relative to the camera's own yaw — this camera rotates on `,`/`.`, and a world-absolute pan feels inverted after a rotation without being inverted at all |
-| 2 | *"for the wasd, detect azerty or qwerty keyboard, or at least allow swithching the type of key board"* | Whether the bindings read `event.key` (layout-dependent — on AZERTY the physical WASD positions send `z`,`q`,`s`,`d`) or `event.code` (layout-independent). The tester is on a French machine, so this is the difference between working and not |
-| 3 | *"the ranger appears, but i cannot activate the scout feature as there is none for the ranger. it is important to have the scout feature"* | Whether the vendored engine has any scout/recon/auto-explore ability at all, whether the client fails to surface one that exists, and whether patrol (`R`) is what the player means by scout |
-| 4 | *"cannot see any progression, but i knwo they will appear"* (unit production) | Whether the engine exposes production progress at the bridge and the client simply does not draw it, or the engine never exposes it. Those are a client row and an upstream issue respectively |
-| 5 | *"there is a dsh line to indicate where they are going to arrive … the thing is i cannot change the location where they are going to land"* | Rally points. The dashed line is drawn, so something is known — the question is whether the client can **set** it, and P5-T15 already made rally lines selection-scoped, so the display half demonstrably exists |
+| 1 | *"to pan to see the left part of the map, i need to move my mouse all the way to the opposit side of the screen … same for the arrows, should be inverted"* | **CONFIRMED DEFECT, and worse than reported.** Both axes are inverted at the default orientation. Reproduced by running the project's own `CameraRig` and `pickGround`: sim X **441.6** sits under the right screen edge against **1158.4** under the left, so higher X draws leftward, and `pan` adds to X for a rightward push. **The rotation hypothesis this file proposed is refuted** — pan *is* camera-relative, and the default yaw is 0, so a player who never rotates gets the full double inversion. The basis is a *reflection* rather than an offset, so rotating scrambles the error instead of shifting it: pushing right travels LEFT · UP · **RIGHT** · DOWN · LEFT · UP · **RIGHT** · DOWN across the eight snapped yaws — accidentally correct at two of eight. See PT-01 |
+| 2 | *"for the wasd, detect azerty or qwerty keyboard"* | **CONFIRMED DEFECT.** Every binding reads `event.key`; `event.code` appears nowhere in `src/`. On AZERTY the physical W and A positions emit `z` and `q`, which are not in the pan set and **are bound to other commands** — `z` fires the HUD's first button, `q` cycles the selection and flies the camera to it. So two of the four pan keys are not merely dead, they do something else. `index.html` advertises "WASD pan" three times with no caveat. See PT-02 |
+| 3 | *"i cannot activate the scout feature as there is none for the ranger"* | **IMPLEMENTED, UNREACHABLE.** It is `E`, a stance needing no click, gated to `role === "scout"` — the Ranger alone — and driven by a dedicated engine module that walks the fog frontier and falls back to a quadrant circuit once charted. The word "scout" appears **zero times** in `src/ui/` and `src/app/`, and selecting a Ranger draws a **literally empty action row**, because that row is built only from deploy/train/build. The interface showed exactly what the tester reported. See PT-03 |
+| 4 | *"cannot see any progression"* (unit production) | **REAL GAP, and ours.** The engine advances a `progress` fraction on every queued job; the bridge carries no queue and no progress, and `progress[]` in the snapshot is *construction*, pinned at 1 for a finished building. Research already draws `${Math.round(job.progress * 100)}% done` from an identically shaped field — so this is drawn for research and not for units. Sharper: a building **actively training wears no badge**, while an idle one does, so "working" is only distinguishable by an absence. See PT-04 |
+| 5 | *"i cannot change the location where they are going to land"* | **IMPLEMENTED, UNREACHABLE** — `U`, then left-click. And the tester was set up to fail: `makeBuilding` mints *every* building with a live default rally at `(x + 60, y + 60)`, so they watched units walk to a point they never chose and correctly deduced it was a setting. `snapshot.ts` says drawing that line "is how a player learns the rally point exists at all" — which worked, and then nothing taught the key. See PT-05 |
+
+**The common cause of 3 and 5, and it is one defect rather than two.** P5-T13 bound ten orders to
+keys and neither place that teaches the controls was updated. Unadvertised today: `E`, `U`, `I`,
+`Shift+I`, `Shift+R`, `Shift+F`, `Shift+H`, `Shift+P`, `Shift+L`, `Delete` — and the guard that
+should have caught it checks one direction only. `test/ui/onboarding.test.ts` states its own claim as
+*"every key it names is put through the app's own `translateKey`"*: named ⇒ real, never real ⇒ named.
+A control list can therefore be arbitrarily incomplete and stay green.
 
 ### What this session does not establish
 
