@@ -47,7 +47,15 @@ export type PendingMode =
   | { kind: "none" }
   | { kind: "attackMove" }
   | { kind: "patrol" }
-  | { kind: "build"; buildingType: string };
+  | { kind: "build"; buildingType: string }
+  // Phase 3. A formation move needs a destination and an escort needs a target, so both are modes
+  // for the same reason attack-move is: the order is not complete until the next click.
+  //
+  // The formation's shape rides ON the mode rather than in the caller's state, which is what keeps
+  // this module pure. Pressing the key again while the mode is up advances the shape, so cycling and
+  // arming are the same gesture and the player sees what they are about to get before committing.
+  | { kind: "formation"; shape: string; leaderPos: string }
+  | { kind: "escort" };
 
 export interface GestureResult {
   readonly intent: Intent | null;
@@ -82,6 +90,20 @@ export function translatePointer(
           // the button five times — the one place upstream's own UI is sticky, and it matters.
           mode: gesture.shift ? mode : { kind: "none" },
         };
+      case "formation":
+        return {
+          intent: {
+            kind: "moveInFormation", x: gesture.worldX, y: gesture.worldY,
+            shape: mode.shape, leaderPos: mode.leaderPos, queue: gesture.shift,
+          },
+          mode: { kind: "none" },
+        };
+      case "escort":
+        // An escort needs a SHIP, not a point. Clicking empty ground cancels rather than issuing
+        // anything: the alternative is a silently swallowed click, and the player would try again.
+        return gesture.entityId
+          ? { intent: { kind: "escort", targetId: gesture.entityId, queue: gesture.shift }, mode: { kind: "none" } }
+          : NO_INTENT;
       case "none":
         break;
     }
@@ -139,12 +161,49 @@ export interface KeyResult {
   readonly cancel: boolean;
   /** Flip the power-grid overlay. A view concern, so it is not an intent (nothing in the sim moves). */
   readonly togglePower?: boolean;
+  /**
+   * A control-group press (P3-T13), for the caller to resolve against its own `ControlGroups`.
+   *
+   * NOT an intent, and that is the whole point of the task: a control group is client state, and
+   * `state.selection` is sim state that `hashState` hashes. A recall becomes an ordinary `select`
+   * intent up in the caller, where the group and the snapshot both live. This module has neither
+   * and must not grow either.
+   */
+  readonly group?: { readonly n: number; readonly op: "assign" | "append" | "recall" };
+  /**
+   * A Helium Bomb command (P3-T10) for the caller to aim at the selection.
+   *
+   * Same shape of problem as `group`: `armBomb`/`detonate` address ONE unit by id, deliberately —
+   * "arm everything selected" is not a thing anyone should be able to do to a doomsday device by
+   * accident — and this module cannot see the selection. So the caller resolves it.
+   */
+  readonly bomb?: "toggleArm" | "detonate";
 }
 
 const NO_KEY: KeyResult = { intent: null, mode: null, camera: null, cancel: false };
 
-/** Hotkeys. Upstream's letters, so muscle memory carries over (persona P1). */
-export function translateKey(gesture: KeyGesture): KeyResult {
+/**
+ * Hotkeys. Upstream's letters, so muscle memory carries over (persona P1).
+ *
+ * `mode` is passed in because Phase 3's formation key CYCLES: pressing it again while the mode is up
+ * advances the shape rather than re-arming the same one. The parameter is optional so every existing
+ * call site keeps working, and the function stays pure — it reads the mode, it does not own it.
+ *
+ * **The free letters are scarcer than they look**, which is what decided these bindings. W/A/S/D pan
+ * (PRD §5), upstream spends Q and E on select-army and scout, and Z/C/V/B/N are upstream's
+ * POSITIONAL action keys — they fire the Nth button the HUD is showing, so binding a fixed order to
+ * one would break that rule the moment the HUD has buttons. That leaves F, T and P, which is why a
+ * doomsday device ended up on O rather than on B for "bomb".
+ */
+export function translateKey(gesture: KeyGesture, mode: PendingMode = { kind: "none" }): KeyResult {
+  // Control groups: the digit row, as every RTS since the nineties. Ctrl assigns, Shift appends, a
+  // bare press recalls. Checked before the letter switch because a digit is never a letter.
+  const digit = /^[0-9]$/.test(gesture.key) ? Number(gesture.key) : -1;
+  if (digit >= 0) {
+    const op = gesture.ctrl ? "assign" : gesture.shift ? "append" : "recall";
+    return { ...NO_KEY, group: { n: digit, op } };
+  }
+
   switch (gesture.key.toLowerCase()) {
     case "a": return { intent: null, mode: { kind: "attackMove" }, camera: null, cancel: false };
     case "r": return { intent: null, mode: { kind: "patrol" }, camera: null, cancel: false };
@@ -159,12 +218,55 @@ export function translateKey(gesture: KeyGesture): KeyResult {
     // RTS. It is a toggle rather than a mode because the grid answers "where can I build this
     // efficiently?", which a player asks while doing something else.
     case "g": return { ...NO_KEY, togglePower: true };
+    // --- Phase 3 ------------------------------------------------------------------------------
+    // F arms a formation move and cycles its shape on repeat. The shape lives in the mode, so the
+    // player can see what they are arming before they commit the click (see `PendingMode`).
+    case "f": return {
+      intent: null,
+      mode: { kind: "formation", shape: nextShape(mode), leaderPos: DEFAULT_LEADER_POS },
+      camera: null, cancel: false,
+    };
+    // T holds the formation where the group already stands — no click, because there is no
+    // destination. It reuses whatever shape F last armed, so the two keys are one control.
+    case "t": return {
+      intent: {
+        kind: "holdFormation",
+        shape: mode.kind === "formation" ? mode.shape : FORMATION_KEY_SHAPES[0]!,
+        leaderPos: DEFAULT_LEADER_POS,
+      },
+      mode: { kind: "none" }, camera: null, cancel: false,
+    };
+    // P for protect. Not G (the power grid), not E (upstream's scout), not C or V (positional).
+    case "p": return { intent: null, mode: { kind: "escort" }, camera: null, cancel: false };
+    // The Helium Bomb. O rather than B because B is one of upstream's positional action keys.
+    // Arming and detonating are separate presses on purpose — `applyIntent` refuses to detonate an
+    // unarmed bomb, so those two presses ARE the confirmation dialog this build does not have.
+    case "o": return { ...NO_KEY, bomb: gesture.shift ? "detonate" : "toggleArm" };
     case "escape": return { intent: null, mode: { kind: "none" }, camera: null, cancel: true };
     case " ": case "home": return { ...NO_KEY, camera: "focusBase" };
     case ",": return { ...NO_KEY, camera: "rotateLeft" };
     case ".": return { ...NO_KEY, camera: "rotateRight" };
     default: return NO_KEY;
   }
+}
+
+/**
+ * The shapes F cycles through, and the leader position it uses.
+ *
+ * **A copy of the engine's `FORMATION_SHAPES`, and it must not drift** — `applyIntent` validates
+ * against the engine's own list and returns "Unknown formation …" for anything else, so a shape
+ * added here that the engine does not know is a key press that is silently refused. It is copied
+ * rather than imported because `input/` may not import the engine (ADR-0008), and
+ * `test/input/phase3-input.test.ts` asserts the two lists are equal so the copy cannot rot.
+ */
+export const FORMATION_KEY_SHAPES: readonly string[] = ["grid", "line", "wedge", "circle"];
+/** `front` because a formation move is an advance; the leader arrives first, which is legible. */
+export const DEFAULT_LEADER_POS = "front";
+
+function nextShape(mode: PendingMode): string {
+  if (mode.kind !== "formation") return FORMATION_KEY_SHAPES[0]!;
+  const i = FORMATION_KEY_SHAPES.indexOf(mode.shape);
+  return FORMATION_KEY_SHAPES[(i + 1) % FORMATION_KEY_SHAPES.length]!;
 }
 
 /** Entity ids inside a world-space rectangle, player-owned only — box-select never grabs the enemy. */
