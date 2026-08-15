@@ -156,8 +156,15 @@ export interface KeyGesture {
 export interface KeyResult {
   readonly intent: Intent | null;
   readonly mode: PendingMode | null;
-  /** Camera actions the caller performs; the camera is not sim state, so it is not an intent. */
-  readonly camera: "focusBase" | "rotateLeft" | "rotateRight" | null;
+  /**
+   * Camera actions the caller performs; the camera is not sim state, so it is not an intent.
+   *
+   * `focusAlert` is PRD §4's second named camera command and it needs the alert board to resolve,
+   * which lives in the application — so, like `group` below, this only says WHICH action, never
+   * where. It also dismisses what it jumps to: an alert a player has looked at is handled, and
+   * making them press a second key to clear it is how an alert board fills up and stops being read.
+   */
+  readonly camera: "focusBase" | "focusAlert" | "rotateLeft" | "rotateRight" | null;
   readonly cancel: boolean;
   /** Flip the power-grid overlay. A view concern, so it is not an intent (nothing in the sim moves). */
   readonly togglePower?: boolean;
@@ -243,7 +250,12 @@ export function translateKey(gesture: KeyGesture, mode: PendingMode = { kind: "n
     // unarmed bomb, so those two presses ARE the confirmation dialog this build does not have.
     case "o": return { ...NO_KEY, bomb: gesture.shift ? "detonate" : "toggleArm" };
     case "escape": return { intent: null, mode: { kind: "none" }, camera: null, cancel: true };
-    case " ": case "home": return { ...NO_KEY, camera: "focusBase" };
+    // Space jumps to the newest live alert and Home goes to the base — the two were one binding
+    // until P3-T14 gave the first one something to jump to. Space is the alert key in most of the
+    // genre, and a player who presses it with nothing raised gets their base, which is the older
+    // behaviour and the reasonable fallback rather than a dead key.
+    case " ": return { ...NO_KEY, camera: "focusAlert" };
+    case "home": return { ...NO_KEY, camera: "focusBase" };
     case ",": return { ...NO_KEY, camera: "rotateLeft" };
     case ".": return { ...NO_KEY, camera: "rotateRight" };
     default: return NO_KEY;

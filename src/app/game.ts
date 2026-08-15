@@ -14,6 +14,7 @@ import { CameraRig, clamp } from "../input/camera.js";
 import { pickGround } from "../input/picking.js";
 import { type PendingMode, type PointerGesture, translateKey, translatePointer } from "../input/intents.js";
 import { ControlGroups } from "../input/control-groups.js";
+import { AlertFeed } from "../view/alerts.js";
 import { type ElevationField, elevationFieldFrom } from "../view/terrain/elevation.js";
 import { buildTerrainMesh } from "../view/terrain/mesh.js";
 import { buildMeshes, meshIdForType } from "../view/meshes/generators.js";
@@ -54,6 +55,8 @@ export class Game {
    * hashes and every recorded fixture replays against.
    */
   private readonly groups = new ControlGroups();
+  /** The alert board (P3-T14). Client state, like the control groups beside it. */
+  private readonly alerts = new AlertFeed();
   private readonly keys = new Set<string>();
   private pointerX = 0;
   private pointerY = 0;
@@ -112,6 +115,10 @@ export class Game {
         // Once per SIM step, not per frame: the snapshot object is the same across the frames
         // between ticks, so ingesting from `renderFrame` would replay every shot three times.
         this.composer.ingestTick(this.bridge.snapshot);
+        // Same rule, and here it is not just waste: `snap.deaths` is a per-tick table, so a second
+        // pass over the same snapshot would tally one casualty as two and the alert's badge would
+        // count frames instead of losses (P3-T14).
+        this.alerts.ingestTick(this.bridge.snapshot);
       },
       render: (alpha, frameMs) => this.renderFrame(alpha, frameMs),
     });
@@ -306,6 +313,19 @@ export class Game {
       case "focusBase": {
         const base = this.bridge.state.map.bases.player;
         this.camera.focusOn(base.x, base.y);
+        break;
+      }
+      case "focusAlert": {
+        // PRD §4's "focus last alert". Jumping DISMISSES what it jumped to: the player has now seen
+        // it, and a board that needs a second key to clear fills up and stops being read.
+        const i = this.alerts.latest();
+        if (i < 0) {
+          const base = this.bridge.state.map.bases.player;
+          this.camera.focusOn(base.x, base.y);
+          break;
+        }
+        this.camera.focusOn(this.alerts.x[i]!, this.alerts.y[i]!);
+        this.alerts.dismiss(this.alerts.id[i]!);
         break;
       }
       case "rotateLeft": this.camera.rotate(-1); break;

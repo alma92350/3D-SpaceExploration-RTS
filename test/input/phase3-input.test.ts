@@ -134,8 +134,18 @@ describe("control groups reach the digit row (P3-T13)", () => {
     // turns the spacebar into a control-group recall, and the spacebar is bound to focus-base. It
     // was caught by the pre-existing camera test when tried, which is luck; pinned here on purpose.
     expect(key(" ").group, "the spacebar became a control group").toBeUndefined();
-    expect(key(" ").camera).toBe("focusBase");
+    expect(key(" ").camera).toBe("focusAlert");
     expect(key("").group, "an empty key name became group zero").toBeUndefined();
+  });
+});
+
+describe("alerts reach a key (P3-T14)", () => {
+  it("gives PRD §4's 'focus last alert' the spacebar, and keeps Home on the base", () => {
+    // Space and Home were one binding until the alert board existed to jump to. Space is the alert
+    // key across the genre; Home stays the base, so the older behaviour is not lost.
+    expect(key(" ").camera).toBe("focusAlert");
+    expect(key("home").camera).toBe("focusBase");
+    expect(key(" ").intent, "a camera move entered the command stream").toBeNull();
   });
 });
 
