@@ -102,13 +102,23 @@ declare global {
     dead?: boolean;
     /**
      * Seconds until this unit may fire again. `combat.js` only ever decrements it toward zero or
-     * resets it to `def.cooldown` when it fires — so **a rise between ticks is a shot** (ADR-0017),
-     * which is the only signal the engine gives that one happened.
+     * resets it to `def.cooldown` when it fires, so a rise between ticks is a shot.
+     *
+     * **Nothing above the bridge reads it any more, and the claim that used to be here was false.**
+     * It said this was "the only signal the engine gives that one happened" — ADR-0017's premise,
+     * which P5-T15 checked and disproved: `combat.js` pushes an `attackHit` event carrying both
+     * endpoints. ADR-0023 supersedes it and the tracer now reads the event. The invariant above is
+     * still true; it is simply no longer the only thing available, and it was never the best one.
      */
     attackTimer?: number;
     /**
-     * The sticky auto-acquired target id. Committed across ticks rather than re-chosen each one, so
-     * it names WHO is being shot at, never THAT a shot occurred — the timer above says that.
+     * The sticky auto-acquired target id. Committed across ticks rather than re-chosen each one.
+     *
+     * **It names only one of three targeting paths**, which is what made reading it a defect: an
+     * explicitly ordered attack takes its target off `unit.order` and AI focus-fire off
+     * `unit.focusId`, and neither ever writes this field. A tracer keyed on it drew nothing for
+     * either — right-click-to-attack, the most common combat order in the game, from Phase 3 until
+     * ADR-0023.
      */
     autoTarget?: string | null;
     /**
