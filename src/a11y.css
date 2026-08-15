@@ -1,0 +1,91 @@
+/* N-05's two runtime halves that need a stylesheet: a focus you can SEE, and a motion setting that
+   reaches the CSS as well as the JavaScript (P6-T03, P6-T04).
+
+   A separate file from `style.css` rather than a section of it, because these rules answer to a
+   requirement rather than to a screen: everything here exists because N-05 says so, and a reviewer
+   asking "where is the accessibility layer" should find it in one place. `style.css` stays the
+   description of what the HUD looks like. */
+
+:root {
+  /* Not `--player`: the HUD already spends that hue on ownership and on `:hover`, and a focus ring
+     the same colour as a hover state is one a player cannot tell from the mouse being nearby. */
+  --focus: #ffe08a;
+}
+
+/* ------------------------------------------------------------------------------------------------
+   VISIBLE FOCUS
+
+   Two selectors on purpose. `.hud-focus` is the ring's own mark (`src/ui/hud-focus.ts`), which is
+   what makes a SCRIPTED focus move visible — `:focus-visible` is a user-agent heuristic and does
+   not reliably fire for `element.focus()`. `:focus-visible` then covers everything the ring does
+   not own: the tier picker in the sidebar, and a browser's own tab into the page.
+
+   An OUTLINE with an offset, not a colour swap: N-05 forbids colour as the only channel, and that
+   applies to the interface's own state as much as to the game's. The ring is a shape that appears
+   — a gap, then a line — so it reads for a player who cannot separate the two hues at all.
+   ------------------------------------------------------------------------------------------------ */
+
+#hud .hud-focus,
+#hud button:focus-visible,
+#sidebar button:focus-visible,
+button.tier:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  /* Kept legible against the dark panel when the button is struck through as unaffordable: a
+     control the keyboard can reach is still a control, and the engine's refusal is what explains
+     it (`HudAction`), so it must not be the thing that hides the focus. */
+  border-color: var(--focus);
+}
+
+/* An unaffordable button is drawn at 0.45 opacity. Focused, it comes back up — otherwise the one
+   control the player is pointing at is the hardest one on screen to see. */
+#hud .hud-button.unaffordable.hud-focus { opacity: 0.85; }
+
+/* Windows high-contrast and friends replace the palette outright; `Highlight` is the system's own
+   focus colour, and without this the ring would be painted in a hue the mode has already thrown
+   away. */
+@media (forced-colors: active) {
+  #hud .hud-focus,
+  #hud button:focus-visible,
+  button.tier:focus-visible {
+    outline-color: Highlight;
+  }
+}
+
+/* ------------------------------------------------------------------------------------------------
+   REDUCED MOTION
+
+   `<html data-motion>` carries the RESOLVED answer — `reduced` or `full` — written by
+   `view/motion.ts` the moment a preference is applied. The attribute is what decides, because it is
+   the only thing that knows about the player's own override: a stylesheet cannot resolve "auto"
+   against a setting, and a media query alone would overrule a player who asked for motion on a
+   machine whose OS asks for less.
+
+   The media-query block therefore applies only BEFORE the app has stamped an answer, which is the
+   one moment the OS is all there is to go on.
+
+   These rules suppress nothing today, and that is deliberate rather than sloppy: `style.css` opens
+   by saying it has "no transitions on anything that updates per frame", and it has none at all. The
+   client's real motion is drawn to a canvas and is governed in `view/effects.ts`. This is here so
+   that the FIRST CSS animation anybody adds is governed by the setting on the day it is added,
+   rather than shipping unreachable by it and being noticed by a player instead. */
+
+html[data-motion="reduced"] *,
+html[data-motion="reduced"] *::before,
+html[data-motion="reduced"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-motion]) *,
+  html:not([data-motion]) *::before,
+  html:not([data-motion]) *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

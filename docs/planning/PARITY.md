@@ -256,7 +256,7 @@ This is the table that decides the phase. Each row is one verb the 2D game gives
 
 | # | Capability | Engine trace | Client trace | Mark |
 |---|---|---|---|---|
-| 63 | Tracers — who is shooting whom | derived from `attackTimer` (ADR-0017) | `snap.shots`; `view/effects.ts` | PRESENT |
+| 63 | Tracers — who is shooting whom | **`attackHit` (ADR-0023)**, not derived | `snap.shots`; `view/effects.ts`. **This row was PRESENT and one third of it did not work**: the extractor read `unit.autoTarget`, which only auto-acquisition ever writes, so a right-clicked attack drew nothing (10 fired, 0 drawn) and AI focus-fire drew nothing either. Reading the engine's own event fixes both and retires the `prevPos` lookup ADR-0017 §4 existed for. A worked example of what a PRESENT mark can and cannot promise: a gesture reached the order, a test went red when the control was removed, and the feedback was still absent — because the row measured whether the ORDER was reachable, and nothing measured whether its feedback fired | PRESENT |
 | 64 | Impacts / blast rings | derived | `blast` overlay | PRESENT |
 | 65 | Deaths | `entityKilled` event | `snap.deaths`; P3-T07 | PRESENT |
 | 66 | **A siege hit reading heavier than a normal one** | `attackHit.heavy` — `def.bonusVsBuildings && target.kind === "building"` | `snap.impacts.heavy` → a new `impact` overlay kind; a wedge driven onto a plate, 12 px at stroke 2.4 — larger and heavier than row 67's spark, and a different figure, so the two never differ by hue alone (N-05). Both draw in the ATTACKER's colour, so hue is already spent saying whose weapon it was. Copied from the event, never re-derived: `heavy` is a question about the attacker's weapon against the target's kind that the snapshot cannot ask | PRESENT |
@@ -454,6 +454,17 @@ documents the event stream as *"unitSpawned/attackHit/entityKilled/buildingCompl
 Phase 1 MVP — so it has said this since before Phase 3 was scoped. The claim was also internally
 inconsistent at the time: P3-T10's own row cites `bombDetonated` as an engine event carrying two
 radii, which is a second combat event.
+
+> **Overtaken by measurement (P6-T01, ADR-0023).** The paragraph below concluded that the decision
+> stood and only the premise needed correcting — "rebuilding it would be churn with no measurement
+> behind it". Somebody then took the measurement, and it went the other way. The diff drew **no
+> tracer at all** for a right-clicked attack (10 fired, 0 drawn, 10 dropped), because `combat.js`
+> takes an ordered attack's target off `unit.order` and AI focus-fire off `unit.focusId`, and
+> neither ever writes the `autoTarget` the extractor read. It also never actually held `dropped` at
+> 0 in a real fight, and a shot whose shooter died in the same tick was lost with no counter at all.
+> ADR-0023 supersedes 0017 and reads the event. **Conclusion 3 below is the one that was wrong, and
+> the way it was wrong is instructive: it is a judgement about cost, written by somebody who had not
+> measured the thing they were declining to change.**
 
 **What this does and does not mean.** It does *not* mean ADR-0017's decision was wrong: the diff
 implementation is built, mutation-tested and allocates nothing, and rebuilding it would be churn

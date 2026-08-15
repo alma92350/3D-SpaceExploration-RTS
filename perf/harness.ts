@@ -27,6 +27,15 @@ export interface PerfResult {
   maxTriangles: number;
   terrainUploads: number;
   fogUploads: number;
+  /**
+   * Power-field uploads (P6-T07). Zero unless the scene holds a build ghost, since that is the only
+   * thing that brings the grid up (ADR-0012 §2, and `Game` does exactly this).
+   *
+   * Reported because the contract is the same version-gated one the fog and the terrain have, and
+   * this is the only one of the three that no gate has ever watched — a `setPower` that stopped
+   * checking `version` would re-upload a whole field every frame and nothing would go red.
+   */
+  powerUploads: number;
   /** Sim time per RENDERED frame, which is the number ADR-0006 caps at 6 ms for T0. */
   simMsPerFrame: number;
   /**
@@ -90,27 +99,38 @@ export function runScene(
   const totalFrames = Math.max(1, Math.round(opts.seconds * opts.targetFps));
   const ticksPerFrame = PLAY_HZ / opts.targetFps;
 
-  // Warm-up: the first frames pay for buffer growth, shader compilation and JIT. Measuring them
-  // would make the p95 a report on startup rather than on steady state.
-  const warmup = Math.min(60, Math.floor(totalFrames / 10));
-  let tickDebt = 0;
-  for (let f = 0; f < warmup; f++) {
-    tickDebt += ticksPerFrame;
-    while (tickDebt >= 1) { scene.tick(opts.now); tickDebt -= 1; }
-    scene.render(renderer, 0);
-    renderer.flush?.();
-  }
-  // The background probe warms up on the same terms as everything else: its first galaxy steps pay
-  // for JIT exactly as the first frames do, and a per-world cost that included them would be a
-  // report on startup. It keeps the schedule it learned; only the timings are dropped.
-  scene.beginMeasurement();
-
   const frameTimes: number[] = [];
   let simTotal = 0;
   let maxDrawCalls = 0;
   let maxInstances = 0;
   let maxTriangles = 0;
   let last: FrameStats | null = null;
+
+  // Warm-up: the first frames pay for buffer growth, shader compilation and JIT. Measuring them
+  // would make the p95 a report on startup rather than on steady state.
+  //
+  // **The TIMINGS are dropped; the structural counts are not** (P6-T07). A draw-call count has no
+  // warm-up — it is identical on the first frame and the ten-thousandth, on every machine — so
+  // excluding these frames from `maxDrawCalls` did not remove noise, it removed the first tenth of
+  // the camera path from the only check in this gate that is machine-independent. It was hiding a
+  // real peak: P3's busiest batch frame is frame 2, at 45 calls, and the gate had been reporting 44
+  // for a scene that draws 45. That is the same failure as every other entry in this file's list —
+  // a gate quietly not measuring something — and it is the one that was inside the gate itself.
+  const warmup = Math.min(60, Math.floor(totalFrames / 10));
+  let tickDebt = 0;
+  for (let f = 0; f < warmup; f++) {
+    tickDebt += ticksPerFrame;
+    while (tickDebt >= 1) { scene.tick(opts.now); tickDebt -= 1; }
+    const stats = scene.render(renderer, 0);
+    renderer.flush?.();
+    maxDrawCalls = Math.max(maxDrawCalls, stats.drawCalls);
+    maxInstances = Math.max(maxInstances, stats.instances);
+    maxTriangles = Math.max(maxTriangles, stats.triangles);
+  }
+  // The background probe warms up on the same terms as everything else: its first galaxy steps pay
+  // for JIT exactly as the first frames do, and a per-world cost that included them would be a
+  // report on startup. It keeps the schedule it learned; only the timings are dropped.
+  scene.beginMeasurement();
 
   for (let f = 0; f < totalFrames; f++) {
     const frameStart = opts.now();
@@ -143,6 +163,7 @@ export function runScene(
     maxTriangles,
     terrainUploads: last?.terrainUploads ?? 0,
     fogUploads: last?.fogUploads ?? 0,
+    powerUploads: last?.powerUploads ?? 0,
     simMsPerFrame: round(simTotal / totalFrames),
     background: backgroundCost(scene.backgroundReport(), ticksPerFrame),
   };
@@ -244,6 +265,17 @@ export function judge(result: PerfResult, baseline: Baseline[string] | undefined
   // change" contract broke, which costs far more than the frame time it shows up as.
   if (result.terrainUploads > 1) {
     problems.push(`${result.scene}: terrain uploaded ${result.terrainUploads} times; it never changes`);
+  }
+
+  // The power grid is version-gated exactly as the fog and the terrain are (ADR-0012 §2), and it
+  // is a whole field per upload. One per frame means the version check stopped working — checked
+  // against the FRAME count rather than a constant, because the field legitimately moves whenever
+  // a source is built or lost and no fixed number could tell those two apart (P6-T07).
+  if (result.powerUploads >= result.frames) {
+    problems.push(
+      `${result.scene}: the power field uploaded ${result.powerUploads} times in ${result.frames} `
+      + `frames — that is per-frame, so the version gate is not holding (ADR-0012 §2)`,
+    );
   }
 
   return { ok: problems.length === 0, problems };

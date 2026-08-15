@@ -306,7 +306,7 @@ UI, settings, onboarding, audio.
 
 **Scope:** LOD and effect budgets, accessibility (colour-blind-safe palettes, keyboard-only play,
 motion reduction), tutorial, performance passes, error handling, a release build, docs, versioning
-and the update check.
+(ADR-0022: **no update check** — N-06 wins, and the version is stamped at build time).
 
 ---
 
@@ -383,7 +383,7 @@ reduced feature level rather than showing an error page.
 | N-03 | **Load**: ≤ 5 s cold to interactive on 10 Mbit; ≤ 3 MB gzipped initial payload |
 | N-04 | **Browsers**: last two versions of Chrome, Edge, Firefox, Safari. WebGL2 required for 3D tiers; the Canvas2D fallback covers the rest |
 | N-05 | **Accessibility**: colour-blind-safe owner/faction palettes, keyboard-navigable UI, a reduced-motion setting, no information conveyed by colour alone |
-| N-06 | **No secrets, no telemetry, no network calls** beyond loading the app itself |
+| N-06 | **No secrets, no telemetry, no network calls** beyond loading the app itself (ADR-0022; enforced by `test/architecture/no-network.test.ts` rather than claimed) |
 | N-07 | **Documentation**: every architectural choice has an ADR; every phase has exit criteria; the task board is current at the end of every session |
 | N-08 | **Save safety**: saves are untrusted input — sanitised and version-checked exactly as upstream does |
 

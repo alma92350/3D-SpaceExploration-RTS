@@ -185,10 +185,15 @@ describe("engine declarations", () => {
     expect(mine!.range).toBe(130);
   });
 
-  it("a real fight writes the combat fields the shot stream reads", () => {
+  it("a real fight writes the combat fields the declarations promise", () => {
     // Declared for P3-T05. `attackTimer` and `autoTarget` are written by `updateCombat`, not by
     // `makeUnit`, so a duel has to actually happen before either exists — which is exactly why this
     // drives one instead of inspecting a fresh unit.
+    //
+    // **The shot stream no longer reads either of them** (ADR-0023: a tracer comes off `attackHit`),
+    // and this stays because the declaration does. A `.d.ts` field the engine never writes is
+    // fiction whatever the bridge happens to consume this phase — and `autoTarget` in particular is
+    // read inside the engine, by `separation.js`'s `isCombatMode`.
     const galaxy = engine.createGalaxy({ seed: FIXED_SEED, startId: "helix" });
     const state = engine.activeState(galaxy);
     const base = state.map.bases.player;

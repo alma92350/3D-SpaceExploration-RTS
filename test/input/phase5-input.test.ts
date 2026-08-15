@@ -253,13 +253,23 @@ describe("the keys these ten did NOT take", () => {
     expect(key("x", NONE, { shift: true }).intent).toEqual({ kind: "stop" });
   });
 
-  it("leaves J and K unbound, and Q with upstream's select-army", () => {
+  it("leaves J unbound, and spends no Phase 5 order on the letters it left free", () => {
     // J is `intents.test.ts`'s example of a key this module does not own — the guard that would
-    // catch a letter quietly acquiring a binding. K is left free on purpose: a bare letter is the
-    // scarce thing on this board, and P5-T13 had Shift slots to spare.
-    for (const k of ["j", "k", "q"]) {
-      expect(key(k), `${k} acquired a binding`)
-        .toEqual({ intent: null, mode: null, camera: null, cancel: false });
+    // catch a letter quietly acquiring a binding.
+    //
+    // **K and Q were here too, and P6-T11 spent them**, which is what this row's own note said the
+    // free letters were being kept FOR: Q was upstream's reserved select-army and K was the last
+    // bare letter. So the claim that survives is the one that was always the point — no Phase 5
+    // ORDER crept onto them. Neither produces an intent or arms a mode; they select and they aim,
+    // and `test/input/phase6-input.test.ts` holds them to exactly that.
+    expect(key("j"), "j acquired a binding")
+      .toEqual({ intent: null, mode: null, camera: null, cancel: false });
+    for (const k of ["k", "q"]) {
+      for (const shift of [false, true]) {
+        const r = key(k, NONE, { shift });
+        expect(r.intent, `${shift ? "Shift+" : ""}${k} took a Phase 5 order`).toBeNull();
+        expect(r.mode, `${shift ? "Shift+" : ""}${k} armed a Phase 5 mode`).toBeNull();
+      }
     }
   });
 

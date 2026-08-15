@@ -6,9 +6,14 @@
 // the source and it is false, and these three rows exist because of it.
 //
 // So the first describe below asserts the PREMISE against the vendored source, not against a
-// comment. That is the same discipline `shots.test.ts` applies to the `attackTimer` invariant, and
-// it is here for a sharper reason: a premise about this exact file, stated in an accepted ADR, was
-// wrong for two phases and nothing caught it. A test that reads the source is what would have.
+// comment, and it is here for a sharper reason than usual: a premise about this exact file, stated
+// in an accepted ADR, was wrong for two phases and nothing caught it. A test that reads the source
+// is what would have.
+//
+// P6-T01 then moved the TRACER onto the same event (ADR-0023, superseding ADR-0017), so
+// `shots.test.ts` now sweeps this file too — for the endpoints and for the one early return that
+// makes "landed" narrower than "fired". The two files split the payload: endpoints there, cue flags
+// here.
 
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
@@ -447,20 +452,21 @@ describe("the impact table keeps the snapshot's contracts", () => {
     }
   });
 
-  it("is the only combat feedback a manually ordered attack produces today", () => {
-    // A finding, pinned on the half of it this row owns.
+  it("was the only combat feedback a manually ordered attack produced, until ADR-0023", () => {
+    // The finding this row surfaced, and the row that closed it.
     //
-    // `extractShots` resolves a tracer's endpoint from `unit.autoTarget`, and `combat.js` writes
-    // that field ONLY in the auto-acquire branch — an explicit `order.type === "attack"` takes its
-    // target straight off the order and never touches it. So a player right-clicking an enemy
-    // (PARITY row 17, marked PRESENT) fires shells that draw no tracer at all and land on
-    // `shots.dropped`, the counter ADR-0017 says must stay zero. Measured on this exact scenario:
+    // `extractShots` used to resolve a tracer's endpoint from `unit.autoTarget`, and `combat.js`
+    // writes that field ONLY in the auto-acquire branch — an explicit `order.type === "attack"`
+    // takes its target straight off the order and never touches it. So a player right-clicking an
+    // enemy (PARITY row 17, marked PRESENT) fired shells that drew no tracer at all and landed on
+    // `shots.dropped`, the counter ADR-0017 said must stay zero. Measured on this exact scenario:
     // **10 shots fired, 0 tracers, 10 dropped.**
     //
-    // That belongs to row 63 and to ADR-0017, not here, so nothing below asserts the broken half —
-    // pinning it would cement it. What is asserted is this row's own claim, which is what makes the
-    // defect visible in the first place: the hit is reported, because it is READ off the engine's
-    // event rather than derived, and the derivation is where the endpoint goes missing.
+    // P6-T01 fixed it by moving the tracer onto this same event (ADR-0023), so what this test now
+    // pins is the argument rather than the defect: the hit was always reported because it is READ
+    // off the engine, and the derivation is where the endpoint went missing. **The tracer half is
+    // asserted in `shots.test.ts`, which owns it**; what is asserted here is that the impact half
+    // never depended on the derivation and still does not.
     const { bridge, base } = world();
     const gun = makeUnit("skiff", "player", base.x + 40, base.y);
     const victim = makeUnit("worker", "ai", base.x + 60, base.y);
@@ -481,7 +487,7 @@ describe("the impact table keeps the snapshot's contracts", () => {
       prev = now;
       impacts += bridge.snapshot.impacts.count;
       expect(bridge.state.units.get(gun.id)?.autoTarget ?? null,
-        "an ordered attack now sets autoTarget — the tracer defect this test describes may be gone")
+        "an ordered attack now sets autoTarget — the defect this test describes has moved")
         .toBeNull();
     }
     expect(fired, "the ordered attack never fired").toBeGreaterThan(1);
@@ -494,7 +500,7 @@ describe("the impact table keeps the snapshot's contracts", () => {
 
   it("reports a turret's hits too — performAttack is shared", () => {
     // `combat.js` calls `performAttack` "Shared by mobile units and turrets", and a static defence
-    // reads `attackTimer` on the same rule. A cue that only ever fired for units would leave a base
+    // fires on the same rule. A cue that only ever fired for units would leave a base
     // defending itself in total silence.
     expect((BUILDINGS.turret as { attack?: number }).attack, "the Sentinel Turret lost its weapon")
       .toBeGreaterThan(0);

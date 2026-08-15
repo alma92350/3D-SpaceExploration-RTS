@@ -184,12 +184,12 @@ describe("dismissal outlives the tab (P5-T10)", () => {
     // The store is one origin-wide namespace and `saveSettings` shares it. A dismissal that landed
     // on the settings key would not merely mis-read — it would replace a player's graphics choice
     // with the word "seen", which `loadSettings` then throws away as unparsable.
-    saveSettings({ tierOverride: "T1", edgeScroll: false, newGame: null });
+    saveSettings({ tierOverride: "T1", edgeScroll: false, newGame: null, motion: "auto" });
     expect(loadOnboardingSeen(), "the settings key was read as a dismissal").toBe(false);
 
     markOnboardingSeen();
     expect(loadSettings(), "dismissing the card destroyed the player's settings")
-      .toEqual({ tierOverride: "T1", edgeScroll: false, newGame: null });
+      .toEqual({ tierOverride: "T1", edgeScroll: false, newGame: null, motion: "auto" });
   });
 
   it("survives a browser that refuses storage entirely", () => {
@@ -210,12 +210,20 @@ describe("dismissal outlives the tab (P5-T10)", () => {
    through the real thing.
    ================================================================================================= */
 
-/** Does `translateKey` do ANYTHING with this key? Every field of `KeyResult`, so nothing is missed. */
+/**
+ * Does `translateKey` do ANYTHING with this key?
+ *
+ * Read off the RESULT rather than from a list of field names, and that is a correction: the hand
+ * written list said "every field of `KeyResult`, so nothing is missed" and could only ever be every
+ * field on the day it was written. P6-T11 added two (`select`, `crosshair`), and a check that
+ * quietly stops covering a new binding is the same failure as the sidebar paragraph it guards.
+ *
+ * `NO_KEY` is `{ intent: null, mode: null, camera: null, cancel: false }` — so a key this module
+ * does not own has nothing but nulls and a false, and anything else means it is bound.
+ */
 function translated(key: string): boolean {
   const r: KeyResult = translateKey({ key, shift: false, ctrl: false });
-  return r.intent !== null || r.mode !== null || r.camera !== null || r.cancel
-    || r.togglePower === true || r.group !== undefined || r.bomb !== undefined
-    || r.action !== undefined || r.board !== undefined || r.screen !== undefined;
+  return Object.values(r).some((v) => v !== null && v !== undefined && v !== false);
 }
 
 const VIEW_W = 1280;
@@ -254,7 +262,7 @@ describe("the card names controls the app actually has (P5-T10)", () => {
 
   beforeEach(() => {
     restore = stubCanvas();
-    game = new Game(elements(), new RecordingRenderer(), "T0", { tierOverride: null, edgeScroll: false, newGame: null },
+    game = new Game(elements(), new RecordingRenderer(), "T0", { tierOverride: null, edgeScroll: false, newGame: null, motion: "auto" },
       { seed: SEED, worldId: SEAT });
   });
 
@@ -375,7 +383,7 @@ function keysOf(token: string): string[] {
    SETTINGS — the row's own claim: they persist through loadSettings/saveSettings
    ================================================================================================= */
 
-const T2: Settings = { tierOverride: "T2", edgeScroll: true, newGame: null };
+const T2: Settings = { tierOverride: "T2", edgeScroll: true, newGame: null, motion: "auto" };
 
 describe("the settings model (P5-T10)", () => {
   afterEach(() => {
@@ -407,7 +415,7 @@ describe("the settings model (P5-T10)", () => {
     expect(model.rows.find((r) => r.id === "edgeScroll")!.options.find((o) => o.active)!.id).toBe("on");
 
     // Auto is active only when nothing is forced — the state the fresh install is in.
-    const auto = settingsModel({ settings: { tierOverride: null, edgeScroll: true, newGame: null }, currentTier: "T1" });
+    const auto = settingsModel({ settings: { tierOverride: null, edgeScroll: true, newGame: null, motion: "auto" }, currentTier: "T1" });
     expect(auto.rows[0]!.options.filter((o) => o.active).map((o) => o.id)).toEqual(["auto"]);
   });
 
@@ -416,7 +424,7 @@ describe("the settings model (P5-T10)", () => {
     // was missed, and `setTier(tier, manual = false)` dropped to T0 WITHOUT writing that to
     // settings. A row that highlighted T0 would tell them they chose it; one that never mentioned
     // T0 would deny the drop. So the highlight is the choice and the row says what is running.
-    const dropped = settingsModel({ settings: { tierOverride: "T2", edgeScroll: true, newGame: null }, currentTier: "T0" });
+    const dropped = settingsModel({ settings: { tierOverride: "T2", edgeScroll: true, newGame: null, motion: "auto" }, currentTier: "T0" });
     const tier = dropped.rows.find((r) => r.id === "tier")!;
 
     expect(tier.options.filter((o) => o.active).map((o) => o.id),
@@ -429,10 +437,10 @@ describe("the settings model (P5-T10)", () => {
   it("carries a whole Settings, never a patch", () => {
     // The property that makes the shell's job `saveSettings(option.settings)` with no merging: a
     // patch would need a merge, and a merge is where a setting quietly reverts.
-    const model = settingsModel({ settings: { tierOverride: "T3", edgeScroll: false, newGame: null }, currentTier: "T3" });
+    const model = settingsModel({ settings: { tierOverride: "T3", edgeScroll: false, newGame: null, motion: "auto" }, currentTier: "T3" });
     const off = model.rows.find((r) => r.id === "edgeScroll")!.options.find((o) => o.id === "on")!;
     expect(off.settings, "changing edge scrolling dropped the tier override")
-      .toEqual({ tierOverride: "T3", edgeScroll: true, newGame: null });
+      .toEqual({ tierOverride: "T3", edgeScroll: true, newGame: null, motion: "auto" });
   });
 
   it("persists a choice through loadSettings/saveSettings", () => {
@@ -457,12 +465,12 @@ describe("the settings model (P5-T10)", () => {
     // `saveSettings` swallows the failure by design ("the setting still applies for this session"),
     // and the model must not care: it is a pure function of the settings handed to it.
     throwingStorage();
-    const chosen = settingsModel({ settings: { tierOverride: null, edgeScroll: true, newGame: null }, currentTier: "T0" })
+    const chosen = settingsModel({ settings: { tierOverride: null, edgeScroll: true, newGame: null, motion: "auto" }, currentTier: "T0" })
       .rows.find((r) => r.id === "edgeScroll")!.options.find((o) => o.id === "off")!;
     expect(() => saveSettings(chosen.settings), "a blocked store threw out of the settings write")
       .not.toThrow();
     expect(loadSettings(), "a blocked store did not fall back to the defaults")
-      .toEqual({ tierOverride: null, edgeScroll: true, newGame: null });
+      .toEqual({ tierOverride: null, edgeScroll: true, newGame: null, motion: "auto" });
     expect(settingsModel({ settings: chosen.settings, currentTier: "T0" })
       .rows.find((r) => r.id === "edgeScroll")!.options.find((o) => o.active)!.id,
     "the session's own choice was lost as well as the stored one").toBe("off");

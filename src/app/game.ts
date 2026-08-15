@@ -10,7 +10,7 @@ import { checkPlacement } from "../bridge/commands.js";
 import { GalaxySnapshotExtractor, type GalaxySnapshot } from "../bridge/galaxy-snapshot.js";
 import { FLAG_BUILDING_KIND, engineId, type Snapshot } from "../bridge/snapshot.js";
 import { FixedStepLoop, STEP_SECONDS } from "./loop.js";
-import { type Settings, saveSettings } from "./settings.js";
+import { type Settings, applyMotion, saveSettings } from "./settings.js";
 import { CameraRig, clamp } from "../input/camera.js";
 import { pickGround, projectToScreen } from "../input/picking.js";
 import { type PendingMode, type PointerGesture, translateKey, translatePointer } from "../input/intents.js";
@@ -31,6 +31,7 @@ import {
   type EconomyBoard, type EconomyModel, type GalaxyBoard, type HudAction, type HudCommand,
   type HudModel, EconomyCache, GalaxyCache, HudView, hudModel,
 } from "../ui/hud.js";
+import { HudFocus } from "../ui/hud-focus.js";
 import { NewsFeed, newsModel } from "../ui/news.js";
 import { loadOnboardingSeen, markOnboardingSeen } from "../ui/onboarding.js";
 import { type SaveCatalog, deleteSave, newSaveId, readCatalog, writeSave } from "../ui/save-panel.js";
@@ -117,6 +118,23 @@ export class Game {
   private readonly groups = new ControlGroups();
   /** The alert board (P3-T14). Client state, like the control groups beside it. */
   private readonly alerts = new AlertFeed();
+  /**
+   * Where the selection cycle is standing (P6-T11) — the ids the last Q press ASKED for, and the
+   * simulation tick it asked on.
+   *
+   * Client state for the control groups' reason, and it exists for one specific case: a `select` is
+   * an intent, so it lands on the next TICK, and two Q presses inside one 50 ms tick would both read
+   * the same stale `state.selection` and pick the same type twice. Key repeat does exactly that.
+   *
+   * **The stamp is the tick and not the selection**, and the difference is a bug found by writing
+   * the test: comparing against the selection this press started from cannot tell "my `select` has
+   * not landed yet" from "something put the selection back to where it was", so a control-group
+   * recall onto the group the player had just cycled off would leave the cycle a step behind
+   * forever. Within one tick nothing else can have moved the selection; after it, the simulation is
+   * the position of record, and it holds this cycle's own answer anyway.
+   */
+  private cycleAsked: readonly string[] = [];
+  private cycleTick = -1;
   private readonly keys = new Set<string>();
   private pointerX = 0;
   private pointerY = 0;
@@ -158,6 +176,14 @@ export class Game {
    * that appeared between the frame they read and the key they pressed.
    */
   private actions: readonly HudAction[] = [];
+  /**
+   * The HUD's keyboard ring (P6-T03, N-05).
+   *
+   * Constructed with the HUD root and asked before every other key handler. It claims Tab, and
+   * Enter/Space only while it holds focus — see `ui/hud-focus.ts` for why Space in particular
+   * cannot be left to the browser here.
+   */
+  private readonly hudFocus: HudFocus;
   /**
    * The economy model, rebuilt on a tick rather than on a frame.
    *
@@ -220,6 +246,9 @@ export class Game {
     this.terrain = this.terrainFor(this.field);
     this.tierMonitor = new TierMonitor(tier);
     if (settings.tierOverride) this.tierMonitor.setManual(settings.tierOverride);
+    // The motion preference, applied before the first frame (P6-T04): it reaches the effect pool
+    // and the stylesheet at once, and `auto` is where it asks the machine.
+    applyMotion(settings);
 
     this.renderer.registerMeshes(buildMeshes());
     this.renderer.setTier(tier);
@@ -227,6 +256,7 @@ export class Game {
     this.hud = new HudView(elements.hudRoot, {
       onCommand: (command) => this.runCommand(command),
     });
+    this.hudFocus = new HudFocus(elements.hudRoot);
     this.minimap = new MinimapView(elements.minimapCanvas, {
       pixelWidth: elements.minimapCanvas.width || 200,
       pixelHeight: elements.minimapCanvas.height || 125,
@@ -283,6 +313,10 @@ export class Game {
     this.alerts.clear();
     this.ghost = null;
     this.mode = { kind: "none" };
+    // The cycle's cursor is engine ids from the world just left, exactly like an alert's position —
+    // and the new seat keeps its own tick count, so the stamp means nothing here either.
+    this.cycleAsked = [];
+    this.cycleTick = -1;
     // An approach view onto the world just arrived on is a picker for a jump that has happened.
     // Unreachable through the confirm button (it closes the screen itself) and cheap to be sure of.
     if (this.screen.kind === "approach" && this.screen.destId === this.seatId) {
@@ -293,6 +327,12 @@ export class Game {
   start(): void {
     if (this.running) return;
     this.running = true;
+    // The clock's baseline is stale after any pause — a lost WebGL context, a renderer swap, a tab
+    // switch — and advancing on it charges the whole gap to `droppedSteps`, the number a reader
+    // consults to decide whether a machine is behind. It also clears a halted loop, which is what
+    // makes `setRenderer` + `start()` a real recovery rather than a reload (P6-T05). Nothing called
+    // `stop()`/`start()` mid-session before the context guard did, so this never bit until now.
+    this.loop.resume();
     const frame = (now: number): void => {
       if (!this.running) return;
       this.loop.advance(now);
@@ -409,6 +449,30 @@ export class Game {
     }
 
     const hud = hudModel(snap, this.bridge.state);
+    // A colony's news, which does NOT fit the alert board — see `takeColonyNotes`, and `news.ts`'s
+    // header for why it is beside `view/alerts.ts` rather than in it.
+    //
+    // **This used to go straight into `hud.notice`, and that was the defect.** The notice is ONE
+    // shared line, cleared only by the next notice and shared with the command error below it — so
+    // a colony falling was erased by the next refused order, several notes on one frame showed only
+    // the last, and the line then sat there forever because `notice` is only called when there is
+    // something to say. The feed gives it memory; the toast keeps the transient half.
+    //
+    // Once per frame is correct: `ingest` is idempotent with respect to the galaxy (it reads the
+    // engine's queues through a cursor and writes none of them), and the colony notes are already
+    // destroyed by the drain, which is why the shell does the draining and the model never does.
+    //
+    // **It has to come BEFORE the model is built, and that is not a nicety.** Reading first would
+    // put every toast one frame behind the event, which is invisible in a 60 Hz eyeball test and
+    // exactly the kind of thing that is never noticed again once it ships.
+    this.news.ingest({
+      galaxy: this.bridge.galaxy,
+      colonyNotes: this.bridge.takeColonyNotes(),
+      now: this.bridge.galaxy.time || 0,
+    });
+    // Built on EVERY screen, not only the galaxy one: the toast is how news from the worlds you are
+    // not standing on reaches a player standing on a battlefield, which is where they mostly are.
+    const news = newsModel(this.news, this.bridge.galaxy.time || 0);
     const drawer = screen.kind === "world"
       ? this.refreshEconomy(hud, snap)
       : this.galaxyCache.get({
@@ -422,7 +486,7 @@ export class Game {
         now: this.wallClock(),
         settings: this.settings,
         currentTier: this.tier,
-        news: newsModel(this.news, this.bridge.galaxy.time || 0),
+        news,
         newsVersion: this.news.version,
       });
     // The world's own action row is emptied on a galaxy screen. The positional keys must address
@@ -433,27 +497,22 @@ export class Game {
     // The positional row is the concatenation, in the order the two rows are drawn. Z is the first
     // button the player can see and N is the fifth, whichever panel it came from.
     this.actions = screen.kind === "world" ? [...hud.actions, ...drawer.actions] : drawer.actions;
+    // The same row, handed to the keyboard ring (P6-T03). Costs two property reads unless a
+    // rebuild has just destroyed the control the player was standing on.
+    this.hudFocus.sync(this.actions);
+    // The notice line, and who wins it. A refused order beats a toast every time: it is a direct
+    // answer to something the player just pressed, and the toast is a query — `NewsModel.toast` is
+    // the newest unread entry whose window is still open, so asking twice gives the same answer and
+    // skipping a frame loses nothing. A toast that overwrote a refusal would be the news board's own
+    // defect in reverse.
+    //
+    // **The toast was computed and rendered nowhere until P6-T03 found it** — a field-level orphan
+    // that the module-level import scan cannot see, because `news.ts` was reached and this one
+    // property of its model was not. The toast is the half of the news that reaches a player who
+    // never opens the board, which is most players.
     const error = this.bridge.takeCommandError();
     if (error) this.hud.notice(error);
-    // A colony's news, which does NOT fit the alert board — see `takeColonyNotes`, and `news.ts`'s
-    // header for why it is beside `view/alerts.ts` rather than in it.
-    //
-    // **This used to go straight into `hud.notice`, and that was the defect.** The notice is ONE
-    // shared line, cleared only by the next notice and shared with the command error above it — so
-    // a colony falling was erased by the next refused order, several notes on one frame showed only
-    // the last, and the line then sat there forever because `notice` is only called when there is
-    // something to say. The news was reaching the player and could not survive contact with the
-    // next thing that happened. The feed gives it memory; the toast keeps the transient half.
-    //
-    // Once per frame is correct: `ingest` is idempotent with respect to the galaxy (it reads the
-    // engine's queues through a cursor and writes none of them), and the colony notes are already
-    // destroyed by the drain, which is why the shell does the draining and the model never does.
-    this.news.ingest({
-      galaxy: this.bridge.galaxy,
-      colonyNotes: this.bridge.takeColonyNotes(),
-      now: this.bridge.galaxy.time || 0,
-    });
-
+    else if (news.toast !== null) this.hud.notice(news.toast.text);
     const correction = this.tierMonitor.sample(frameMs);
     if (correction.dropped) {
       this.setTier(correction.tier, false);
@@ -613,6 +672,10 @@ export class Game {
   }
 
   private onKeyDown(e: KeyboardEvent): void {
+    // The HUD's keyboard ring first (P6-T03). It claims Tab, and Enter/Space only while it holds
+    // focus — so Space is still "focus last alert" for a player who never pressed Tab, and a
+    // focused button can never be fired by the same press that jumps the camera.
+    if (this.hudFocus.handleKey(e)) return;
     this.keys.add(e.key.toLowerCase());
     const result = translateKey({ key: e.key, shift: e.shiftKey, ctrl: e.ctrlKey }, this.mode);
     // The galaxy screen (P4-T13). A toggle, like the economy boards: the same key closes what it
@@ -633,6 +696,13 @@ export class Game {
     if (result.intent) this.bridge.enqueue(result.intent);
     if (result.group) this.applyGroup(result.group.n, result.group.op);
     if (result.bomb) this.applyBomb(result.bomb);
+    // P6-T11's two keys. Both belong to the battlefield for the same reason the camera commands
+    // below it do: the cycle MOVES the camera and the crosshair IS the camera, and neither means
+    // anything on a screen that camera is not being drawn through.
+    if (this.screen.kind === "world") {
+      if (result.select) this.applySelect(result.select.scope);
+      if (result.crosshair) this.pressCrosshair(result.crosshair);
+    }
     // A positional key fires the Nth button the HUD is showing, or nothing at all when the row is
     // shorter than that — never the last button, which is how a player learns to distrust the row.
     if (result.action) {
@@ -721,7 +791,14 @@ export class Game {
   private updateGhost(): void {
     if (this.mode.kind !== "build") { this.ghost = null; return; }
     const camera = this.camera.update(...this.viewportSize());
-    const hit = pickGround(camera, this.field, this.pointerX, this.pointerY);
+    // **No pointer in the window means no pointer to follow** (P6-T11). `pointerX/pointerY` are 0,0
+    // until the first `pointermove`, so a keyboard-only player armed a build and was shown a ghost
+    // pinned to the top-left corner of the viewport — the wrong validity, the wrong Plasma Rig
+    // survey (`refreshEconomy` reads this position), and, once `K` could place, the wrong spot. The
+    // camera centre is where their crosshair is, so it is where the preview belongs.
+    const hit = this.pointerInside
+      ? pickGround(camera, this.field, this.pointerX, this.pointerY)
+      : this.cameraPoint();
     const state = this.bridge.state;
     const check = checkPlacement(state, this.mode.buildingType, hit.x, hit.y);
     const def = BUILDINGS[this.mode.buildingType];
@@ -776,6 +853,136 @@ export class Game {
         ? { kind: "detonate", unitId: id }
         : { kind: "armBomb", unitId: id, armed: !u.armed });
     }
+  }
+
+  /* ---------------------------------------------------------------------------------------------
+     Keyboard-only play (P6-T11)
+
+     Two presses, resolved here for `applyGroup`'s reason: `input/intents.ts` is pure and can see
+     neither the roster nor the camera, so it says WHICH WAY to step and WHICH BUTTON to press, and
+     the snapshot answers the rest. Nothing below writes simulation state — a cycle becomes an
+     ordinary `select` intent and a crosshair press becomes an ordinary gesture, both through the
+     same queue a mouse uses.
+     --------------------------------------------------------------------------------------------- */
+
+  /**
+   * A selection-cycle press — Q takes the next TYPE, Shift+Q the next MEMBER of the type held now.
+   *
+   * Read from the SNAPSHOT rather than from engine state, and that is the same small map hack
+   * `applyGroup`'s recall guards against: the snapshot is fog-filtered, so a cycle can only ever
+   * reach something the player can actually see.
+   *
+   * The roster is taken in the snapshot's own order — buildings before units, then the engine's own
+   * insertion order — rather than re-sorted here. That order is already stable and already the
+   * engine's (ADR-0012 §5), so the cycle visits the same types in the same sequence every lap, and
+   * a second Barracks appearing does not renumber the one the player was standing on.
+   */
+  private applySelect(scope: "type" | "member"): void {
+    const e = this.bridge.snapshot.entities;
+    const roster: number[] = [];
+    for (let i = 0; i < e.count; i++) if (e.owner[i] === 0) roster.push(i);
+    if (roster.length === 0) return;                   // nothing left alive: say nothing, do nothing
+
+    const from = new Set(this.cycleFrom());
+    const at = roster.find((i) => from.has(engineId(e.ids[i]!)));
+    // -1 when the selection is empty, the enemy's, or dead. `indexOf(-1)` is -1 and the wrap below
+    // turns that into 0, so "nothing selected" starts the lap at the first type — no second branch.
+    const held = at === undefined ? -1 : e.typeIndex[at]!;
+
+    // Kept as roster INDICES rather than ids until the last moment, so the camera below reads the
+    // position of a thing that was actually chosen instead of looking one back up by name.
+    let picked: number[];
+    if (scope === "type") {
+      const types: number[] = [];
+      for (const i of roster) if (!types.includes(e.typeIndex[i]!)) types.push(e.typeIndex[i]!);
+      const next = types[(types.indexOf(held) + 1) % types.length]!;
+      picked = roster.filter((i) => e.typeIndex[i] === next);
+    } else {
+      // Narrow, then step. The type is whatever is selected now — or the first one the player owns,
+      // so Shift+Q from nothing still lands on something rather than being a dead key.
+      const type = held < 0 ? e.typeIndex[roster[0]!]! : held;
+      const members = roster.filter((i) => e.typeIndex[i] === type);
+      // Stepping only makes sense from ONE member. From the whole group (what Q just gave them, and
+      // the common case) this narrows to the first rather than skipping it.
+      const step = from.size === 1 ? members.findIndex((i) => from.has(engineId(e.ids[i]!))) : -1;
+      picked = [members[(step + 1) % members.length]!];
+    }
+
+    const ids = picked.map((i) => engineId(e.ids[i]!));
+    this.bridge.enqueue({ kind: "select", ids, additive: false });
+    // **And the camera goes with it**, which is the other half of this row: the minimap's
+    // click-to-jump had no keyboard equivalent beyond Home and Space, and a player who cannot travel
+    // to their own units cannot order them. The FIRST of the new selection rather than its centroid
+    // — a centroid of two ships at opposite corners is empty ground, and this way the camera always
+    // lands on something real.
+    this.camera.focusOn(e.x[picked[0]!]!, e.y[picked[0]!]!);
+    this.cycleAsked = ids;
+    this.cycleTick = this.bridge.state.tick;
+  }
+
+  /** Where the cycle steps from — see `cycleAsked` for why this is not simply the selection. */
+  private cycleFrom(): readonly string[] {
+    const state = this.bridge.state;
+    return this.cycleTick === state.tick && this.cycleAsked.length > 0
+      ? this.cycleAsked
+      : state.selection;
+  }
+
+  /**
+   * A crosshair press — the keyboard's "here".
+   *
+   * One synthesised `PointerGesture` back through `translatePointer`, deliberately: the twelve
+   * pending modes, the context order's move/attack/gather branch and the shift modifier are all
+   * already written there and tested there, and a second copy for the keyboard is a second copy to
+   * drift. `emit` is the same call the mouse handlers make.
+   */
+  private pressCrosshair(press: { button: "left" | "right"; shift: boolean }): void {
+    const { x, y } = this.crosshair();
+    this.emit({
+      // `type` DESCRIBES the gesture here rather than deciding anything, and mutation testing says
+      // so out loud: mislabelling it changes no behaviour that any test can see, because
+      // `translatePointer` reads `type` only inside the left-button branch and a left crosshair
+      // press only ever happens with a mode armed — which consumes the click before the type
+      // switch. Written truthfully anyway; recorded here so the next reader does not take the line
+      // for a decision, or go looking for the test that pins it.
+      type: press.button === "right" ? "contextClick" : "click",
+      button: press.button, worldX: x, worldY: y,
+      entityId: this.entityAt(x, y), nodeId: this.nodeAt(x, y),
+      shift: press.shift, ctrl: false,
+    });
+  }
+
+  /**
+   * Where a crosshair press acts: **the build ghost when one is up, and the camera centre when it
+   * is not.**
+   *
+   * The ghost case is not a special rule so much as the absence of a lie. The ghost is the
+   * interface's own statement of where a building lands (P1-T18 draws its validity in shape and
+   * colour), and while the pointer is inside the viewport the ghost follows the pointer — so a key
+   * that placed the building anywhere else would contradict the picture the player is looking at.
+   * With no pointer in the window the ghost is already at the camera centre (`updateGhost`), and
+   * the two answers are the same one.
+   */
+  private crosshair(): { x: number; y: number } {
+    const ghost = this.ghost;
+    if (!ghost) return this.cameraPoint();
+    CROSSHAIR_POINT.x = ghost.x;
+    CROSSHAIR_POINT.y = ghost.y;
+    return CROSSHAIR_POINT;
+  }
+
+  /**
+   * The camera's centre, clamped to the map exactly as a picked click is (`onPointerUp`).
+   *
+   * Returns the shared scratch rather than a fresh point, and that is `pickGround`'s own rule
+   * ("allocation in a mousemove handler at 60 Hz is exactly the GC pressure ADR-0006 forbids") —
+   * this one is called from `updateGhost`, which runs on every frame a build is armed.
+   */
+  private cameraPoint(): { x: number; y: number } {
+    const map = this.bridge.state.map;
+    CROSSHAIR_POINT.x = clamp(this.camera.targetX, 0, map.width);
+    CROSSHAIR_POINT.y = clamp(this.camera.targetY, 0, map.height);
+    return CROSSHAIR_POINT;
   }
 
   /* ---------------------------------------------------------------------------------------------
@@ -913,7 +1120,13 @@ export class Game {
       // The panel already disabled the button for a payload this build cannot open; this is the
       // second half of the same rule, so a load that fails says so instead of doing nothing.
       const ok = save ? this.bridge.load(save.payload) : false;
-      if (!ok) { this.hud.notice("That save could not be loaded."); return; }
+      if (!ok) {
+        // The reason, not just the refusal. Upstream writes eight distinguishable ones and the
+        // bridge used to throw all of them away (P6-T05).
+        const why = this.bridge.takeLoadError();
+        this.hud.notice(why ? `That save could not be loaded: ${why}` : "That save could not be loaded.");
+        return;
+      }
       this.adoptSeat();
       this.setScreen({ kind: "world" });
       return;
@@ -929,6 +1142,7 @@ export class Game {
       // keeps the decision in the panel that made it.
       Object.assign(this.settings, command.settings);
       saveSettings(this.settings);
+      applyMotion(this.settings);
       if (command.settings.tierOverride) this.setTier(command.settings.tierOverride, true);
       else this.tierMonitor.clearManual();
       return;
@@ -1028,6 +1242,9 @@ const FOG_EXPLORED_NOT_VISIBLE = 1;
 
 /** Scratch for `worldAtPixel`. Reused: a starmap click must not allocate any more than a world one. */
 const SCREEN_POINT = { x: 0, y: 0, behind: false };
+
+/** Scratch for the keyboard's crosshair (P6-T11), for the same reason and one more: `updateGhost`. */
+const CROSSHAIR_POINT = { x: 0, y: 0 };
 
 /** The empty action row a galaxy screen renders the world's HUD with. Shared, so it costs nothing. */
 const NO_ACTIONS: readonly HudAction[] = [];

@@ -318,7 +318,7 @@ export function hudModel(snap: Snapshot, state?: State): HudModel {
     ? null
     : canDeploy
       ? "Press Deploy base to found your Command Center."
-      : "Click your colony ship to select it.";
+      : "Click your colony ship — or press Q — to select it.";
 
   const builds: BuildOption[] = [];
   const builders = selection

@@ -10,13 +10,19 @@
 
 import { WorldBridge, MVP_WORLD } from "../src/bridge/world.js";
 import { STEP_SECONDS } from "../src/app/loop.js";
-import { BUILDINGS, ODYSSEY_WORLDS, UNITS, addPlanet, makeBuilding, makeUnit } from "../src/engine/index.js";
+import {
+  BUILD_REACH, BUILDINGS, ODYSSEY_WORLDS, UNITS, addPlanet, makeBuilding, makeUnit,
+} from "../src/engine/index.js";
+import { checkPlacement } from "../src/bridge/commands.js";
 import { CameraRig } from "../src/input/camera.js";
-import { SceneComposer } from "../src/view/scene.js";
+import { pickGround } from "../src/input/picking.js";
+import { SceneComposer, type GhostState } from "../src/view/scene.js";
 import { elevationFieldFrom, type ElevationField } from "../src/view/terrain/elevation.js";
 import { buildTerrainMesh } from "../src/view/terrain/mesh.js";
-import { buildMeshes } from "../src/view/meshes/generators.js";
-import { type FrameStats, type Renderer, type TerrainMesh, type Tier } from "../src/view/renderer/port.js";
+import { buildMeshes, meshIdForType } from "../src/view/meshes/generators.js";
+import {
+  type CameraState, type FrameStats, type Renderer, type TerrainMesh, type Tier,
+} from "../src/view/renderer/port.js";
 import { TIERS, percentile } from "../src/view/renderer/tiers.js";
 
 export const PERF_SEED = 20260814;
@@ -114,19 +120,69 @@ export interface SceneSpec {
    * already has to watch for (see `BACKGROUND_SURVIVAL_FLOOR`).
    */
   readonly settledRoster?: boolean;
+  /**
+   * Hold a build ghost up for the whole run, as the game does while the player is placing (P6-T07).
+   *
+   * The fifth hole of the same shape, and the largest of them: `PerfScene.render` passed `null` for
+   * the ghost, so `pushGhost` — the `ghost` overlay AND the translucent building batch under it —
+   * had never executed in any gated run at all. It is not an edge case either: build mode is where
+   * a player spends the early minutes of every match, and `Game.updateGhost` runs `pickGround` and
+   * `checkPlacement` on EVERY frame it is up, neither of which any gate has priced.
+   *
+   * Both of those are called here per frame, from the viewport centre, exactly as `updateGhost`
+   * calls them from the pointer — a ghost whose validity was decided once in the constructor would
+   * measure the drawing and skip the deciding.
+   *
+   * **It costs TWO draw calls on P2's peak frame, and the second one is the interesting one.** The
+   * overlay layer is +1 unconditionally. The batch is +1 only sometimes: `pushGhost` batches at
+   * `(meshId, OWNER_PLAYER, LOD_MESH)`, and the ghost sits at the viewport centre where it is always
+   * at mesh LOD, while the player's own buildings of that family may every one of them be past
+   * `tier.lodDistance` and drawing as imposters. So the ghost opens `factory|0|0` on exactly the
+   * frames the camera is far enough out — which is what the peak frame is. Stated rather than
+   * engineered away: `armedBombs` could isolate its delta because P3 carries the bomb mesh at every
+   * zoom, and there is no zoom-independent way to do the same for a building.
+   *
+   * It also brings up the POWER field, because that is what the game does: `Game` calls
+   * `setPower(snap.power)` while a ghost is up (ADR-0012 §2 — the grid is a placement cue). That
+   * path was likewise never exercised, and it is version-gated, which is precisely the kind of
+   * contract that regresses into a per-frame upload without anything going red.
+   */
+  readonly ghostBuilding?: string;
+  /**
+   * Units given enough kills to wear a veterancy chevron (P6-T07).
+   *
+   * `chevron` is Phase 1's, it is drawn per ranked unit inside the LOD distance, and across all
+   * five gated scenes it fired on **ten frames of three thousand** — all ten on T2, all of them
+   * because a unit happened to reach three kills mid-run. That is not coverage, it is an accident
+   * that a balance change would take away silently.
+   *
+   * Ranks are set through `kills`, which is upstream's own input to `rankOf` (3/8/18), rather than
+   * by writing a rank the engine did not compute. Spread over all three ranks, because the overlay
+   * draws one chevron per rank and rank 3 is three times the work of rank 1.
+   *
+   * **On P3, which is its home, and on T2, which is where the accident was.** P3 is the combat scene
+   * and veterancy is a combat cue. T2 is here for a different reason: those ten frames were T2's, and
+   * once the camera path started sweeping all eight yaw snaps one of them landed on T2's peak batch
+   * frame. A baseline whose top figure depends on whether some Lancer reached three kills this
+   * balance patch is not a measurement, and it fails OPEN — the accident going away would lower the
+   * real maximum to 24 while the recorded 25 kept absorbing a genuine regression in silence. T0 and
+   * P4 are deliberately left alone: they have never drawn a chevron at all, so there is nothing there
+   * to stop happening, and P4's whole design is to be T0's spec with exactly one field added.
+   */
+  readonly veterans?: number;
 }
 
 /** The gated scenes. PRD §6.2's own numbers; changing one is a PRD change, not a tuning knob. */
 export const SCENES: Readonly<Record<string, SceneSpec>> = {
   T0: { tier: "T0", units: 200, buildings: 80, width: 1280, height: 720 },
-  T2: { tier: "T2", units: 400, buildings: 200, width: 1600, height: 900 },
+  T2: { tier: "T2", units: 400, buildings: 200, width: 1600, height: 900, veterans: 12 },
   // PRD §5's Phase 2 exit criterion — "perf budgets hold with 300 buildings on screen" — at the T0
   // tier, because CPU-only is the whole target (ADR-0011). Every one of the 29 building types is
   // present: the point is to measure what the six silhouette families actually cost, not to
   // measure 300 copies of one mesh.
   P2: {
     tier: "T0", units: 200, buildings: 300, width: 1280, height: 720, buildingTypes: "all",
-    selectedProducers: 8,
+    selectedProducers: 8, ghostBuilding: "smelter",
   },
   // PRD §5's Phase 3 exit criterion, and the gate ADR-0016 named as its own supersede trigger
   // (P3-T16). Every unit type the engine defines, so all fifteen unit meshes are on the field at
@@ -137,7 +193,7 @@ export const SCENES: Readonly<Record<string, SceneSpec>> = {
   // the whole map, where nothing is in weapons range of anything and no tracer is ever drawn.
   P3: {
     tier: "T0", units: 200, buildings: 80, width: 1280, height: 720,
-    unitTypes: "all", packed: true, armedBombs: 3,
+    unitTypes: "all", packed: true, armedBombs: 3, veterans: 24,
   },
   // PRD §5's Phase 4 exit criterion (P4-T10): "a galaxy with the full roster settled holds the T0
   // budget while the active world renders". Deliberately T0's spec with ONE field added, so the two
@@ -153,6 +209,15 @@ export const SCENES: Readonly<Record<string, SceneSpec>> = {
 
 const UNIT_MIX = ["skiff", "bastion", "lancer", "worker"] as const;
 const BUILDING_MIX = ["barracks", "habitat", "turret", "refinery"] as const;
+
+/**
+ * Kill counts that land on ranks 1, 2 and 3 of upstream's 3/8/18 ladder — see `SceneSpec.veterans`.
+ *
+ * One entry per rank rather than one number, because the overlay draws one chevron PER rank: a
+ * field of rank-1 units would measure a third of what a field of rank-3 units costs, and the
+ * cheapest of the three is exactly the one a scene would pick by accident.
+ */
+const KILL_COUNTS = [3, 8, 18] as const;
 
 // ---------------------------------------------------------------------------------------------
 // P4-T10 — what the settled background costs, per world.
@@ -462,6 +527,25 @@ function round2(v: number): number {
 
 const NOW = (): number => performance.now();
 
+/**
+ * How long the camera path holds one of the rig's eight yaw snaps, in seconds.
+ *
+ * It used to be 6, and 6 is longer than the gate: `run.mjs` fixes the run at 10 s, so a gated
+ * measurement reached yaw indices 0 and 1 and **never the other six**. That is not a cosmetic gap.
+ * The rig snaps yaw to 8 compass directions (ADR-0010) and the imposter quad's screen area is a
+ * function of which one is active — at indices 2 and 6 the quad is edge-on and projects to 0.00 px,
+ * and P6-T07 found it back-facing at five of the eight. The gate could not have seen any of that,
+ * because the gate only ever looked from two of them.
+ *
+ * 1.25 s × 8 = 10 s, so one gate run is exactly one full revolution, and the 60 warm-up frames plus
+ * 600 measured ones span all eight snaps. Not shorter: a yaw change re-buckets which entities are
+ * culled, so a path that spun faster than the sim ticks would measure the spin.
+ */
+const YAW_HOLD_SECONDS = 1.25;
+
+/** `GhostState` with the readonly stripped — the scene mutates one instance instead of allocating. */
+type MutableGhost = { -readonly [K in keyof GhostState]: GhostState[K] };
+
 export class PerfScene {
   readonly composer: SceneComposer;
   readonly rig: CameraRig;
@@ -473,6 +557,8 @@ export class PerfScene {
   private readonly bombIds: string[] = [];
   /** P4-T10's instrument, or null for a scene that settles nothing. */
   private readonly background: BackgroundProbe | null;
+  /** The held build ghost, reused every frame. Unused when `spec.ghostBuilding` is absent. */
+  private readonly ghostState: MutableGhost;
 
   constructor(readonly spec: SceneSpec) {
     this.bridge = new WorldBridge({ seed: PERF_SEED, worldId: MVP_WORLD });
@@ -504,6 +590,26 @@ export class PerfScene {
     });
     this.composer = new SceneComposer(this.field);
     this.rig = new CameraRig({ mapWidth: state.map.width, mapHeight: state.map.height }, this.field);
+
+    // The held ghost, built once with the fields that never change and mutated per frame.
+    // `reach` and `radius` follow `Game.updateGhost` exactly; getting them from the engine's own
+    // definition rather than typing numbers is what keeps the reach ring the size the game draws.
+    const def = BUILDINGS[spec.ghostBuilding ?? ""];
+    this.ghostState = {
+      active: true, x: 0, y: 0, radius: def?.radius ?? 16, valid: true,
+      meshId: meshIdForType(spec.ghostBuilding ?? ""), reach: BUILD_REACH + (def?.radius ?? 16),
+    };
+    // A name the engine does not know fails SILENTLY in two directions at once: `checkPlacement`
+    // answers about a building that does not exist, and `meshIdForType` falls back to the worker
+    // block — so the layer this flag exists to price would be priced against the wrong mesh while
+    // every count still looked healthy. (A type the engine knows but `BUILDING_FAMILY` has missed
+    // takes the same fallback, and `test/view/building-meshes.test.ts` is what catches that.)
+    if (spec.ghostBuilding && !def) {
+      throw new Error(
+        `perf scene: ghostBuilding "${spec.ghostBuilding}" is not a building type the engine defines, `
+        + `so \`checkPlacement\` would answer about nothing and the ghost would draw a fallback mesh.`,
+      );
+    }
   }
 
   /**
@@ -565,13 +671,36 @@ export class PerfScene {
       map.height * (0.5 + 0.3 * Math.cos(t * 0.21)),
     );
     this.rig.distance = 220 + 380 * (0.5 + 0.5 * Math.sin(t * 0.17));
-    this.rig.yawIndex = Math.floor(t / 6) % 8;
+    this.rig.yawIndex = Math.floor(t / YAW_HOLD_SECONDS) % 8;
 
     const camera = this.rig.update(this.spec.width, this.spec.height);
     renderer.setFog(this.bridge.snapshot.fog);
+    // The power grid comes up with the ghost and goes down with it, exactly as `Game` does it
+    // (ADR-0012 §2: the grid is a placement cue first). Version-gated in every implementation, so a
+    // run that leaves it up for 600 frames should still show a handful of uploads, not 600.
+    const ghost = this.ghost(camera);
+    renderer.setPower(ghost ? this.bridge.snapshot.power : null);
     return this.composer.compose(
-      renderer, this.bridge.snapshot, camera, TIERS[this.spec.tier], this.terrain, alpha, null,
+      renderer, this.bridge.snapshot, camera, TIERS[this.spec.tier], this.terrain, alpha, ghost,
     );
+  }
+
+  /**
+   * The build ghost the player is holding, or null (P6-T07). See `SceneSpec.ghostBuilding`.
+   *
+   * `pickGround` and `checkPlacement` are called PER FRAME, from the viewport centre, because that
+   * is what `Game.updateGhost` does from the pointer — and neither had ever appeared in a gated
+   * run. The ghost object is reused rather than rebuilt so the frame path still allocates nothing.
+   */
+  private ghost(camera: CameraState): GhostState | null {
+    const type = this.spec.ghostBuilding;
+    if (!type) return null;
+    const hit = pickGround(camera, this.field, this.spec.width / 2, this.spec.height / 2);
+    const g = this.ghostState;
+    g.x = hit.x;
+    g.y = hit.y;
+    g.valid = checkPlacement(this.bridge.state, type, hit.x, hit.y).valid;
+    return g;
   }
 
   setup(renderer: Renderer): void {
@@ -610,6 +739,12 @@ function populate(state: State, spec: SceneSpec, bombIds: string[] = []): void {
       ]
       : [80 + ((i * 137) % (width - 160)), 80 + ((i * 89) % (height - 160))];
     const u = makeUnit(type, owner, x, y);
+    // Veterancy, for the `chevron` overlay — see `SceneSpec.veterans`. Kills rather than a rank,
+    // because `rankOf` is the bridge's own function and a hand-written rank would keep passing the
+    // day upstream moves its 3/8/18 thresholds. Every third unit until the quota is met, so the
+    // ranked ones are spread through the lattice instead of clustered in the first block.
+    const vet = Math.floor(i / 3);
+    if (i % 3 === 0 && vet < (spec.veterans ?? 0)) u.kills = KILL_COUNTS[vet % KILL_COUNTS.length]!;
     state.units.set(u.id, u);
   }
   // Armed Helium Bombs (P3-T10), on the map's edges rather than in the middle — see `armedBombs`:

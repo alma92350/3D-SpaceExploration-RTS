@@ -21,7 +21,50 @@ export interface TierConfig {
   readonly frameBudgetMs: number;
   /** Fraction of the CSS pixel size actually rendered; upscaled to fit. Fill rate is the enemy. */
   readonly renderScale: number;
-  /** Beyond this distance an entity collapses to a billboard imposter. */
+  /**
+   * Beyond this distance an entity collapses to a billboard imposter.
+   *
+   * **PICKED, not derived, and P6-T07 says so with numbers rather than leaving it implied.** The
+   * four values below arrived in the Phase 1 MVP commit with no working. PRD §6.2 mandates "LOD with
+   * billboard imposters beyond a distance threshold" and names no threshold; nothing downstream
+   * derives one. `test/view/tiers.test.ts` checks only that they are ordered and that the apron
+   * outruns them, which is consistency, not derivation. What follows is what measuring found.
+   *
+   * **1. The CPU-side gate cannot price it, and that is a measurement, not an excuse.** Sweeping
+   * T0's `lodDistance` over the real 200-unit scene and the real camera path, three gate-length runs
+   * each: p95 2.33 ms with everything an imposter, 2.04 at 340, 2.18 with LOD off entirely — a
+   * spread narrower than the scatter within any one setting. `npm run perf` runs against the
+   * recording renderer, which shades no fragments, so a threshold whose whole job is to remove
+   * fragments is invisible to it. The one thing that does move is TRIANGLES: 9 418 with everything
+   * collapsed, 13 086 at 340, 19 548 with LOD off. So 340 is buying a 33% triangle cut on a T0
+   * frame, and only `e2e/perf.spec.ts` under SwiftShader can turn that into milliseconds. It does
+   * not sweep the threshold, which is the gap this comment is really about.
+   *
+   * **2. Batches: the switch costs two and saves nothing until the whole field is far.** Measured on
+   * the T0 scene: 23 draw calls at 340, 23 with LOD off, 7 with everything collapsed. The imposter
+   * pair is pure overhead at every camera position where any entity is still near.
+   *
+   * **3. "At what distance is the imposter indistinguishable?" — measured, and the answer is: at no
+   * distance this game ever draws.** Projecting every vertex of each mesh and every corner of its
+   * imposter quad through the same camera at T0's 340 and comparing screen-space bounding boxes on
+   * the 960×540 raster T0 actually rasterises, the quad covers 0.73× to 10.35× the mesh's area
+   * (median ≈ 2.5×; a Freighter is 7.7×15.7 px and its quad is 41.7×30.2). Binary-searching the
+   * distance at which both bbox dimensions agree within one rasterised pixel gives 7 151 (civic) to
+   * 43 858 (command) world units. T0's CULL distance is 1 100.
+   *
+   * **The cause is the quad's size, not the threshold, so no threshold fixes it.** `scene.ts` sizes
+   * the imposter `entityRadius × 2.2` and uses that for the quad's HEIGHT as well as its width,
+   * while the roster is mostly wider than it is tall — a Skiff is 12.4 wide and 2.4 high, so a flat
+   * ship is replaced by a 15-unit vertical wall. Moving `lodDistance` trades where that pop happens
+   * for how much geometry is drawn; it cannot make the pop small. Deliberately NOT changed here:
+   * the fix is the quad's proportions, that is a visual decision with an owner, and re-tuning a
+   * distance to hide it would be the "edit the number" move ADR-0006 and ADR-0014 both name.
+   *
+   * **4. It is doing a second job nobody measured.** `pushEntityOverlays` reuses this same distance
+   * to decide whether a health bar, a chevron or a status badge is drawn at all — see the corrected
+   * note there. One number answers "is the mesh worth drawing?" and "can the player read a bar?",
+   * and those two questions have no reason to share an answer at any tier.
+   */
   readonly lodDistance: number;
   /** Entities past this distance are not drawn at all. */
   readonly cullDistance: number;

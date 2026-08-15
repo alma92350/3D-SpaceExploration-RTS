@@ -77,6 +77,8 @@ export class WorldBridge {
   /** Intents accumulate here and are applied at the top of the next step, never mid-tick. */
   private readonly pending: Intent[] = [];
   private lastCommandError: string | null = null;
+  /** Why the last `load` returned false. Drained like `lastCommandError`, and for the same reason. */
+  private lastLoadError: string | null = null;
   /** Colony notifications since the last drain — see `takeColonyNotes`. */
   private readonly notes: ColonyNote[] = [];
 
@@ -275,12 +277,45 @@ export class WorldBridge {
     let restored: Galaxy | null = null;
     try {
       restored = deserializeGalaxy(raw);
-    } catch {
+    } catch (err) {
+      // **This used to be a bare `catch { return false }`, and that was the defect** (P6-T05).
+      // Upstream writes a specific, quotable reason for every refusal — "unsupported galaxy save
+      // version 2", "galaxy save has no active planet", "save contains a forbidden key: __proto__"
+      // — and eight distinguishable causes collapsed to one bit while `console` never saw any of
+      // them. A caught exception that logs nothing is worse than a crash: the crash at least has a
+      // stack. The player gets the sentence; the console gets the error object.
+      this.lastLoadError = err instanceof Error ? err.message : String(err);
+      console.error("[odyssey] a save was refused", err);
       return false;
     }
-    if (!restored) return false;
+    if (!restored) {
+      this.lastLoadError = "the file is not a save this build recognises";
+      return false;
+    }
+    // `refresh()` used to sit outside the try and AFTER the assignment, so a payload that satisfied
+    // upstream and then broke extraction left the bridge holding it — contradicting this method's
+    // own header promise to keep the old galaxy on failure. No payload reaches it today (22
+    // corruptions measured, every one refused earlier), which is exactly why it was worth fixing
+    // while somebody was looking at it.
+    const previous = this.#galaxy;
     this.#galaxy = restored;
-    this.refresh();
+    try {
+      this.refresh();
+    } catch (err) {
+      this.#galaxy = previous;
+      this.refresh();
+      this.lastLoadError = err instanceof Error ? err.message : String(err);
+      console.error("[odyssey] a save loaded and then failed to extract", err);
+      return false;
+    }
+    this.lastLoadError = null;
     return true;
+  }
+
+  /** Why the last `load` returned false, drained on read — `takeCommandError`'s shape (P6-T05). */
+  takeLoadError(): string | null {
+    const problem = this.lastLoadError;
+    this.lastLoadError = null;
+    return problem;
   }
 }

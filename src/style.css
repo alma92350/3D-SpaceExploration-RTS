@@ -83,7 +83,15 @@ html, body {
 .dot { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
 .dot.ore { background: #b9a37a; }
 .dot.crystals { background: #7fd7ff; }
-.dot.radioactives { background: #a6ff8f; }
+/* Not the green it was (#a6ff8f). P6-T02 measured that against `credits` at ΔE00 **3.4** under
+   deuteranopia — as close as the textbook red/green control this repo's own palette test uses to
+   prove the check can fail (2.7). Two of the four top-bar readouts were the same dot. This magenta
+   clears every other dot under all three dichromacies with 18.0 to spare, and it fixes a second,
+   quieter near-miss on the way: crystals/radioactives measured 11.3 under tritanopia and now
+   measures 77.4. Verified against the whole set rather than the failing pair — the first proposed
+   replacement (#c9a2ff) fixed `credits` and collided with `crystals` at 5.8, which is worse than
+   the defect it was meant to cure. */
+.dot.radioactives { background: #fd6eb0; }
 .dot.credits { background: #ffd479; }
 
 .hud-notice {

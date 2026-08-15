@@ -116,8 +116,12 @@ export function onboardingModel(input: OnboardingInput): OnboardingModel {
     },
     {
       id: "select",
-      text: "Left-click your colony ship to select it. Drag a box to take several units at once.",
-      keys: [],
+      // `Q` named here because P6-T11 made it real, and NOT before: the card's whole discipline is
+      // that every key it names is data put through `translateKey`, so naming one the app does not
+      // bind fails this file's own test. Until this phase there was no keyboard answer to give —
+      // a player without a mouse read this line, which told them to click, and stopped.
+      text: "Left-click your colony ship to select it — or press Q. Drag a box to take several units at once.",
+      keys: ["q"],
       buttons: ["left"],
       done: snap.selection.length > 0,
     },
@@ -296,6 +300,39 @@ export function settingsModel(input: SettingsInput): SettingsModel {
             detail: "keyboard and minimap only",
             active: !s.edgeScroll,
             settings: { ...s, edgeScroll: false },
+          },
+        ],
+      },
+      {
+        id: "motion",
+        label: "Motion",
+        // Three options rather than two, for the reason the tier row above gives for Auto:
+        // `prefers-reduced-motion` SEEDS this and never owns it, so the player can disagree with
+        // their machine in either direction. What each choice does to a frame is `view/motion.ts`'s
+        // header — every combat cue keeps its fact and loses its animation, and none is deleted.
+        detail: "Holds the moving cues still — tracers, death marks, impact marks — without removing "
+          + "any of them.",
+        options: [
+          {
+            id: "auto",
+            label: "Auto",
+            detail: "follow this machine's own accessibility setting",
+            active: s.motion === "auto",
+            settings: { ...s, motion: "auto" },
+          },
+          {
+            id: "full",
+            label: "Full",
+            detail: "animate the combat cues",
+            active: s.motion === "full",
+            settings: { ...s, motion: "full" },
+          },
+          {
+            id: "reduced",
+            label: "Reduced",
+            detail: "the same cues, held still",
+            active: s.motion === "reduced",
+            settings: { ...s, motion: "reduced" },
           },
         ],
       },

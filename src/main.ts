@@ -1,7 +1,12 @@
 // Browser entry point. Boot order matters and is the whole content of this file.
 
 import { Game } from "./app/game.js";
-import { createRenderer } from "./app/renderer-factory.js";
+import { BUILD, stampBuild } from "./app/build.js";
+import {
+  FailureBanner, frameFailureMessage, installContextGuard, installGlobalErrorGuard,
+} from "./app/failure.js";
+import { reportFrameFailuresTo } from "./app/loop.js";
+import { compatibilityRenderer, createRenderer } from "./app/renderer-factory.js";
 import { loadSettings, saveSettings } from "./app/settings.js";
 import { TIERS, TIER_ORDER } from "./view/renderer/tiers.js";
 import { type Tier } from "./view/renderer/port.js";
@@ -16,16 +21,19 @@ function el<T extends HTMLElement>(id: string): T {
 
 function boot(): void {
   const settings = loadSettings();
+  const banner = new FailureBanner(el("failure"));
+  const glCanvas = el<HTMLCanvasElement>("scene");
+  const overlayCanvas = el<HTMLCanvasElement>("overlay");
   const choice = createRenderer({
-    glCanvas: el<HTMLCanvasElement>("scene"),
-    overlayCanvas: el<HTMLCanvasElement>("overlay"),
-    fallbackCanvas: el<HTMLCanvasElement>("overlay"),
+    glCanvas,
+    overlayCanvas,
+    fallbackCanvas: overlayCanvas,
     tierOverride: settings.tierOverride,
   });
 
   // The Canvas2D path draws the whole world onto the overlay canvas, so the (now unused) GL canvas
   // must get out of the way — otherwise it sits on top as an opaque black rectangle.
-  if (choice.renderer.name === "canvas2d") el("scene").style.display = "none";
+  if (choice.renderer.name === "canvas2d") glCanvas.style.display = "none";
 
   // The seed is fixed and the world is Helix Belt (Q-02 / ADR-0010 §2): every playtester sees the
   // same terrain, the same deposits and the same neighbour, so their reports compare. `MVP_WORLD`
@@ -59,6 +67,59 @@ function boot(): void {
     notice.textContent = choice.fallbackReason;
     notice.classList.add("visible");
   }
+
+  // --- P6-T05: the three failures that used to end a session in silence ------------------------
+  //
+  // All three land on the same banner deliberately. A player who has to learn which of three
+  // different surfaces carries which kind of bad news has been handed our architecture as a
+  // feature; there is one place to look, and the message says which thing broke.
+
+  // 1. A lost WebGL context. See `installContextGuard` — three.js absorbs this so completely that
+  //    nothing throws, so a listener is the only way to know it happened.
+  installContextGuard({
+    canvas: glCanvas,
+    banner,
+    pause: () => game.stop(),
+    resume: () => {
+      try {
+        game.start();
+        return true;
+      } catch (err) {
+        console.error("[odyssey] the game could not be resumed after the context came back", err);
+        return false;
+      }
+    },
+    useFallback: () => {
+      try {
+        // Exactly what `createRenderer` does when the probe fails, and for the same reason: the 3D
+        // view is unavailable and the game must still run (ADR-0005's fallback of last resort).
+        const fallback = compatibilityRenderer(overlayCanvas, "");
+        game.setRenderer(fallback.renderer, fallback.tier);
+        glCanvas.style.display = "none";
+        picker.select(fallback.tier);
+        game.start();
+        return true;
+      } catch (err) {
+        console.error("[odyssey] the compatibility renderer could not be started either", err);
+        return false;
+      }
+    },
+  });
+
+  // 2. A throw inside a frame. `loop.ts` catches it, keeps the loop alive and always logs the
+  //    stack; this is the half that puts it in front of the person who has to report it.
+  reportFrameFailuresTo((failure) => {
+    const { key, title, detail } = frameFailureMessage(failure);
+    banner.show(key, title, detail, failure.halted
+      ? [{ label: "Reload", run: () => globalThis.location?.reload() }]
+      : [{ label: "Dismiss", run: () => banner.clear() }]);
+  });
+
+  // 3. A corrupt save, and everything else that throws inside a DOM handler. `WorldBridge.load()`
+  //    already refuses a payload it cannot read (N-08, and upstream's own hardening does most of
+  //    that work) — this is the backstop for the case nothing anticipated, where a click would
+  //    otherwise appear simply not to work.
+  installGlobalErrorGuard(banner);
 
   // Expose the running game for the browser smoke test and the perf harness. Read-only in spirit:
   // nothing in the app reads it back, and it is the only way a Playwright test can assert on
@@ -120,6 +181,9 @@ function buildTierPicker(
  * The watchdog in `index.html` covers the other half — a failure so early that this never runs.
  */
 function bootOrExplain(): void {
+  // First, and outside the try: a build that fails to start still has to say WHICH build failed,
+  // and `stampBuild` is written so that it cannot itself be the reason one does (P6-T06).
+  stampBuild();
   try {
     boot();
   } catch (err) {
@@ -132,7 +196,12 @@ function bootOrExplain(): void {
     const detail = document.createElement("p");
     detail.textContent = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
     detail.style.cssText = "max-width:46ch;text-align:center;line-height:1.5;letter-spacing:normal";
-    boot0.append(title, detail);
+    // The build, on the one screen where "it does not work" is most likely to be reported without
+    // one. Every playtest script asks for it and until P6-T06 there was nothing to give.
+    const build = document.createElement("p");
+    build.textContent = `Build ${BUILD.label}`;
+    build.style.cssText = "opacity:0.6;font-size:11px;letter-spacing:normal";
+    boot0.append(title, detail, build);
   }
 }
 

@@ -107,7 +107,7 @@ function print(r) {
     `  draw calls     ${r.maxDrawCalls}`,
     `  instances      ${r.maxInstances}`,
     `  triangles      ${r.maxTriangles}`,
-    `  terrain uploads ${r.terrainUploads}   fog uploads ${r.fogUploads}`,
+    `  terrain uploads ${r.terrainUploads}   fog uploads ${r.fogUploads}   power uploads ${r.powerUploads}`,
   ].join("\n"));
   if (r.background) printBackground(r.background, r.budgetMs);
 }

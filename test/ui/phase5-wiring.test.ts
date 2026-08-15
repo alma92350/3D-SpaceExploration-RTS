@@ -59,7 +59,7 @@ describe("every Phase 5 panel is reachable from a control (P5-T12)", () => {
     localStorage.clear();
     const els = elements();
     hudRoot = els.hudRoot;
-    game = new Game(els, new RecordingRenderer(), "T0", { tierOverride: null, edgeScroll: false, newGame: null },
+    game = new Game(els, new RecordingRenderer(), "T0", { tierOverride: null, edgeScroll: false, newGame: null, motion: "auto" },
       { seed: SEED, worldId: "helix" });
   });
 
@@ -230,7 +230,7 @@ describe("every Phase 5 panel is reachable from a control (P5-T12)", () => {
     game.stop();
     const els = elements();
     hudRoot = els.hudRoot;
-    game = new Game(els, new RecordingRenderer(), "T0", { tierOverride: null, edgeScroll: false, newGame: null },
+    game = new Game(els, new RecordingRenderer(), "T0", { tierOverride: null, edgeScroll: false, newGame: null, motion: "auto" },
       { seed: SEED, worldId: "helix" });
     frame();
     expect(drawerText(), "the card came back for a player who dismissed it")

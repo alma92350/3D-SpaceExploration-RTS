@@ -67,6 +67,7 @@
 //                nothing. Not Backspace — that still navigates in some browsers.
 //
 // `K` is left free on purpose. A bare letter is the scarce thing here; a Shift slot is not.
+// (**P6-T11 has spent it**, on the one control that had no other way in at all — see below.)
 //
 // **Row 38's gesture is upstream's, and this client cannot have it.** `engine/gather.js`'s
 // `zoneFirst` names it out loud — a home base is set by "a right-click on a Command Center with
@@ -81,6 +82,69 @@
 // `isCommandCenter`, `constructing`), and the bridge is where the engine can be asked (ADR-0012
 // §5). A miss — a click that found no entity at all — cancels the mode rather than being swallowed,
 // which is `escort`'s rule and for `escort`'s reason.
+//
+// ================================================================================================
+// P6-T11 — keyboard-only PLAY, which is not the same clause as a keyboard-navigable HUD
+// ================================================================================================
+//
+// P6-T03 made every HUD control reachable with Tab. The GAME was still mouse-only, and this module
+// is where that was true: **`translateKey` produced no `select` of any kind**, so no worker and no
+// building could ever be chosen without a click, and a control group had nothing to assign.
+//
+// **And it was worse than "awkward without a mouse" — it was a dead end at t=0.** Both the row that
+// filed this and an earlier agent's report said the opening colony ship begins selected, so the
+// first sixty seconds work and the problem hides. Measured, that is false: `state.selection` is
+// `[]`, `hudModel.canDeploy` is false, the action row is EMPTY, and the HUD's own prompt reads
+// *"Click your colony ship to select it."* A keyboard-only player reached a game that told them to
+// use a mouse and offered no other way forward. `test/ui/keyboard-play.test.ts` opens with that
+// measurement, because a premise nobody checked is how the gap survived six phases.
+//
+// PRD §5's Phase 6 scope says **"keyboard-only play"** in those words; N-05 says "keyboard-navigable
+// UI". They are two clauses and P6-T03 discharged one.
+//
+// A mouse answers two questions this board never had another answer for — **which thing** (the
+// click picks it out of the world) and **where** (the cursor is a point). Everything else a player
+// needs was already bound. So this row is two keys, one per question, and nothing else:
+//
+//   Q / Shift+Q   WHICH. Q selects every visible entity of the next TYPE the player owns; Shift+Q
+//                 steps through that type one at a time. Wrapping, so the whole roster is reachable
+//                 from anywhere in it.
+//   K / Shift+K   WHERE. **The camera centre is the cursor.** One press acts on it: it completes an
+//                 armed mode (the left click those twelve modes are waiting for), or issues the
+//                 context order (the right click) when nothing is armed.
+//
+// **Q is upstream's own letter, held in reserve by this file since the MVP** — the paragraph above
+// reserves "Q and E for select-army and scout", E was spent on `scout` by P5-T13, and this is the
+// other half of the same reservation. Bare Q *is* select-army when the army is one type; it is the
+// general case, because a keyboard also has to be able to reach a worker and a Command Center, and
+// upstream's own `sameTypeAs` (this file's double-click) is already the shape of "all of those".
+//
+// **K is the last free bare letter and this is what one is for**: the control that has no other way
+// in at all. `J` stays unbound — `test/input/intents.test.ts` uses it as its example of a key this
+// module does not own, and that guard is what would catch a letter quietly acquiring a binding.
+//
+// **Not Enter and not Space, and that is the important negative.** They are the obvious keys and
+// they are exactly the ones P6-T03 had to fight: `ui/hud-focus.ts` owns Enter and Space *while the
+// ring holds focus*, because the browser fires a focused button on Space while `translateKey` reads
+// Space as focus-last-alert — one keystroke, two commands. Giving either a world meaning would
+// rebuild that hazard on purpose: the same press would place a building or press whatever control
+// the player happens to be standing on, decided by invisible state. A letter has no such problem —
+// the ring passes everything that is not Tab/Enter/Space/Escape straight through — so `K` works
+// with a HUD button focused, which is where a keyboard player spends much of their time.
+//
+// **Why the camera and not a reticle.** The obvious alternative is a modal cursor: a mark the
+// player drives with its own keys, drawn over the world. That is a second camera to steer, a second
+// thing to draw, and a mode to enter and leave. The camera already *is* a reticle — it is centred
+// on screen by construction, W/A/S/D and the arrows already point it (PRD §5), and a player looks
+// at the thing they are about to act on anyway. The cheapest cursor is the one that is already on
+// screen and already driven, and it costs no key at all.
+//
+// **What this deliberately does not give a keyboard.** There is no keyboard left-click on empty
+// ground, so there is no "click nothing to deselect" and no select-by-pointing: `Q` is the
+// selection control and it always lands on something. Both were priced against a third binding on a
+// board with two letters left, and neither is needed to play — nothing in the game requires an
+// empty selection, and every per-entity ORDER already takes its target from the crosshair through
+// the modes above (repair, service, assist, ferry, home base, escort).
 
 import { type Intent } from "../bridge/commands.js";
 import { type Snapshot, FLAG_BUILDING_KIND, engineId, numericId } from "../bridge/snapshot.js";
@@ -351,6 +415,44 @@ export interface KeyResult {
    * whole thing.
    */
   readonly screen?: "starmap";
+  /**
+   * A SELECTION CYCLE press (P6-T11) — the keyboard's answer to *which thing*.
+   *
+   * A DIRECTION and nothing more, for the reason `group`, `bomb` and `action` are: this module
+   * cannot see the roster, and `state.selection` is simulation state that only `applyIntent` may
+   * write (ADR-0012 §5). The caller resolves the step against the snapshot — which is fog-filtered,
+   * so a cycle can never reach something the player cannot see — and enqueues an ordinary `select`,
+   * the same intent through the same queue a mouse drag produces.
+   *
+   *   `"type"`    (bare Q)      every visible entity of the NEXT type the player owns. One press is
+   *                             a whole army, or the Command Center, or every worker — which is
+   *                             upstream's select-army generalised to the things a keyboard also
+   *                             has to reach.
+   *   `"member"`  (Shift+Q)     ONE entity of the type that is selected now, stepping through them
+   *                             on repeat. The answer to "the right one of several", and the only
+   *                             way a keyboard addresses the second Command Center.
+   *
+   * It leaves `mode` null — a cycle does not disarm a pending order. Arming a build, then picking
+   * which worker puts it up, then placing it is a real sequence, and cancelling is Escape's job.
+   */
+  readonly select?: { readonly scope: "type" | "member" };
+  /**
+   * A CROSSHAIR press (P6-T11) — the keyboard's answer to *where*.
+   *
+   * The caller turns this into one `PointerGesture` at the camera centre and puts it back through
+   * `translatePointer`, so a keyboard order is the same gesture a mouse order is, resolved by the
+   * same code: the twelve pending modes, the context order's move/attack/gather branch, and the
+   * entity or node under the point all come along rather than being re-derived for the keyboard.
+   *
+   * **The button is decided here** because this is the one layer that can: `translateKey` is handed
+   * the pending mode, and a mode is a click already promised. Armed → the LEFT click it is waiting
+   * for. Nothing armed → the RIGHT click, which is the context order. One key, so a player never
+   * has to remember which of two completes a build placement.
+   *
+   * `shift` rides through with the meaning it has under the mouse, because it IS the same gesture:
+   * queue this order behind the last one, or keep a build mode alive to lay a second turret.
+   */
+  readonly crosshair?: { readonly button: "left" | "right"; readonly shift: boolean };
 }
 
 const NO_KEY: KeyResult = { intent: null, mode: null, camera: null, cancel: false };
@@ -389,6 +491,12 @@ export const POSITIONAL_KEYS: readonly string[] = ["z", "c", "v", "b", "n"];
  * U because a rally point had nothing left to be named after. The other six went onto **Shift +
  * the letter they are named for** — R, F, H, P, L — and one onto Delete, which is not a letter at
  * all. The full table and the reasoning are in this module's header.
+ *
+ * **P6-T11 spent the last two, Q and K, on being able to play at all.** Every letter above orders
+ * something a player has already selected, and until this row nothing on the keyboard could select
+ * it or say where — so Q cycles the selection and K acts on the camera centre. `J` is still
+ * deliberately unbound. The board is now full, and the next order that needs a key needs a mode, a
+ * modifier or a positional slot; there is no bare letter left to argue over.
  */
 export function translateKey(gesture: KeyGesture, mode: PendingMode = { kind: "none" }): KeyResult {
   // Control groups: the digit row, as every RTS since the nineties. Ctrl assigns, Shift appends, a
@@ -494,6 +602,22 @@ export function translateKey(gesture: KeyGesture, mode: PendingMode = { kind: "n
     // could not empty was the row; the bridge picks the last job and reports what `cancelProduction`
     // — the one order in this group that answers at all — said about it.
     case "delete": return { intent: { kind: "cancelTrain" }, mode: { kind: "none" }, camera: null, cancel: false };
+    // --- P6-T11's two keys: keyboard-only PLAY (PRD §5, Phase 6) ----------------------------------
+    //
+    // Q is the reservation this file has held since the MVP, spent rather than replaced — see the
+    // header. Bare Q takes the next TYPE (select-army, when the army is one type); Shift+Q steps
+    // through the members of the type already selected, which is how a keyboard reaches the second
+    // Command Center. `NO_KEY` leaves `mode` null on purpose: picking who does a job must not
+    // disarm the job.
+    case "q": return { ...NO_KEY, select: { scope: gesture.shift ? "member" : "type" } };
+    // K is the last bare letter, and the crosshair is what a bare letter is for: without it a
+    // keyboard can arm every one of the twelve modes above and complete none of them, and can never
+    // say where. The BUTTON is read off the pending mode — armed is a click already promised, so it
+    // is that mode's left click; nothing armed is the context order's right click.
+    case "k": return {
+      ...NO_KEY,
+      crosshair: { button: mode.kind === "none" ? "right" : "left", shift: gesture.shift },
+    };
     // --- Phase 4's galaxy, finally reachable (P4-T13) ---------------------------------------------
     // The starmap. One of the five letters this board still had (see `screen` above), and the only
     // Phase 4 control that needs a key at all: everything else on that screen is a button, and the

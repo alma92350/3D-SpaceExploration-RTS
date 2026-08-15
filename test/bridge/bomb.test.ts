@@ -6,10 +6,14 @@
 // because every design choice here follows from it.
 //
 // The design question this task actually turned on was where the warning comes from. `bombFused` is
-// an engine event and the obvious answer, and it is the wrong one — the exact inverse of ADR-0017's
-// answer for shots. A shot leaves no trace, so a diff is the only signal. A fuse leaves `fuseUntil`,
-// a field that persists for the whole four seconds, while the event fires on exactly one tick in
-// eighty. The "survives the event" test is the one that separates the two implementations.
+// an engine event and the obvious answer, and it is the wrong one — the exact inverse of ADR-0023's
+// answer for shots, and the contrast is the point. A tracer is a MOMENT and `attackHit` is a moment,
+// so a shot is read straight off the event. A warning is a STATE that lasts four seconds, and
+// `bombFused` fires on exactly one tick in eighty; `fuseUntil` is the field that persists. The
+// "survives the event" test is the one that separates the two implementations.
+//
+// (ADR-0017 drew this contrast the other way round — "a shot leaves no trace, so a diff is the only
+// signal" — on a premise PARITY §7.1 disproved. It leaves `attackHit`.)
 
 import { describe, expect, it } from "vitest";
 import { WorldBridge } from "../../src/bridge/world.js";
