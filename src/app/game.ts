@@ -4,7 +4,7 @@
 // forward between them in the right order. It is deliberately the least clever file in the project:
 // when something goes wrong at runtime, this is where you read the sequence.
 
-import { BUILD_REACH, BUILDINGS, NODE_RADIUS } from "../engine/index.js";
+import { BUILD_REACH, BUILDINGS, NODE_RADIUS, UNITS } from "../engine/index.js";
 import { WorldBridge, type WorldOptions } from "../bridge/world.js";
 import { checkPlacement } from "../bridge/commands.js";
 import { FLAG_BUILDING_KIND } from "../bridge/snapshot.js";
@@ -13,6 +13,8 @@ import { type Settings, saveSettings } from "./settings.js";
 import { CameraRig, clamp } from "../input/camera.js";
 import { pickGround } from "../input/picking.js";
 import { type PendingMode, type PointerGesture, translateKey, translatePointer } from "../input/intents.js";
+import { ControlGroups } from "../input/control-groups.js";
+import { AlertFeed } from "../view/alerts.js";
 import { type ElevationField, elevationFieldFrom } from "../view/terrain/elevation.js";
 import { buildTerrainMesh } from "../view/terrain/mesh.js";
 import { buildMeshes, meshIdForType } from "../view/meshes/generators.js";
@@ -47,6 +49,14 @@ export class Game {
   private terrain: TerrainMesh;
 
   private mode: PendingMode = { kind: "none" };
+  /**
+   * Control groups (P3-T13). Held HERE, in the application, and never in the bridge — the whole
+   * task is that a group is client state, because `state.selection` is sim state that `hashState`
+   * hashes and every recorded fixture replays against.
+   */
+  private readonly groups = new ControlGroups();
+  /** The alert board (P3-T14). Client state, like the control groups beside it. */
+  private readonly alerts = new AlertFeed();
   private readonly keys = new Set<string>();
   private pointerX = 0;
   private pointerY = 0;
@@ -105,6 +115,10 @@ export class Game {
         // Once per SIM step, not per frame: the snapshot object is the same across the frames
         // between ticks, so ingesting from `renderFrame` would replay every shot three times.
         this.composer.ingestTick(this.bridge.snapshot);
+        // Same rule, and here it is not just waste: `snap.deaths` is a per-tick table, so a second
+        // pass over the same snapshot would tally one casualty as two and the alert's badge would
+        // count frames instead of losses (P3-T14).
+        this.alerts.ingestTick(this.bridge.snapshot);
       },
       render: (alpha, frameMs) => this.renderFrame(alpha, frameMs),
     });
@@ -288,15 +302,30 @@ export class Game {
 
   private onKeyDown(e: KeyboardEvent): void {
     this.keys.add(e.key.toLowerCase());
-    const result = translateKey({ key: e.key, shift: e.shiftKey, ctrl: e.ctrlKey });
+    const result = translateKey({ key: e.key, shift: e.shiftKey, ctrl: e.ctrlKey }, this.mode);
     if (result.mode) this.mode = result.mode;
     if (result.togglePower) this.showPower = !this.showPower;
     if (result.cancel) this.ghost = null;
     if (result.intent) this.bridge.enqueue(result.intent);
+    if (result.group) this.applyGroup(result.group.n, result.group.op);
+    if (result.bomb) this.applyBomb(result.bomb);
     switch (result.camera) {
       case "focusBase": {
         const base = this.bridge.state.map.bases.player;
         this.camera.focusOn(base.x, base.y);
+        break;
+      }
+      case "focusAlert": {
+        // PRD §4's "focus last alert". Jumping DISMISSES what it jumped to: the player has now seen
+        // it, and a board that needs a second key to clear fills up and stops being read.
+        const i = this.alerts.latest();
+        if (i < 0) {
+          const base = this.bridge.state.map.bases.player;
+          this.camera.focusOn(base.x, base.y);
+          break;
+        }
+        this.camera.focusOn(this.alerts.x[i]!, this.alerts.y[i]!);
+        this.alerts.dismiss(this.alerts.id[i]!);
         break;
       }
       case "rotateLeft": this.camera.rotate(-1); break;
@@ -359,6 +388,48 @@ export class Game {
       meshId: meshIdForType(this.mode.buildingType),
       reach: BUILD_REACH + (def?.radius ?? 16),
     };
+  }
+
+  /**
+   * A control-group press (P3-T13).
+   *
+   * The one line that matters is the last one: a recall reaches the simulation as an ordinary
+   * `select` intent, the same path a mouse drag takes. Nothing here writes `state.selection`.
+   *
+   * Recall prunes against the snapshot rather than against engine state, deliberately — the group
+   * should hold what the PLAYER can see, and a group that quietly re-selected a ship inside fog
+   * would be a small map hack.
+   */
+  private applyGroup(n: number, op: "assign" | "append" | "recall"): void {
+    const selection = [...this.bridge.state.selection];
+    if (op === "assign") { this.groups.assign(n, selection); return; }
+    if (op === "append") { this.groups.append(n, selection); return; }
+    const live = new Set<string>();
+    const e = this.bridge.snapshot.entities;
+    for (let i = 0; i < e.count; i++) live.add(engineId(e.ids[i]!));
+    const ids = this.groups.recall(n, (id) => live.has(id));
+    if (ids.length > 0) this.bridge.enqueue({ kind: "select", ids, additive: false });
+  }
+
+  /**
+   * A Helium Bomb key (P3-T10), aimed at the selection.
+   *
+   * `armBomb`/`detonate` address one unit by id, so the fan-out happens here. It is a *filter*, not
+   * a broadcast: only selected units the engine calls bombs get the intent, so pressing the key
+   * with an army selected does nothing rather than something surprising.
+   *
+   * The toggle reads the CURRENT armed state per bomb rather than tracking one flag for all of
+   * them — with a mixed selection a single flag would disarm half the group and arm the other half
+   * on every press, and the player would never be sure which state they were in.
+   */
+  private applyBomb(op: "toggleArm" | "detonate"): void {
+    for (const id of this.bridge.state.selection) {
+      const u = this.bridge.state.units.get(id);
+      if (!u || u.owner !== "player" || UNITS[u.type]?.role !== "bomb") continue;
+      this.bridge.enqueue(op === "detonate"
+        ? { kind: "detonate", unitId: id }
+        : { kind: "armBomb", unitId: id, armed: !u.armed });
+    }
   }
 
   private trainFromSelection(unitType: string): void {

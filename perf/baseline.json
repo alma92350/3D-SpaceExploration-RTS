@@ -1,14 +1,20 @@
 {
   "T0": {
     "p95": 2.77,
-    "maxDrawCalls": 17,
+    "maxDrawCalls": 22,
     "recorded": "2026-08-15",
-    "reason": "Draw calls 16 -> 17 for P3-T06's combat-feedback tracers. Re-recorded deliberately, per judge()'s own rule, and ONLY the draw-call count: p95 is untouched because nothing got slower. The +1 is one `tracer` overlay layer for the whole frame \u2014 measured at 67 tracers live in this scene, drawn in a single call. NOTE: this scene also exercises a second new kind, `blast`, and it never fires here \u2014 `PerfScene` extracts with its own extractor AFTER `bridge.step` has already drained `state.events`, so deaths are structurally invisible to the harness. Tracers are gated by the perf run; death marks are NOT, and P3-T16 owns closing that."
+    "reason": "Draw calls re-recorded for P3-T16, which made the harness measure two things it had been missing. (1) `populate` assigned owner with `i % 2` against a FOUR-type unit mix, so type and owner were perfectly correlated and every unit mesh was counted for one side only \u2014 the exact bias that understated ADR-0016's own batch figures until P3-T02 re-measured them. Decorrelated, which is +4. (2) The harness kept its own extractor and ran it AFTER `bridge.step` had drained `state.events`, so no death ever reached it and the `blast` overlay never fired; it reads the bridge's snapshot now, which is +1 and also removes a second full extraction per tick the game never pays for. Both are the gate becoming more honest, not the frame becoming more expensive. p95 untouched. T0: 17 -> 22."
   },
   "T2": {
     "p95": 5.16,
-    "maxDrawCalls": 19,
+    "maxDrawCalls": 23,
     "recorded": "2026-08-15",
-    "reason": "Draw calls 18 -> 19 for P3-T06's combat-feedback tracers \u2014 the same single `tracer` overlay layer as T0, with 246 tracers live at peak in this scene and still one draw call. p95 deliberately NOT re-recorded: the CI runner measured 5.10 ms against this 5.16 ms baseline while the local host reports 8+ ms on identical commits, which is the machine artefact judge() warns about."
+    "reason": "Draw calls re-recorded for P3-T16, which made the harness measure two things it had been missing. (1) `populate` assigned owner with `i % 2` against a FOUR-type unit mix, so type and owner were perfectly correlated and every unit mesh was counted for one side only \u2014 the exact bias that understated ADR-0016's own batch figures until P3-T02 re-measured them. Decorrelated, which is +4. (2) The harness kept its own extractor and ran it AFTER `bridge.step` had drained `state.events`, so no death ever reached it and the `blast` overlay never fired; it reads the bridge's snapshot now, which is +1 and also removes a second full extraction per tick the game never pays for. Both are the gate becoming more honest, not the frame becoming more expensive. p95 untouched. T2: 19 -> 23."
+  },
+  "P3": {
+    "p95": null,
+    "maxDrawCalls": 44,
+    "recorded": "2026-08-15",
+    "reason": "PRD \u00a75's Phase 3 combat scene, and the gate ADR-0016 named as its own supersede trigger. Every unit type on the field at once, both sides packed into weapons range so shots and deaths actually happen \u2014 the other scenes use the four-type MVP mix, which meant none of ADR-0016's nine new silhouettes had ever reached a perf gate. 43 draw calls: 39 batches (15 unit meshes x 2 owners, plus buildings, imposters and a deposit), terrain, and four overlay layers. p95 is NULL on purpose: it has not been recorded on a machine worth trusting. This container reports figures 1.7x the CI runner's on identical commits, and writing one in would arm the regression check against noise. The scene is still gated on the PRD's own 33 ms budget, which is machine-independent, and on its draw-call count, which is structural. Record a p95 from a CI run before relying on the regression half.\n\n43 -> 44 (P3-T10): three ARMED Helium Bombs, which is the bomb overlay reaching a gate for the first time. `unitTypes: \"all\"` already put a Helium Bomb on this field, but an unarmed one draws nothing, so the layer Phase 3 added had never fired in any gated run — the third time this harness has silently not measured what a task shipped. Exactly +1, and that is the point of arming them HERE rather than on T0/T2: this scene already counts the bomb's own mesh for both owners, so the delta isolates the overlay instead of bundling two mesh batches in with it. The bombs sit on the map's edges and their survival is asserted every tick: any hit on an armed bomb detonates it for 3 000 damage across a 190 radius, `maxDrawCalls` is a MAXIMUM so a scene that erased itself halfway through would still report the peak it reached first, and the run would come out green while two thirds of its frames measured an empty map."
   }
 }

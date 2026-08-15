@@ -36,7 +36,21 @@ export {
   issueMove, issueAttackMove, issueAttack, issueGather, issueStop, issueHold, issuePatrol,
   issueBuild, issueSetRally, issueRecycle, issueCancelRecycle, issueSetLogiPriority,
   issueServiceBuilding, issueRepair,
+  // Phase 3 (P3-T11, P3-T12). Both have existed upstream since before this project started and
+  // neither was ever exposed: formations and escorts are wiring, not invention.
+  issueEscort, issueHoldFormation, issueScout,
 } from "@engine/engine/commands.js";
+
+export {
+  FORMATION_SHAPES, LEADER_POSITIONS, formationSlots, pickLeader,
+} from "@engine/engine/formation.js";
+
+// The Helium Bomb (P3-T10). Both radii cross, because the engine's own `bombDetonated` event
+// carries both — and `bombDamageAt` crosses so nothing above the bridge ever re-derives the falloff.
+export {
+  BOMB_BLAST_RADIUS, BOMB_CORE_RADIUS, BOMB_DETECT_RANGE, BOMB_MAX_DAMAGE, BOMB_FUSE_DELAY,
+  bombDamageAt, lightFuse,
+} from "@engine/engine/bomb.js";
 
 export { BUILD_REACH, queueProduction, cancelProduction, researchUpgrade } from "@engine/engine/production.js";
 
@@ -103,5 +117,11 @@ export {
   PLASMA_VEINS, SURVEY_RADIUS, YIELD_TIERS, locationRichness, rigInfo, rigSurvey,
 } from "@engine/engine/rig.js";
 export type { RigInfo, RigSurvey, YieldTier } from "@engine/engine/rig.js";
+
+// The AI's own intel (P3-T15). Exported so a test can ask what the AI knows through the AI's own
+// fog, rather than asserting fairness from the outside and hoping.
+export {
+  INTEL_FADE, INTEL_FULL, readEnemy, sightEnemy, updateIntel,
+} from "@engine/engine/aiIntel.js";
 
 export { PLANETS, COM } from "@engine/data.js";

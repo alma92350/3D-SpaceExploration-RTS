@@ -119,7 +119,20 @@ export const REGRESSION_BAND = 1.1;
 export const REGRESSION_SLACK_MS = 1.5;
 
 export interface Baseline {
-  [scene: string]: { p95: number; maxDrawCalls: number; recorded: string; reason: string };
+  [scene: string]: {
+    /**
+     * The recorded p95, or **null for "not yet recorded on a machine worth trusting"**.
+     *
+     * Null is explicit rather than absent because the alternative is silent: an undefined p95 makes
+     * the ceiling arithmetic NaN, every comparison against it false, and the check disappears
+     * without saying so. A scene with a null p95 is still gated on the PRD's own budget — the
+     * machine-independent half — and says out loud that the regression half is not armed yet.
+     */
+    p95: number | null;
+    maxDrawCalls: number;
+    recorded: string;
+    reason: string;
+  };
 }
 
 export interface Verdict {
@@ -137,7 +150,7 @@ export function judge(result: PerfResult, baseline: Baseline[string] | undefined
     );
   }
 
-  if (baseline) {
+  if (baseline && baseline.p95 !== null) {
     const ceiling = round(Math.max(baseline.p95 * REGRESSION_BAND, baseline.p95 + REGRESSION_SLACK_MS));
     if (result.p95 > ceiling) {
       // The advice matters as much as the number. This check compares absolute milliseconds
@@ -155,8 +168,13 @@ export function judge(result: PerfResult, baseline: Baseline[string] | undefined
         + `re-recording the baseline, in its own commit, with a reason.`,
       );
     }
-    // Draw calls are the instancing contract in numeric form. They should not creep at all, so this
-    // has no band: one extra call per frame means a batch key split that nobody intended.
+  }
+
+  // Draw calls are checked whether or not a p95 was ever recorded: a batch count is structural and
+  // identical on every machine, which is exactly why it does not need a trusted host to be useful.
+  if (baseline) {
+    // They should not creep at all, so this has no band: one extra call per frame means a batch key
+    // split that nobody intended.
     if (result.maxDrawCalls > baseline.maxDrawCalls) {
       problems.push(
         `${result.scene}: ${result.maxDrawCalls} draw calls, baseline ${baseline.maxDrawCalls} — `

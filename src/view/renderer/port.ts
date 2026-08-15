@@ -120,7 +120,8 @@ export type OverlayKind =
   | "status"       // x, y, z, concern, activity
   | "aura"         // x, y, z, radius, ownerSlot
   | "tracer"       // x0, y0, z0, x1, y1, z1, fade, ownerSlot
-  | "blast";       // x, y, z, progress, big(0|1), ownerSlot
+  | "blast"        // x, y, z, progress, big(0|1), ownerSlot
+  | "bomb";        // x, y, z, coreRadius, blastRadius, lit(0|1), fuse01, ownerSlot
 
 export interface OverlayLayer {
   readonly kind: OverlayKind;
@@ -240,4 +241,9 @@ export const OVERLAY_STRIDE: Readonly<Record<OverlayKind, number>> = {
   // dead fields in half its rows.
   tracer: 8,
   blast: 6,
+  // The Helium Bomb's reach (P3-T10). TWO radii, because the engine's own `bombDetonated` event
+  // carries two and a single circle would either overstate the threat at the rim or hide it at the
+  // centre. `lit` is its own field rather than a sentinel in `fuse01`, on the P2-T08 rule: smuggling
+  // a state into a numeric range is what breaks silently the day the range moves.
+  bomb: 8,
 };

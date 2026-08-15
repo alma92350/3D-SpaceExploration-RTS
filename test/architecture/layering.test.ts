@@ -116,6 +116,11 @@ describe("allocation discipline", () => {
       // `age` runs every frame and compacting a list is the one loop a reviewer would naturally
       // write with `filter` or a fresh array.
       "src/view/effects.ts",
+      // P3-T14's alert feed, for the same reason and one more: `retire` compacts by swap-remove on
+      // every tick, and its first version had the classic off-by-one — the entry swapped down was
+      // never re-checked. That survived thirteen mutations before a compaction test caught it, so
+      // this file gets the scan too.
+      "src/view/alerts.ts",
     ];
     const METHOD = /^\s{2}(?:private\s+|protected\s+|public\s+|static\s+|override\s+|readonly\s+|get\s+|\*)*([A-Za-z_][\w]*)\s*(?:<[^>]*>)?\(/gm;
 

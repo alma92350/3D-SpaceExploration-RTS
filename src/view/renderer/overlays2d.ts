@@ -226,6 +226,45 @@ export function drawOverlayLayer(
       break;
     }
 
+    case "bomb": {
+      // The Helium Bomb's reach (P3-T10). TWO rings, because the blast is two facts and one circle
+      // can only tell half of it: inside `core` everything dies outright, and at `blast` the damage
+      // has already fallen to nothing. Drawing only the outer ring would promise a kill at the rim
+      // that the falloff does not deliver; drawing only the inner would hide most of the threat.
+      //
+      // The inner ring is SOLID and the outer DASHED — the same grammar the guard aura established,
+      // where a dash means "an effect reaches this far" and weight means certainty.
+      for (let i = 0; i < layer.count; i++) {
+        const off = i * layer.stride;
+        const x = d[off]!;
+        const height = d[off + 1]!;
+        const z = d[off + 2]!;
+        const core = d[off + 3]!;
+        const blast = d[off + 4]!;
+        const lit = d[off + 5]! !== 0;
+        const fuse01 = Math.max(0, Math.min(1, d[off + 6]!));
+        ctx.strokeStyle = lit ? "#ff5a4a" : (OWNER_CSS[d[off + 7]! | 0] ?? OWNER_CSS[2]!);
+
+        ctx.setLineDash([5, 6]);
+        ctx.lineWidth = lit ? 1.8 : 1.1;
+        drawGroundEllipse(ctx, camera, x, height, z, blast);
+
+        ctx.setLineDash([]);
+        ctx.lineWidth = lit ? 2.4 : 1.4;
+        drawGroundEllipse(ctx, camera, x, height, z, core);
+
+        // The countdown, as a shape rather than as a blink rate: an arc that sweeps the blast ring
+        // once over the fuse's whole length, so "how long have I got" is readable in a still frame.
+        // A pulsing ring would carry the same information only to someone watching at that instant.
+        if (lit) {
+          ctx.lineWidth = 3.2;
+          drawGroundArc(ctx, camera, x, height, z, blast, fuse01);
+        }
+      }
+      ctx.setLineDash([]);
+      break;
+    }
+
     case "status": {
       // The building-state badge (P2-T08). One stroke colour for every state on purpose: the state
       // is carried by the SHAPE (N-05), and giving each glyph its own colour would let a future
@@ -283,11 +322,28 @@ function drawGroundEllipse(
   ctx: CanvasRenderingContext2D, camera: CameraState,
   x: number, height: number, z: number, radius: number,
 ): void {
+  drawGroundArc(ctx, camera, x, height, z, radius, 1);
+}
+
+/**
+ * The first `fraction` of a ground ring, starting at twelve o'clock and sweeping clockwise.
+ *
+ * `drawGroundEllipse` is this with `fraction === 1`, so a full ring and a partial one can never
+ * disagree about where the circle sits — which matters, because the bomb overlay draws one on top
+ * of the other and any difference in projection would read as a rendering fault.
+ */
+function drawGroundArc(
+  ctx: CanvasRenderingContext2D, camera: CameraState,
+  x: number, height: number, z: number, radius: number, fraction: number,
+): void {
   const SEGMENTS = 16;
+  const last = Math.ceil(SEGMENTS * Math.max(0, Math.min(1, fraction)));
+  if (last <= 0) return;
   ctx.beginPath();
-  for (let i = 0; i <= SEGMENTS; i++) {
+  for (let i = 0; i <= last; i++) {
+    // Negative sin so the sweep runs clockwise on screen, the direction a clock hand moves.
     const a = (i / SEGMENTS) * Math.PI * 2;
-    projectToScreen(camera, x + Math.cos(a) * radius, height, z + Math.sin(a) * radius, projected);
+    projectToScreen(camera, x + Math.sin(a) * radius, height, z - Math.cos(a) * radius, projected);
     if (projected.behind) return;
     if (i === 0) ctx.moveTo(projected.x, projected.y);
     else ctx.lineTo(projected.x, projected.y);

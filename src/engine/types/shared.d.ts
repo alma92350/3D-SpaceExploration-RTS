@@ -40,6 +40,16 @@ declare global {
     y: number;
     home?: boolean;
     hidden?: boolean;
+    /**
+     * Battlefield debris that matured into a deposit (engine/wreckage.js). The engine treats it as
+     * an ordinary node in every other respect; this flag is the only thing that says a fight
+     * happened here.
+     */
+    wreck?: boolean;
+    /** A Helium Bomb crater that matured into a deposit (engine/bomb.js). Same shape as `wreck`. */
+    crater?: boolean;
+    /** Workers currently assigned, written by the sim's own per-tick tally. Read-only from here. */
+    miners?: number;
   }
 
   interface GameMap {
@@ -101,6 +111,30 @@ declare global {
      * it names WHO is being shot at, never THAT a shot occurred — the timer above says that.
      */
     autoTarget?: string | null;
+    /**
+     * Being scrapped back into resources. **Units recycle too** — `beginRecycle` takes an *entity*,
+     * not a building, and only `Building` declared this until P3-T17 needed a recycling colonist.
+     *
+     * The distinction that gap was hiding is a real one: a recycling BUILDING stays fully
+     * functional, which is why P2-T19's recycle/cancel pair on a Barracks cancelled out to a
+     * byte-identical world, while a recycling UNIT cannot act at all, so one second of it shifts a
+     * gather cycle permanently.
+     */
+    recycling?: { progress: number; time: number } | null;
+    // --- role "bomb" only (engine/bomb.js, P3-T10). Absent on every other unit in the game. ---
+    /**
+     * Armed. An unarmed Helium Bomb is inert in all three of its trigger paths — it can be shot,
+     * stood next to, or driven into a base with no effect — so this is the commitment, not the
+     * unit type. There is no engine command that sets it: `aiSuperweapon.js` flips the field
+     * directly, and upstream's own HUD does the same.
+     */
+    armed?: boolean;
+    /**
+     * Sim time (`state.time`, not wall clock) at which the blast is due, or absent/null while the
+     * fuse is unlit. **This is state, not an event** — `bombFused` fires once, four seconds before
+     * this comes due, and the warning has to outlive it (P3-T10).
+     */
+    fuseUntil?: number | null;
   }
 
   interface Building {
