@@ -206,6 +206,29 @@ export interface KeyResult {
    * market and the haulage/repair board. Everything else follows what the player has clicked.
    */
   readonly board?: "market" | "logistics";
+  /**
+   * Show or hide the GALAXY SCREEN — the starmap (P4-T13).
+   *
+   * Not an intent, for `board`'s reason: nothing in the simulation knows which screen is up, and a
+   * determinism replay must not depend on one. It is a request rather than a state because this
+   * module cannot see which screen the shell is showing, exactly as it cannot see the selection.
+   *
+   * **The letter is `Y`, the last free letter of *galaxy***, and that is not whimsy — it is what is
+   * left. The free-letter arithmetic in this function's own doc comment is the whole story: G is the
+   * power grid, A attack-moves, L is logistics and X is stop, so every other letter of the word the
+   * screen is named after is already spent, and of I/K/U/Y none has a better claim.
+   *
+   * (`J` for "jump" would read best of all and is deliberately not taken: `test/input/intents.test.ts`
+   * uses J as its example of a key this module does NOT own, and that test is the guard that would
+   * catch a letter quietly acquiring a binding. A binding worth having is worth not weakening a
+   * check for.)
+   *
+   * The approach view needs no letter of its own — it is reached by picking a destination, which is
+   * a click on a world or a button on this screen. And a screen you can only leave by remembering a
+   * key is a screen you can get stuck on: Escape backs out one level (`cancel`) and Y closes the
+   * whole thing.
+   */
+  readonly screen?: "starmap";
 }
 
 const NO_KEY: KeyResult = { intent: null, mode: null, camera: null, cancel: false };
@@ -234,7 +257,9 @@ export const POSITIONAL_KEYS: readonly string[] = ["z", "c", "v", "b", "n"];
  * **P4-T01 made the positional rule real rather than a reservation.** The HUD now has an ordered
  * button list (`HudModel.actions`), so Z/C/V/B/N return an INDEX into it and Phase 2's economy
  * controls get a keyboard without spending five more letters this board does not have. M and L open
- * the two boards that are not about the selection. That leaves I, J, K, U and Y genuinely free.
+ * the two boards that are not about the selection. That left I, J, K, U and Y genuinely free, and
+ * **P4-T13 has spent Y on the starmap** — the whole galaxy, every panel Phase 4 built and the
+ * approach view behind it, for one letter, because the positional row carries the rest.
  */
 export function translateKey(gesture: KeyGesture, mode: PendingMode = { kind: "none" }): KeyResult {
   // Control groups: the digit row, as every RTS since the nineties. Ctrl assigns, Shift appends, a
@@ -292,6 +317,11 @@ export function translateKey(gesture: KeyGesture, mode: PendingMode = { kind: "n
     // clicked, so they cost no key at all and reach the keyboard through the positional row above.
     case "m": return { ...NO_KEY, board: "market" };
     case "l": return { ...NO_KEY, board: "logistics" };
+    // --- Phase 4's galaxy, finally reachable (P4-T13) ---------------------------------------------
+    // The starmap. One of the five letters this board still had (see `screen` above), and the only
+    // Phase 4 control that needs a key at all: everything else on that screen is a button, and the
+    // approach view is opened by picking the destination it is about.
+    case "y": return { ...NO_KEY, screen: "starmap" };
     case "escape": return { intent: null, mode: { kind: "none" }, camera: null, cancel: true };
     // Space jumps to the newest live alert and Home goes to the base — the two were one binding
     // until P3-T14 gave the first one something to jump to. Space is the alert key in most of the

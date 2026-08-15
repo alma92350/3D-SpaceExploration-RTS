@@ -14,6 +14,7 @@
 
 import {
   activeState, createGalaxy, deserializeGalaxy, serializeGalaxy, stepGalaxy, supplyCap, supplyUsed,
+  sweepColonies,
 } from "../engine/index.js";
 import { STEP_SECONDS } from "../app/loop.js";
 import { type Snapshot, SnapshotExtractor } from "./snapshot.js";
@@ -39,35 +40,84 @@ export interface WorldOptions {
   playerFaction?: string;
 }
 
+/**
+ * One thing `sweepColonies` wants said out loud: a colony lost, a neighbour turning hostile, or a
+ * raid in progress on a world the player is not standing on.
+ *
+ * `type` is the engine's own string (`lost` | `hostile` | `attacked`) and is not narrowed here, for
+ * `galaxy-snapshot.ts`'s reason about status codes: a fourth kind added upstream must arrive as
+ * itself rather than being folded into one of these three by a mapping nobody would think to check.
+ */
+export interface ColonyNote {
+  readonly type: string;
+  readonly planetId: string;
+}
+
+/**
+ * How many undrained colony notes are kept.
+ *
+ * `lost` and `hostile` are latched by the engine and fire once per transition, but `attacked` fires
+ * on every sweep that finds a fresh player death on a colony — so a siege the player never looks at
+ * would grow this list for the rest of the session. The newest are kept, because that is what a
+ * transient notice is for; a reader that drains every frame never reaches the cap.
+ */
+const COLONY_NOTE_LIMIT = 16;
+
+const NO_NOTES: readonly ColonyNote[] = [];
+
 export class WorldBridge {
-  private galaxy: Galaxy;
-  private readonly extractor: SnapshotExtractor;
+  #galaxy: Galaxy;
+  /**
+   * Rebuilt when the seat changes — see `refresh`. Not `readonly` any more, and that is the whole
+   * of the fix: it is sized from ONE map (fog dimensions, width, height, the base's position).
+   */
+  private extractor: SnapshotExtractor;
+  /** The map the extractor was built for, so a seat change is noticed rather than assumed. */
+  private extractorMap: GameMap;
   /** Intents accumulate here and are applied at the top of the next step, never mid-tick. */
   private readonly pending: Intent[] = [];
   private lastCommandError: string | null = null;
+  /** Colony notifications since the last drain — see `takeColonyNotes`. */
+  private readonly notes: ColonyNote[] = [];
 
   constructor(opts: WorldOptions = {}) {
-    this.galaxy = createGalaxy({
+    this.#galaxy = createGalaxy({
       seed: opts.seed ?? 1,
       startId: opts.worldId ?? MVP_WORLD,
       difficulty: opts.difficulty ?? "medium",
       playerFaction: opts.playerFaction ?? "frontier",
     });
-    this.extractor = new SnapshotExtractor(activeState(this.galaxy).map);
+    this.extractorMap = activeState(this.#galaxy).map;
+    this.extractor = new SnapshotExtractor(this.extractorMap);
     this.refresh();
   }
 
   /** The seat's engine state. Only the bridge and its own tests may hold this. */
   get state(): State {
-    return activeState(this.galaxy);
+    return activeState(this.#galaxy);
+  }
+
+  /**
+   * The galaxy the seat sits in (P4-T13).
+   *
+   * Beside `get state()` and under the same rule — this is the meta-layer, so the app may look at
+   * it and nothing above the bridge may write it. It exists because Phase 4's screens are ALL about
+   * the galaxy rather than about the seat: the starmap draws the roster, the jump/colony/lane panels
+   * take a `Galaxy` argument, and `approachBrief` previews a world that is not the seat. Until now
+   * the only way to reach any of that was a guarded cast at the private field, which
+   * `test/determinism/replay.ts` had been carrying since P4-T11 with a comment naming this accessor
+   * as the real fix.
+   */
+  get galaxy(): Galaxy {
+    return this.#galaxy;
   }
 
   get worldId(): string {
-    return this.galaxy.activeId;
+    return this.#galaxy.activeId;
   }
 
   get seed(): number {
-    return this.galaxy.seed;
+    return this.#galaxy.seed;
   }
 
   get snapshot(): Snapshot {
@@ -76,7 +126,7 @@ export class WorldBridge {
 
   /** Galaxy credits. They live above the world, which is why trade needs the galaxy (P2-T03). */
   get galaxyCredits(): number {
-    return this.galaxy.credits;
+    return this.#galaxy.credits;
   }
 
   /** Queue player intent. Never applied immediately — see the class comment. */
@@ -93,7 +143,7 @@ export class WorldBridge {
    * uses rather than a second one that could drift from it.
    */
   apply(intent: Intent): string | null {
-    return applyIntent(this.state, intent, this.galaxy);
+    return applyIntent(this.state, intent, this.#galaxy);
   }
 
   /** Why the last command was rejected (not enough ore, blocked ground), for the HUD. */
@@ -101,6 +151,22 @@ export class WorldBridge {
     const e = this.lastCommandError;
     this.lastCommandError = null;
     return e;
+  }
+
+  /**
+   * What the colonies had to say since the last call, newest last. Drained like `takeCommandError`.
+   *
+   * These are the only news in this client that is about a world the player cannot see, which is
+   * exactly why they are handed over as data rather than pushed anywhere: the shell decides where
+   * they land. They are NOT alerts in `view/alerts.ts`' sense and do not fit that pool — an alert
+   * carries the world position "focus last alert" jumps the camera to, and a colony note has no
+   * position on the seat's map to jump to (see P4-T13's notes).
+   */
+  takeColonyNotes(): readonly ColonyNote[] {
+    if (this.notes.length === 0) return NO_NOTES;      // the common case allocates nothing
+    const out = this.notes.slice();
+    this.notes.length = 0;
+    return out;
   }
 
   /**
@@ -112,7 +178,31 @@ export class WorldBridge {
    */
   step(dt: number = STEP_SECONDS): void {
     this.drain();
-    stepGalaxy(this.galaxy, dt);
+    stepGalaxy(this.#galaxy, dt);
+    // THE COLONY SWEEP (P4-T13), which nothing in this client drove until now.
+    //
+    // `stepGalaxy` does not call it — verified in the source above this line's own dependency:
+    // `stepGalaxy` runs the worlds, the lanes and the ~1 Hz galaxy scans, and colony income is not
+    // among them. So `COLONY_INCOME_PER_BUILDING` was a rate nobody banked, `PACIFIED_INCOME` was
+    // an occupation dividend nobody was paid, and P4-T06's panel was correctly reporting money that
+    // never arrived. It belongs here rather than in the app for the reason the whole bridge exists:
+    // it moves `galaxy.credits`, which is simulation state.
+    //
+    // After `stepGalaxy` rather than before, so a colony's news is reported by the step that
+    // produced it: the sweep reads each colony's `state.events` for the tick that has just run and
+    // then drains them, being their only consumer (exactly as the seat's are drained below).
+    // **It is a one-tick shift and nothing in the suite distinguishes the two orders** — no event is
+    // lost either way, because the drain and the read are the same pass. Said plainly rather than
+    // dressed up as a correctness rule, so the next reader does not assume a test is holding it.
+    //
+    // It does not touch the seat — `sweepColonies` skips every world that is not `background` — and
+    // it moves nothing `hashState`/`hashGalaxy` hash, so the determinism fixture is unaffected by
+    // its arrival. That is a fact about the digest rather than a coincidence: credits were left out
+    // of it deliberately (see `test/determinism/replay.ts`).
+    for (const note of sweepColonies(this.#galaxy, dt)) {
+      this.notes.push(note);
+      if (this.notes.length > COLONY_NOTE_LIMIT) this.notes.shift();
+    }
     // The engine queues per-tick events for the UI to drain, and an undrained array grows without
     // bound for the whole session — so the bridge drains it, exactly as upstream's own client does.
     //
@@ -126,19 +216,40 @@ export class WorldBridge {
 
   private drain(): void {
     if (this.pending.length === 0) return;
-    const state = this.state;
     for (const intent of this.pending) {
-      const err = applyIntent(state, intent, this.galaxy);
+      // The seat is read PER INTENT rather than once, because one of them changes it: a `jump`
+      // moves `galaxy.activeId`, and every later intent in the same batch belongs to the world the
+      // player has just arrived on. Hoisting this out of the loop — which is what it used to do —
+      // would apply them to the world they left.
+      const err = applyIntent(this.state, intent, this.#galaxy);
       if (err) this.lastCommandError = err;
     }
     this.pending.length = 0;
   }
 
+  /**
+   * Re-extract, rebuilding the extractor first if the seat has moved under it.
+   *
+   * `SnapshotExtractor` is built from ONE map: its fog buffer is sized from that map's dimensions
+   * and `snap.map` — width, height, and the player's base anchor — is written in its constructor and
+   * never again. A jump swaps the seat, and `load()` can swap it too.
+   *
+   * **Nothing visible changes today and this is a guard, not a fix.** Every world in the current
+   * roster generates at 1600 × 1000 with the same player anchor, so a stale extractor happens to
+   * describe the new world correctly. What it is a guard on is that coincidence: `data.js`'s
+   * settings carry a `sizeMult` per scenario, and one world sized differently would leave
+   * `extractFog` filling a buffer cut for another map — a fog that is wrong at the edges, from a
+   * line nobody would think to look at. Four lines, and the assumption stops being load-bearing.
+   */
   private refresh(): void {
     const state = this.state;
+    if (state.map !== this.extractorMap) {
+      this.extractorMap = state.map;
+      this.extractor = new SnapshotExtractor(state.map);
+    }
     this.extractor.extract(state, {
       viewer: "player",
-      credits: this.galaxy.credits,
+      credits: this.#galaxy.credits,
       supplyUsed: supplyUsed(state, "player"),
       supplyCap: supplyCap(state, "player"),
     });
@@ -146,7 +257,7 @@ export class WorldBridge {
 
   /** Save the whole galaxy in upstream's own format (PRD F-08). */
   save(): Record<string, unknown> {
-    return serializeGalaxy(this.galaxy);
+    return serializeGalaxy(this.#galaxy);
   }
 
   /**
@@ -168,7 +279,7 @@ export class WorldBridge {
       return false;
     }
     if (!restored) return false;
-    this.galaxy = restored;
+    this.#galaxy = restored;
     this.refresh();
     return true;
   }

@@ -7,23 +7,29 @@
 import { BUILD_REACH, BUILDINGS, NODE_RADIUS, UNITS } from "../engine/index.js";
 import { WorldBridge, type WorldOptions } from "../bridge/world.js";
 import { checkPlacement } from "../bridge/commands.js";
+import { GalaxySnapshotExtractor, type GalaxySnapshot } from "../bridge/galaxy-snapshot.js";
 import { FLAG_BUILDING_KIND, type Snapshot } from "../bridge/snapshot.js";
-import { FixedStepLoop } from "./loop.js";
+import { FixedStepLoop, STEP_SECONDS } from "./loop.js";
 import { type Settings, saveSettings } from "./settings.js";
 import { CameraRig, clamp } from "../input/camera.js";
-import { pickGround } from "../input/picking.js";
+import { pickGround, projectToScreen } from "../input/picking.js";
 import { type PendingMode, type PointerGesture, translateKey, translatePointer } from "../input/intents.js";
 import { ControlGroups } from "../input/control-groups.js";
 import { AlertFeed } from "../view/alerts.js";
+import { ApproachView } from "../view/landing.js";
+import {
+  AUTHORED_VIEW, StarmapComposer, authoredCamera, plateMidX, plateX, plateZ,
+} from "../view/starmap.js";
+import { approachBrief } from "../ui/landing-panel.js";
 import { type ElevationField, elevationFieldFrom } from "../view/terrain/elevation.js";
 import { buildTerrainMesh } from "../view/terrain/mesh.js";
 import { buildMeshes, meshIdForType } from "../view/meshes/generators.js";
 import { SceneComposer, type GhostState } from "../view/scene.js";
-import { type Renderer, type TerrainMesh, type Tier } from "../view/renderer/port.js";
+import { type FogField, type Renderer, type TerrainMesh, type Tier } from "../view/renderer/port.js";
 import { TIERS, TierMonitor } from "../view/renderer/tiers.js";
 import {
   type EconomyBoard, type EconomyModel, type HudAction, type HudCommand, type HudModel,
-  EconomyCache, HudView, hudModel,
+  EconomyCache, GalaxyCache, HudView, hudModel,
 } from "../ui/hud.js";
 import { MinimapView, minimapToWorld } from "../ui/minimap.js";
 
@@ -39,17 +45,65 @@ const KEY_PAN_SPEED = 900;
 const ENTITY_PICK_SLACK = 6;        // extra world units around an entity that still counts as a click
 const OPENING_DISTANCE = 210;       // see the constructor
 
+/**
+ * Which screen the player is looking at (P4-T13).
+ *
+ * Three, and the starmap REPLACES the battlefield's frame rather than floating over it — ADR-0019
+ * §1 priced both (8 draw calls against 30, neither binding) and chose replacement because a diagram
+ * read over a scene is two things competing for the same eye.
+ *
+ * The approach view owns real objects — a rig, a brief, a terrain mesh — so it is a variant with
+ * fields rather than a string plus four nullable properties on the class. A screen that is closed
+ * then holds nothing at all, which is the only way to be sure a stale brief cannot be drawn.
+ */
+type Screen =
+  | { readonly kind: "world" }
+  | { readonly kind: "starmap" }
+  | {
+    readonly kind: "approach";
+    readonly destId: string;
+    readonly view: ApproachView;
+    /** Built from `brief.field` when the screen opens, never per frame (ADR-0006). */
+    readonly terrain: TerrainMesh;
+    /** See `approachFog` — the destination's ground is known, and nothing on it is. */
+    readonly fog: FogField;
+  };
+
+/**
+ * How near a click has to be to a world marker, in pixels.
+ *
+ * `perf/starmap-probe.mjs` measured the plate's zero marker collisions against a **28 px** marker
+ * radius, so two markers are never closer than 56 px at the authored view and a pick radius of 28
+ * can never claim two of them. Widening it would trade the probe's guarantee for a fatter target.
+ */
+const STARMAP_PICK_RADIUS = 28;
+
+/**
+ * The starmap rig's bounds.
+ *
+ * `CameraRig` clamps a target to `[0, limit]`, and the plate is centred on `AUTHORED_VIEW`'s own
+ * coordinates — so anything at least twice that keeps the authored view well inside them. Nothing
+ * on this screen pans or rotates in any case (ADR-0019 §3: a diagram is read at one orientation).
+ */
+const PLATE_LIMIT = AUTHORED_VIEW.centreX * 2;
+
 export class Game {
   readonly bridge: WorldBridge;
-  readonly camera: CameraRig;
+  /**
+   * The battlefield camera. Rebuilt on a jump, because `CameraRig` clamps its target to the map it
+   * was constructed with and the next world is a different size — see `adoptSeat`.
+   */
+  camera: CameraRig;
 
-  private readonly field: ElevationField;
-  private readonly composer: SceneComposer;
+  private field: ElevationField;
+  private composer: SceneComposer;
   private readonly loop: FixedStepLoop;
   private readonly hud: HudView;
-  private readonly minimap: MinimapView;
+  private minimap: MinimapView;
   private readonly tierMonitor: TierMonitor;
   private terrain: TerrainMesh;
+  /** The world the shell is set up for. A jump moves the seat under it — see `adoptSeat`. */
+  private seatId: string;
 
   private mode: PendingMode = { kind: "none" };
   /**
@@ -86,7 +140,33 @@ export class Game {
    * and none of it belongs in a 60 Hz frame, so the cache owns when it is rebuilt — see `EconomyCache`.
    */
   private readonly economyCache = new EconomyCache();
-  private economy: EconomyModel = { sections: [], actions: [] };
+  /**
+   * Which screen is up (P4-T13). View state, like `board` and `showPower` above it: nothing in the
+   * simulation knows, and a determinism replay must not depend on it.
+   */
+  private screen: Screen = { kind: "world" };
+  /**
+   * The starmap's own rig, so opening the galaxy does not throw away where the player was looking.
+   *
+   * A second rig rather than a saved-and-restored pose because `authoredCamera` writes four fields
+   * the battlefield also owns, and "restore it afterwards" is the kind of bookkeeping that is right
+   * until the day something returns early. It carries no elevation field, which is exactly true of
+   * the plate: there is no ground there.
+   */
+  private readonly starmapCamera = new CameraRig({ mapWidth: PLATE_LIMIT, mapHeight: PLATE_LIMIT });
+  private readonly starmap = new StarmapComposer();
+  private readonly galaxyExtractor = new GalaxySnapshotExtractor();
+  /** The galaxy tick the starmap's snapshot was extracted on. Extraction is per TICK, not per frame. */
+  private galaxySnapTick = -1;
+  private readonly galaxyCache = new GalaxyCache();
+  /**
+   * Version counter for the synthetic fog an approach screen uploads.
+   *
+   * Counts DOWN from zero, so it can never collide with the world's own fog version, which counts
+   * up from it. Both renderers skip a `setFog` whose version they have already seen, so a collision
+   * would leave one screen wearing the other's fog until the next tick that happened to change it.
+   */
+  private approachFogVersion = 0;
   private running = false;
   private rafHandle = 0;
   /** Told whenever the tier changes, however it changed. Set by the shell so the picker tracks it. */
@@ -101,6 +181,7 @@ export class Game {
   ) {
     this.bridge = new WorldBridge(worldOptions);
     const map = this.bridge.state.map;
+    this.seatId = this.bridge.worldId;
     this.field = elevationFieldFrom(map.terrain, map.width, map.height);
     this.camera = new CameraRig({ mapWidth: map.width, mapHeight: map.height }, this.field);
     this.camera.focusOn(map.bases.player.x, map.bases.player.y);
@@ -110,9 +191,7 @@ export class Game {
     // near enough to read the ship is the difference between "a world" and "a loading screen".
     this.camera.distance = OPENING_DISTANCE;
     this.composer = new SceneComposer(this.field);
-    this.terrain = buildTerrainMesh(this.field, {
-      relief: TIERS[tier].terrain === "relief", apron: TIERS[tier].apron,
-    });
+    this.terrain = this.terrainFor(this.field);
     this.tierMonitor = new TierMonitor(tier);
     if (settings.tierOverride) this.tierMonitor.setManual(settings.tierOverride);
 
@@ -145,6 +224,44 @@ export class Game {
 
     this.attachListeners();
     this.resize();
+    this.hud.setScreen(this.screen.kind);
+  }
+
+  /**
+   * Move the shell onto the world the player has just jumped to (P4-T13).
+   *
+   * Everything rebuilt here is derived from ONE map and would otherwise describe the world that was
+   * left: the elevation field the picker ray-marches, the camera's clamp bounds, the terrain mesh,
+   * the minimap's extent, and the interpolation/effect pools, whose entity ids belong to a world
+   * that is no longer on screen. The alert board is cleared for the same reason and one more — an
+   * alert carries the position "focus last alert" jumps to, and those positions are on the old map.
+   *
+   * The bridge does the same for its own extractor (see `WorldBridge.refresh`). Neither half was
+   * reachable before this row, because nothing in the client could issue a jump.
+   */
+  private adoptSeat(): void {
+    const map = this.bridge.state.map;
+    this.seatId = this.bridge.worldId;
+    this.field = elevationFieldFrom(map.terrain, map.width, map.height);
+    this.camera = new CameraRig({ mapWidth: map.width, mapHeight: map.height }, this.field);
+    this.camera.focusOn(map.bases.player.x, map.bases.player.y);
+    this.camera.distance = OPENING_DISTANCE;
+    this.composer = new SceneComposer(this.field);
+    this.minimap = new MinimapView(this.elements.minimapCanvas, {
+      pixelWidth: this.elements.minimapCanvas.width || 200,
+      pixelHeight: this.elements.minimapCanvas.height || 125,
+      worldWidth: map.width,
+      worldHeight: map.height,
+    });
+    this.terrain = this.terrainFor(this.field);
+    this.alerts.clear();
+    this.ghost = null;
+    this.mode = { kind: "none" };
+    // An approach view onto the world just arrived on is a picker for a jump that has happened.
+    // Unreachable through the confirm button (it closes the screen itself) and cheap to be sure of.
+    if (this.screen.kind === "approach" && this.screen.destId === this.seatId) {
+      this.setScreen({ kind: "world" });
+    }
   }
 
   start(): void {
@@ -199,46 +316,125 @@ export class Game {
     this.tierListener?.(tier);
   }
 
-  private rebuildTerrainForTier(): void {
-    // The terrain mesh is the one asset a tier switch genuinely changes (T0 collapses it flat,
-    // ADR-0004). Rebuilding here — and only here — keeps the "rebuilt only on change" contract.
-    this.terrain = buildTerrainMesh(this.field, {
+  /** One terrain mesh at the current tier. The single place the tier's ground options are read. */
+  private terrainFor(field: ElevationField): TerrainMesh {
+    return buildTerrainMesh(field, {
       relief: TIERS[this.tier].terrain === "relief", apron: TIERS[this.tier].apron,
     });
   }
 
+  private rebuildTerrainForTier(): void {
+    // The terrain mesh is the one asset a tier switch genuinely changes (T0 collapses it flat,
+    // ADR-0004). Rebuilding here — and only here — keeps the "rebuilt only on change" contract.
+    this.terrain = this.terrainFor(this.field);
+    // The approach view draws the DESTINATION's ground through the same tier settings, so a tier
+    // change while the picker is open has to reach it too — otherwise the world the player is about
+    // to land on keeps the relief of a tier they have left. Re-opening costs the mark they had
+    // placed (`ApproachView` takes a pick through `pointAt` and has no setter for one, and
+    // `view/landing.ts` is not this row's to change) — an acceptable price for a keystroke, and for
+    // the automatic tier drop that is the only other way to get here.
+    if (this.screen.kind === "approach") this.openApproach(this.screen.destId);
+  }
+
   private renderFrame(alpha: number, frameMs: number): void {
+    // A jump lands inside `bridge.step` — it is an intent like any other, drained at the top of a
+    // tick — so the seat can be a different world by the time a frame runs, and the field, the rig
+    // and the terrain below are all built from the seat's map.
+    //
+    // Checked HERE rather than beside the step that caused it, because this is where the staleness
+    // would actually show: whatever moves the seat — a jump, a load, a test driving the bridge
+    // directly — cannot reach the screen without passing this line.
+    if (this.bridge.worldId !== this.seatId) this.adoptSeat();
     const snap = this.bridge.snapshot;
-    this.applyContinuousPan(frameMs / 1000);
-    this.composer.ageEffects(frameMs / 1000);
-    this.updateGhost();
-
     const rect = this.elements.viewport.getBoundingClientRect();
-    const camera = this.camera.update(rect.width, rect.height);
+    const screen = this.screen;
 
-    this.renderer.setFog(snap.fog);
-    // The power grid is a placement cue first and a toggle second (ADR-0012 §2): it is on while a
-    // build ghost is up, because "will this run efficiently here?" is a question asked at exactly
-    // that moment, and otherwise only when the player asked for it with `G`.
-    this.renderer.setPower(this.ghost || this.showPower ? snap.power : null);
-    this.composer.compose(this.renderer, snap, camera, TIERS[this.tier], this.terrain, alpha, this.ghost);
+    // The effect pool ages on every screen, not only on the battlefield: it is a clock, and a clock
+    // that stops while the starmap is open would dump a minute of tracers the moment it closes.
+    this.composer.ageEffects(frameMs / 1000);
+
+    if (screen.kind === "world") {
+      this.applyContinuousPan(frameMs / 1000);
+      this.updateGhost();
+      const camera = this.camera.update(rect.width, rect.height);
+      this.renderer.setFog(snap.fog);
+      // The power grid is a placement cue first and a toggle second (ADR-0012 §2): it is on while a
+      // build ghost is up, because "will this run efficiently here?" is a question asked at exactly
+      // that moment, and otherwise only when the player asked for it with `G`.
+      this.renderer.setPower(this.ghost || this.showPower ? snap.power : null);
+      this.composer.compose(this.renderer, snap, camera, TIERS[this.tier], this.terrain, alpha, this.ghost);
+      this.minimap.draw(snap, camera);
+    } else {
+      // The grid belongs to the world being built on, and neither galaxy screen is one.
+      this.renderer.setPower(null);
+      if (screen.kind === "starmap") {
+        this.starmap.compose(
+          this.renderer, this.galaxySnapshot(), this.starmapCamera.update(rect.width, rect.height),
+        );
+      } else {
+        // The destination's own fog, not the seat's. Both renderers paint terrain through whatever
+        // fog they last received, so without this the world the player is about to land on wears the
+        // explored shape of the world they are standing on — a pattern that means nothing here.
+        this.renderer.setFog(screen.fog);
+        screen.view.compose(
+          this.renderer, screen.terrain, screen.view.camera(rect.width, rect.height),
+        );
+      }
+    }
 
     const hud = hudModel(snap, this.bridge.state);
-    this.hud.render(hud);
-    this.refreshEconomy(hud, snap);
-    this.hud.renderEconomy(this.economy);
+    const drawer = screen.kind === "world"
+      ? this.refreshEconomy(hud, snap)
+      : this.galaxyCache.get({
+        galaxy: this.bridge.galaxy,
+        stepSeconds: STEP_SECONDS,
+        approach: screen.kind === "approach"
+          ? { brief: screen.view.brief, pick: screen.view.pick, site: screen.view.site }
+          : null,
+      });
+    // The world's own action row is emptied on a galaxy screen. The positional keys must address
+    // what the player is LOOKING at, and a Deploy button from the world behind the starmap would
+    // sit on Z and push the jump controls off the row.
+    this.hud.render(screen.kind === "world" ? hud : { ...hud, actions: NO_ACTIONS });
+    this.hud.renderEconomy(drawer);
     // The positional row is the concatenation, in the order the two rows are drawn. Z is the first
     // button the player can see and N is the fifth, whichever panel it came from.
-    this.actions = [...hud.actions, ...this.economy.actions];
+    this.actions = screen.kind === "world" ? [...hud.actions, ...drawer.actions] : drawer.actions;
     const error = this.bridge.takeCommandError();
     if (error) this.hud.notice(error);
-    this.minimap.draw(snap, camera);
+    // A colony's news, which does NOT fit the alert board — see `takeColonyNotes`. It lands in the
+    // notice, the same line a refused order does, and the standing condition behind it is on the
+    // starmap itself: `alertForWorld` marks a contested world for as long as it is contested, which
+    // is the difference between a moment and a state that `view/alerts.ts` is built around.
+    //
+    // The newest wins when several arrive on one frame. That is what a one-line notice means, and
+    // the sweep raises each of these at most once per state change, so "several" is two worlds
+    // falling in the same frame rather than a stream.
+    for (const note of this.bridge.takeColonyNotes()) this.hud.notice(colonyNotice(note));
 
     const correction = this.tierMonitor.sample(frameMs);
     if (correction.dropped) {
       this.setTier(correction.tier, false);
       this.hud.notice(correction.notice);
     }
+  }
+
+  /**
+   * The galaxy snapshot the starmap draws, extracted **once per galaxy tick**.
+   *
+   * `galaxyStatus` allocates its own result object and array per call (it is upstream's and we do
+   * not fork it), and `jumpCost`/`canJumpTo` are asked per world — so this is exactly the work
+   * `bridge/galaxy-snapshot.ts`' own header says belongs on a tick and not on a frame. It is also
+   * why the extraction is here rather than in `WorldBridge.step`: the starmap is closed almost all
+   * of the time, and a battlefield frame should not pay for a screen nobody is looking at.
+   */
+  private galaxySnapshot(): GalaxySnapshot {
+    const tick = this.bridge.galaxy.tick;
+    if (tick !== this.galaxySnapTick) {
+      this.galaxySnapTick = tick;
+      this.galaxyExtractor.extract(this.bridge.galaxy);
+    }
+    return this.galaxyExtractor.snapshot;
   }
 
   // -------------------------------------------------------------------------
@@ -252,7 +448,14 @@ export class Game {
     el.addEventListener("pointerup", (e) => this.onPointerUp(e));
     el.addEventListener("pointermove", (e) => this.onPointerMove(e));
     el.addEventListener("pointerleave", () => { this.pointerInside = false; });
-    el.addEventListener("wheel", (e) => { e.preventDefault(); this.camera.zoom(Math.sign(e.deltaY)); }, { passive: false });
+    el.addEventListener("wheel", (e) => {
+      e.preventDefault();
+      // The approach view is a full rig, not a frozen pose (P4-T05): zooming in to look at a valley
+      // is the same control it is on the battlefield. The plate does not zoom — its one distance is
+      // the authored view the layout was priced at.
+      if (this.screen.kind === "approach") this.screen.view.rig.zoom(Math.sign(e.deltaY));
+      else if (this.screen.kind === "world") this.camera.zoom(Math.sign(e.deltaY));
+    }, { passive: false });
     el.addEventListener("dblclick", (e) => this.onDoubleClick(e));
     window.addEventListener("keydown", (e) => this.onKeyDown(e));
     window.addEventListener("keyup", (e) => this.keys.delete(e.key.toLowerCase()));
@@ -266,6 +469,7 @@ export class Game {
   }
 
   private onPointerDown(e: PointerEvent): void {
+    if (this.screen.kind !== "world") return;
     const { x, y } = this.localPoint(e);
     const hit = pickGround(this.camera.update(...this.viewportSize()), this.field, x, y);
     if (e.button === 0) this.dragStart = { x, y, worldX: hit.x, worldY: hit.y };
@@ -276,11 +480,50 @@ export class Game {
     this.pointerX = x;
     this.pointerY = y;
     this.pointerInside = true;
+    // THE APPROACH VIEW'S MARK follows the pointer (P4-T05). Hovering is the right gesture for it:
+    // the whole screen exists so the player can see where a jump lands before committing, and a
+    // picker that only answered on a click would make them click to ask the question.
+    if (this.screen.kind === "approach") {
+      const rig = this.screen.view.rig;
+      // Middle-drag pans here too. The approach view is a full rig rather than a frozen pose
+      // precisely so that looking into a valley before committing is the same two controls it is on
+      // the battlefield (P4-T05) — the wheel is the other one, in `attachListeners`.
+      if ((e.buttons & 4) !== 0) {
+        const perPixel = (rig.distance * 1.1) / Math.max(1, this.viewportSize()[1]);
+        rig.pan(-e.movementX * perPixel, -e.movementY * perPixel);
+      }
+      const [w, h] = this.viewportSize();
+      this.screen.view.pointAt(this.screen.view.camera(w, h), x, y);
+      return;
+    }
+    if (this.screen.kind !== "world") return;
     // Middle-drag pans. Screen-space delta, so it works at any yaw (see CameraRig.pan).
     if ((e.buttons & 4) !== 0) this.camera.pan(-e.movementX * this.worldPerPixel(), -e.movementY * this.worldPerPixel());
   }
 
   private onPointerUp(e: PointerEvent): void {
+    if (this.screen.kind === "starmap") {
+      // A click on a world is how the starmap becomes more than a picture: the plate is where a
+      // destination is chosen, and the approach view is what that choice opens.
+      if (e.button === 0) {
+        const { x, y } = this.localPoint(e);
+        const world = this.worldAtPixel(x, y);
+        if (world) this.openApproach(world);
+      }
+      return;
+    }
+    if (this.screen.kind === "approach") {
+      // The same call `pointermove` makes: a deliberate click marks the spot, and then moving the
+      // pointer off the world (toward the confirm button) leaves the mark where it was put, because
+      // `pointAt` refuses a ray that has left the map rather than clamping it.
+      if (e.button === 0) {
+        const { x, y } = this.localPoint(e);
+        const [w, h] = this.viewportSize();
+        this.screen.view.pointAt(this.screen.view.camera(w, h), x, y);
+      }
+      return;
+    }
+
     const { x, y } = this.localPoint(e);
     const camera = this.camera.update(...this.viewportSize());
     const hit = pickGround(camera, this.field, x, y);
@@ -318,6 +561,7 @@ export class Game {
   }
 
   private onDoubleClick(e: MouseEvent): void {
+    if (this.screen.kind !== "world") return;
     const { x, y } = this.localPoint(e);
     const hit = pickGround(this.camera.update(...this.viewportSize()), this.field, x, y);
     this.emit({
@@ -329,9 +573,21 @@ export class Game {
   private onKeyDown(e: KeyboardEvent): void {
     this.keys.add(e.key.toLowerCase());
     const result = translateKey({ key: e.key, shift: e.shiftKey, ctrl: e.ctrlKey }, this.mode);
+    // The galaxy screen (P4-T13). A toggle, like the economy boards: the same key closes what it
+    // opened, because a second key to close is one a player has to be told about.
+    if (result.screen === "starmap") {
+      this.setScreen(this.screen.kind === "world" ? { kind: "starmap" } : { kind: "world" });
+    }
     if (result.mode) this.mode = result.mode;
     if (result.togglePower) this.showPower = !this.showPower;
-    if (result.cancel) this.ghost = null;
+    // Escape backs out ONE level — the approach view to the starmap it was opened from, the starmap
+    // to the world — rather than dropping straight to the battlefield. Backing out of a mis-clicked
+    // destination should not also close the screen the player was choosing on.
+    if (result.cancel) {
+      this.ghost = null;
+      if (this.screen.kind === "approach") this.setScreen({ kind: "starmap" });
+      else if (this.screen.kind === "starmap") this.setScreen({ kind: "world" });
+    }
     if (result.intent) this.bridge.enqueue(result.intent);
     if (result.group) this.applyGroup(result.group.n, result.group.op);
     if (result.bomb) this.applyBomb(result.bomb);
@@ -344,6 +600,10 @@ export class Game {
     // Toggling: the same key closes the board it opened. A second key to close is one a player has
     // to be told about, and this client has no place to tell them.
     if (result.board) this.board = this.board === result.board ? null : result.board;
+    // Camera commands belong to the battlefield. Neither galaxy screen has a base to go home to and
+    // the plate is read at one authored orientation (ADR-0019 §3), so a rotate here would be a
+    // control that does nothing visible — or worse, moves a camera nobody is looking through.
+    if (this.screen.kind !== "world") return;
     switch (result.camera) {
       case "focusBase": {
         const base = this.bridge.state.map.bases.player;
@@ -370,6 +630,7 @@ export class Game {
   }
 
   private onMinimapClick(e: PointerEvent): void {
+    if (this.screen.kind !== "world") return;
     const rect = this.elements.minimapCanvas.getBoundingClientRect();
     const canvas = this.elements.minimapCanvas;
     const world = minimapToWorld(
@@ -467,6 +728,93 @@ export class Game {
     }
   }
 
+  /* ---------------------------------------------------------------------------------------------
+     The galaxy screens (P4-T13)
+     --------------------------------------------------------------------------------------------- */
+
+  /**
+   * Show a screen, and tell the camera and the stylesheet about it.
+   *
+   * **`authoredCamera` is called HERE, at the switch**, which is where ADR-0019 leaves it: the
+   * composer owns the layout and never touches a rig, and the layout is only priced at one
+   * orientation, so somebody has to put the rig there. Doing it on the switch rather than per frame
+   * means a starmap rig that has somehow been moved is corrected the next time the screen opens,
+   * and a frame costs four assignments fewer.
+   */
+  private setScreen(next: Screen): void {
+    this.screen = next;
+    if (next.kind === "starmap") authoredCamera(this.starmapCamera);
+    this.hud.setScreen(next.kind);
+  }
+
+  /**
+   * Open the approach view on a destination (P4-T05).
+   *
+   * The brief is built ONCE per screen, as `approachBrief`'s own header insists: `previewPlanet`
+   * generates a dormant world's whole state to look at, and it re-seeds the engine's global entity
+   * id counter on the way through. Repeated calls are idempotent rather than cumulative, which is
+   * why re-opening on a tier change (see `rebuildTerrainForTier`) is safe.
+   *
+   * The terrain mesh and the fog field are built here for the same reason and a plainer one: they
+   * are the two pieces of a frame that must never be rebuilt inside one (ADR-0006).
+   */
+  private openApproach(destId: string): void {
+    if (destId === this.bridge.worldId) return;          // the seat is not a destination
+    const view = new ApproachView(approachBrief(this.bridge.galaxy, destId));
+    this.setScreen({
+      kind: "approach",
+      destId,
+      view,
+      terrain: this.terrainFor(view.brief.field),
+      fog: this.approachFog(view.brief.field.width, view.brief.field.height),
+    });
+  }
+
+  /**
+   * The fog an approach screen is drawn under: **explored everywhere, visible nowhere.**
+   *
+   * That is not a shortcut around the destination's real fog — it is the honest description of what
+   * this screen knows. The brief carries terrain, the player's own pads and the world's anchor, and
+   * it has no channel for anything alive there (see `view/landing.ts`'s "a blind landing stays
+   * blind"), so the ground reads as known and nothing on it reads as watched. The alternative is
+   * whatever the renderer last uploaded, which is the SEAT's fog: another world's explored shape
+   * stamped onto this one's ground.
+   */
+  private approachFog(width: number, height: number): FogField {
+    const cell = this.bridge.snapshot.fog.cell;   // the engine's own cell size, transported not copied
+    const cols = Math.ceil(width / cell);
+    const rows = Math.ceil(height / cell);
+    return {
+      cols, rows, cell,
+      state: new Uint8Array(cols * rows).fill(FOG_EXPLORED_NOT_VISIBLE),
+      version: --this.approachFogVersion,
+    };
+  }
+
+  /**
+   * Which world the player clicked on the plate, or null.
+   *
+   * Screen-space, because that is the question: the plate is a diagram and a marker's identity is
+   * where it is (ADR-0019 §6). It projects each world through the very matrix the frame was drawn
+   * with — `projectToScreen`, the same function the overlay renderers use — so the pick cannot
+   * disagree with the picture the way a second layout would.
+   */
+  private worldAtPixel(px: number, py: number): string | null {
+    const snap = this.galaxySnapshot();
+    const w = snap.worlds;
+    const camera = this.starmapCamera.update(...this.viewportSize());
+    const midX = plateMidX(w.x, w.count);
+    let best: string | null = null;
+    let bestDistance = STARMAP_PICK_RADIUS;
+    for (let i = 0; i < w.count; i++) {
+      projectToScreen(camera, plateX(w.x[i]!, midX), 0, plateZ(i), SCREEN_POINT);
+      if (SCREEN_POINT.behind) continue;
+      const d = Math.hypot(SCREEN_POINT.x - px, SCREEN_POINT.y - py);
+      if (d < bestDistance) { bestDistance = d; best = w.ids[i]!; }
+    }
+    return best;
+  }
+
   /**
    * Run one HUD command, from a click or from a positional key. The single path (P4-T01).
    *
@@ -481,12 +829,24 @@ export class Game {
       this.mode = { kind: "build", buildingType: command.buildingType };
       return;
     }
+    if (command.kind === "screen") {
+      this.setScreen(command.screen === "starmap" ? { kind: "starmap" } : { kind: "world" });
+      return;
+    }
+    if (command.kind === "approach") {
+      this.openApproach(command.destId);
+      return;
+    }
     this.bridge.enqueue(command.intent);
+    // A confirmed jump ends the screen that confirmed it. The intent is queued, not applied, so the
+    // seat is still the old world for one more tick — `adoptSeat` handles the arrival, and going
+    // back to the battlefield now is what shows the player they have arrived.
+    if (command.intent.kind === "jump") this.setScreen({ kind: "world" });
   }
 
   /** Assemble the economy model's inputs. The cache decides whether it is actually rebuilt. */
-  private refreshEconomy(hud: HudModel, snap: Snapshot): void {
-    this.economy = this.economyCache.get({
+  private refreshEconomy(hud: HudModel, snap: Snapshot): EconomyModel {
+    return this.economyCache.get({
       hud,
       state: this.bridge.state,
       snap,
@@ -544,4 +904,30 @@ export class Game {
 
 function engineId(numeric: number): string {
   return numeric < 0 ? `b${-numeric - 1}` : `u${numeric - 1}`;
+}
+
+/** `FogField.state`'s "explored but not visible" — the port's own middle value. */
+const FOG_EXPLORED_NOT_VISIBLE = 1;
+
+/** Scratch for `worldAtPixel`. Reused: a starmap click must not allocate any more than a world one. */
+const SCREEN_POINT = { x: 0, y: 0, behind: false };
+
+/** The empty action row a galaxy screen renders the world's HUD with. Shared, so it costs nothing. */
+const NO_ACTIONS: readonly HudAction[] = [];
+
+/**
+ * A colony's news, in the player's words (P4-T13).
+ *
+ * The engine's three note types, phrased and not re-decided: `lost` is the only one that reports a
+ * world gone, `hostile` is a declaration the diplomacy layer latches once, and `attacked` is a raid
+ * in progress. An unrecognised type is reported as itself rather than dropped — a fourth kind
+ * upstream should reach the player looking odd, not silently not reach them at all.
+ */
+function colonyNotice(note: { readonly type: string; readonly planetId: string }): string {
+  switch (note.type) {
+    case "lost": return `${note.planetId} is lost — nothing of yours is left standing there`;
+    case "hostile": return `${note.planetId}'s neighbour has declared war on your colony`;
+    case "attacked": return `Your colony on ${note.planetId} is under attack`;
+    default: return `${note.planetId}: ${note.type}`;
+  }
 }

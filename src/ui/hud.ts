@@ -9,15 +9,20 @@
 // anything, and at 60 fps it must not touch a node whose text has not changed. Browsers are fast
 // but layout is not free, and this runs inside the same 16.6 ms as the renderer.
 
-import { BUILDINGS, UNITS, canBuildType, prereqsMet } from "../engine/index.js";
+import { BUILDINGS, PLANETS, UNITS, canBuildType, prereqsMet } from "../engine/index.js";
 import { type BuildingPanelModel, buildingPanelModel } from "./building-panel.js";
 import { type Intent } from "../bridge/commands.js";
+import { colonyIncomeModel, colonyPolicyModel, policyPreview } from "./colony-panel.js";
 import { doctrinePanelModel } from "./doctrine-panel.js";
+import { jumpPanelModel } from "./jump-panel.js";
+import { landingPanelModel } from "./landing-panel.js";
+import { lanePanelModel } from "./lane-panel.js";
 import { logisticsModel, recyclePreview, supplyModel } from "./operations-panel.js";
 import { marketPanelModel } from "./market-panel.js";
 import { repairPanelModel } from "./repair-panel.js";
 import { researchPanelModel } from "./research-panel.js";
 import { rigSurveyModel, rigYieldModel } from "./rig-panel.js";
+import { type ApproachBrief, type GroundPoint, type LandingSite } from "../view/landing.js";
 import { FLAG_BUILDING_KIND, type Snapshot } from "../bridge/snapshot.js";
 
 export interface SelectionEntry {
@@ -54,7 +59,17 @@ export interface BuildOption {
  */
 export type HudCommand =
   | { readonly kind: "intent"; readonly intent: Intent }
-  | { readonly kind: "buildMode"; readonly buildingType: string };
+  | { readonly kind: "buildMode"; readonly buildingType: string }
+  // --- Phase 4's screens (P4-T13) ---------------------------------------------------------------
+  //
+  // Two more commands that are not orders, for the reason `buildMode` is not one: a screen is view
+  // state, nothing in the simulation knows one is open, and a replay must not depend on it. They are
+  // here rather than as a second callback because the whole point of `HudCommand` is that a button
+  // press and a positional key press take ONE path (`Game.runCommand`) — a screen the mouse could
+  // open and the keyboard could not would be exactly half a control.
+  | { readonly kind: "screen"; readonly screen: "world" | "starmap" }
+  /** Open the approach view on a destination — the landing picker, which is per-world. */
+  | { readonly kind: "approach"; readonly destId: string };
 
 /**
  * One button the HUD is showing.
@@ -737,6 +752,365 @@ function logisticsSection(state: State, snap: Snapshot): EconomySection {
 }
 
 // ---------------------------------------------------------------------------
+// The galaxy (P4-T13). Still a model; still no DOM.
+// ---------------------------------------------------------------------------
+//
+// Phase 4 built five modules a player could not reach: the starmap, the approach view, and the
+// jump, colony and lane panels. Four of the five were models with no composition layer — the exact
+// hole P4-T01 filled for Phase 2's economy, dug again one phase later because "a control reaches
+// it" was in nobody's definition of done. This is that layer for the galaxy, and it is deliberately
+// the same shape as `economyModel` above: every judgement stays in the panel that asks the engine,
+// and nothing here decides a rule.
+//
+// It produces `EconomySection`s rather than a vocabulary of its own, which is not laziness: it means
+// the galaxy screens inherit the drawer's whole DOM discipline (nodes rebuilt only when the button
+// SET changes, text written only when the string changes) and the positional row (Z/C/V/B/N fire
+// the Nth button on screen) without a second implementation of either.
+//
+// **It is a function of a galaxy TICK, not of a frame** — see `GalaxyCache`, which is `EconomyCache`
+// one layer up and for the same reason: `jumpPanelModel` walks every pad's manifest and prices every
+// destination, `colonyIncomeModel` walks every world's buildings, and none of that changes between
+// two frames of the same tick.
+
+/** The approach screen's live state, as the shell holds it. `ApproachView` supplies all three. */
+export interface ApproachState {
+  readonly brief: ApproachBrief;
+  /** The raw ground point under the pointer — never the snapped one (see `landing-panel.ts`). */
+  readonly pick: GroundPoint | null;
+  /** Where the jump will actually touch down, which is not necessarily the pick. */
+  readonly site: LandingSite;
+}
+
+export interface GalaxyInput {
+  readonly galaxy: Galaxy;
+  /** The app's fixed step. `lanePanelModel` turns tick counts into seconds with it, never assumes it. */
+  readonly stepSeconds: number;
+  /** The open approach view, or null while the starmap is up. */
+  readonly approach: ApproachState | null;
+}
+
+/**
+ * The galaxy screens' drawer.
+ *
+ * The approach view REPLACES the starmap's three boards rather than adding to them, because it is a
+ * modal decision about one destination: a jump button beside ten other worlds' jump buttons is a
+ * misclick that costs a fleet.
+ */
+export function galaxyModel(input: GalaxyInput): EconomyModel {
+  const sections = input.approach
+    ? [approachSection(input.approach)]
+    : [
+      jumpSection(input.galaxy),
+      colonySection(input.galaxy),
+      laneSection(input.galaxy, input.stepSeconds),
+    ];
+  const actions: HudAction[] = [];
+  for (const s of sections) actions.push(...s.actions);
+  return { sections, actions };
+}
+
+/**
+ * `galaxyModel`, rebuilt only when something it reads has moved.
+ *
+ * `galaxy.tick` is the clock every one of these panels is a function of — income accrues on it,
+ * lanes count down on it, and every player order lands on one. The pick is the one input that moves
+ * faster: `pointAt` runs on pointermove, so it is quantised to a whole world unit, which is finer
+ * than anything the landing panel prints and far coarser than a mouse.
+ *
+ * Like `EconomyCache`, it lives here so the property can be TESTED: `galaxyModel` allocates a fresh
+ * object every call, so "the same object came back" is proof that nothing was rebuilt.
+ */
+export class GalaxyCache {
+  private key: string | null = null;
+  private model: EconomyModel = { sections: [], actions: [] };
+
+  get(input: GalaxyInput): EconomyModel {
+    const key = galaxyCacheKeyOf(input);
+    if (key !== this.key) {
+      this.key = key;
+      this.model = galaxyModel(input);
+    }
+    return this.model;
+  }
+}
+
+function galaxyCacheKeyOf(input: GalaxyInput): string {
+  const a = input.approach;
+  const pick = a?.pick;
+  return [
+    input.galaxy.tick,
+    a ? a.brief.destId : "-",
+    pick ? `${Math.round(pick.x)}:${Math.round(pick.y)}` : "-",
+  ].join("|");
+}
+
+/** A world's name, from the engine's own table. `jump-panel.ts` reads it the same way. */
+function planetName(id: string): string {
+  return PLANETS.find((p) => p.id === id)?.name ?? id;
+}
+
+/**
+ * The jump board (P4-T04): what this world's pads can lift, and what every destination costs.
+ *
+ * The destination button is an `approach`, not a `jump`. That is the row's own rule made
+ * structural — a jump is committed on the approach view, after the player has seen where they will
+ * land — and it is what stops the starmap from being able to launch a fleet on a single click.
+ */
+function jumpSection(galaxy: Galaxy): EconomySection {
+  const model = jumpPanelModel(galaxy);
+  const actions: HudAction[] = [];
+  const lines: string[] = [
+    model.canLaunch
+      ? `${model.launch.riders.length} aboard (${model.launch.supply} of ${model.launch.capacity} supply)`
+        + `${model.launch.overCapacity ? ` · ${model.launch.leftBehind} left behind` : ""}`
+      : "No completed Spaceport here — a jump moves the seat and carries nobody",
+  ];
+
+  for (const pad of model.pads) {
+    lines.push(`${pad.id}: tier ${pad.tier}, lifts ${pad.capacity} supply, fuel ×${pad.fuelDiscount}`);
+    // Shown even at the ceiling and even when it cannot be paid for, exactly as an unaffordable
+    // build button is: a menu that hides what you cannot do yet leaves the player with no idea what
+    // the pad is for (F-07).
+    actions.push({
+      id: `upgradePad:${pad.id}`,
+      label: pad.atMaxTier ? `${pad.id} at max tier` : `Extend ${pad.id}`,
+      detail: pad.atMaxTier
+        ? `tier ${pad.tier} is the ceiling`
+        : `${costText(pad.upgradeCost ?? undefined)} → lifts ${pad.nextCapacity}`,
+      enabled: pad.canUpgrade,
+      command: { kind: "intent", intent: { kind: "upgradeSpaceport", buildingId: pad.id } },
+    });
+  }
+
+  for (const dest of model.destinations) {
+    const name = planetName(dest.id);
+    lines.push(
+      `${name}: ${dest.reached ? "reached" : `${Math.ceil(dest.cost)} cr`}`
+      + `${dest.reachable ? (dest.fallback ? " · fall back only, no fleet" : "") : " · out of reach"}`,
+    );
+    actions.push({
+      id: `approach:${dest.id}`,
+      label: `Approach ${name}`,
+      // The two refusals a player can act on, separated: `canJumpTo` is not "can I afford it".
+      detail: !dest.reachable ? "no way in from here"
+        : !dest.affordable ? `${Math.ceil(dest.cost)} cr — not enough`
+          : dest.fallback ? "fall back, carrying nobody" : `${Math.ceil(dest.cost)} cr`,
+      enabled: dest.reachable && dest.affordable,
+      command: { kind: "approach", destId: dest.id },
+    });
+  }
+
+  return {
+    id: "jump",
+    title: `Jump · ${Math.floor(model.credits)} credits`,
+    lines,
+    actions,
+    warning: null,
+  };
+}
+
+/**
+ * The colonies (P4-T06) and their standing orders (P4-T08).
+ *
+ * Every world gets a line, including the ones paying nothing — that is the income model's own
+ * decision and the answer to "why did the treasury stop moving after I jumped home". Only the
+ * worlds the colony scan actually acts on get buttons: an order set on the world under your feet is
+ * inert, and `inertReason` is what says so rather than a rule invented here.
+ */
+function colonySection(galaxy: Galaxy): EconomySection {
+  const income = colonyIncomeModel(galaxy);
+  const actions: HudAction[] = [];
+  const lines: string[] = [
+    `${income.perSecond.toFixed(2)}/s · ${income.perMinute.toFixed(0)}/min`
+    + ` · ${income.perBuilding}/s per building to a cap of ${income.cap} (${income.colonyCeiling}/s)`,
+  ];
+
+  for (const row of income.rows) {
+    if (!row.earning) {
+      lines.push(`${planetName(row.id)}: not a background colony — pays nothing`);
+      continue;
+    }
+    lines.push(
+      `${planetName(row.id)}: ${row.perSecond.toFixed(2)}/s from ${row.counted} of ${row.incomeBuildings}`
+      + `${row.beyondCap > 0 ? ` (${row.beyondCap} past the cap, earning nothing)` : ""}`
+      + `${row.pacified ? ` · pacified +${income.pacifiedRate}/s` : ""}`
+      + `${row.atCap ? "" : ` · one more building: +${row.marginalPerSecond}/s`}`,
+    );
+
+    const policy = colonyPolicyModel(galaxy, row.id);
+    for (const warning of policy.warnings) lines.push(`${planetName(row.id)}: ${warning}`);
+
+    actions.push({
+      id: `autoSell:${row.id}`,
+      label: `${policy.autoSellEnabled ? "Stop" : "Start"} auto-sell · ${row.id}`,
+      detail: policy.floors.length > 0
+        ? `${policy.floors.length} floor(s), next run sells ${policy.floors.reduce((n, f) => n + f.surplus, 0)}`
+        : "no floor set — nothing would sell",
+      enabled: true,
+      command: {
+        kind: "intent",
+        intent: {
+          kind: "colonyPolicy", planetId: row.id,
+          patch: { autoSell: { enabled: !policy.autoSellEnabled } },
+        },
+      },
+    });
+
+    // The worker target, one worker at a time, with the ENGINE's verdict on the button rather than
+    // this file's: `policyPreview` runs `sanitizePolicy` on the request before it is sent, which is
+    // the whole reason P4-T08 built it — `MAX_WORKER_TARGET` is a clamp, and a UI that accepted 21
+    // and stored 20 would be lying at the keystroke and at every later read.
+    for (const delta of [1, -1]) {
+      const wanted = policy.workerTarget + delta;
+      const preview = policyPreview({ workerTarget: wanted });
+      actions.push({
+        id: `workers${delta > 0 ? "Up" : "Down"}:${row.id}`,
+        label: `Workers ${delta > 0 ? "+1" : "−1"} · ${row.id}`,
+        detail: preview.adjustments[0]?.reason
+          ?? `${policy.workerTarget} → ${preview.policy.workerTarget}, ${policy.workers} standing`,
+        enabled: preview.policy.workerTarget !== policy.workerTarget,
+        command: {
+          kind: "intent",
+          intent: { kind: "colonyPolicy", planetId: row.id, patch: { workerTarget: wanted } },
+        },
+      });
+    }
+  }
+
+  return {
+    id: "colonies",
+    title: `Colonies · ${Math.floor(income.credits)} credits`,
+    lines,
+    actions,
+    warning: null,
+  };
+}
+
+/**
+ * Freight Lanes (P4-T07).
+ *
+ * The countdown leads, because the panel's own header says why: a lane does nothing at all for nine
+ * seconds out of ten, and "nothing is happening" and "nothing has happened for nine seconds and
+ * will in one" are different states with only one of them a bug.
+ *
+ * A lane can be opened between any two worlds the galaxy has instantiated — `createLane`'s own two
+ * conditions, mirrored here to decide which buttons exist and re-derived nowhere: the engine still
+ * refuses, and its refusal still reaches the notice.
+ */
+function laneSection(galaxy: Galaxy, stepSeconds: number): EconomySection {
+  const model = lanePanelModel(galaxy, stepSeconds);
+  const actions: HudAction[] = [];
+  const lines: string[] = [
+    `next run in ${model.secondsUntilRun.toFixed(1)}s (every ${model.periodSeconds.toFixed(0)}s,`
+    + ` ${model.runsPerMinute.toFixed(1)}/min)`,
+  ];
+
+  for (const lane of model.rows) {
+    lines.push(
+      `${planetName(lane.from)} → ${planetName(lane.to)}: ${lane.status}`
+      + ` · ${lane.standingCrew} of ${lane.crew.length} crew standing`
+      + ` · ${lane.capacity} hold, next run ${lane.nextRunTotal}`
+      + ` · holds ${lane.heldFromJump} supply out of the jump ring`,
+    );
+    actions.push({
+      id: `deleteLane:${lane.id}`,
+      label: `Close ${planetName(lane.from)} → ${planetName(lane.to)}`,
+      detail: `frees ${lane.crew.length} ship(s)`,
+      enabled: true,
+      command: { kind: "intent", intent: { kind: "deleteLane", laneId: lane.id } },
+    });
+    for (const ship of lane.crew) {
+      actions.push({
+        id: `unassignLane:${lane.id}:${ship.unitId}`,
+        label: `Release ${ship.type}`,
+        detail: ship.standing ? `${ship.cargoHold} hold, back to the jump ring` : "not at a pad — carries nothing",
+        enabled: true,
+        command: { kind: "intent", intent: { kind: "unassignLane", laneId: lane.id, unitId: ship.unitId } },
+      });
+    }
+    for (const ship of lane.candidates) {
+      actions.push({
+        id: `assignLane:${lane.id}:${ship.unitId}`,
+        label: `Crew ${ship.type}`,
+        // The trade, before the click: a lane-booked ship is skipped by `stagedRiders`, so crewing
+        // one shrinks the next expedition by exactly its supply.
+        detail: `+${ship.cargoHold} hold, −${ship.supplyCost} supply from the jump ring`,
+        enabled: true,
+        command: { kind: "intent", intent: { kind: "assignLane", laneId: lane.id, unitId: ship.unitId } },
+      });
+    }
+  }
+
+  const open = new Set(model.rows.map((lane) => `${lane.from}>${lane.to}`));
+  for (const id of galaxy.planets.keys()) {
+    if (id === galaxy.activeId || open.has(`${galaxy.activeId}>${id}`)) continue;
+    actions.push({
+      id: `createLane:${id}`,
+      label: `Open lane → ${planetName(id)}`,
+      detail: `ships ${model.defaultCommodities.join(", ")}`,
+      enabled: true,
+      // No filter: an empty commodity list is `runLanes`' own "everything in CARGO_GOODS", and the
+      // lane's row reports that as `filtered: false` rather than pretending a choice was made.
+      command: {
+        kind: "intent",
+        intent: { kind: "createLane", from: galaxy.activeId, to: id, commodities: [] },
+      },
+    });
+  }
+
+  return { id: "lanes", title: "Freight lanes", lines, actions, warning: null };
+}
+
+/**
+ * The approach view's panel (P4-T05) and the one button that commits a jump.
+ *
+ * **The landing fields are omitted when the panel says they are null**, and that is deliberate
+ * rather than tidy: `landingZone` discards a landing point whenever a pad stands on the destination,
+ * so an intent carrying one would be a promise the recorded stream keeps and the game does not. The
+ * panel decides; this only obeys, which is why the two can never disagree.
+ */
+function approachSection(approach: ApproachState): EconomySection {
+  const panel = landingPanelModel(approach.brief, approach.pick, approach.site);
+  const name = planetName(panel.destId);
+  const jump: Intent = panel.landingX !== null && panel.landingY !== null
+    ? { kind: "jump", destId: panel.destId, landingX: panel.landingX, landingY: panel.landingY }
+    : { kind: "jump", destId: panel.destId };
+
+  return {
+    id: "approach",
+    title: `Approach · ${name}`,
+    lines: [
+      panel.headline,
+      panel.detail,
+      // Blank rather than absent when the mark was not moved: the drawer rebuilds its nodes when
+      // the line COUNT changes, and a line that came and went as the pointer crossed a grid edge
+      // would rebuild this section on every other pointer move.
+      panel.drift > 0 ? `the engine moved your mark ${Math.round(panel.drift)} units` : "",
+    ],
+    actions: [
+      {
+        id: `jump:${panel.destId}`,
+        label: `Jump to ${name}`,
+        detail: panel.canConfirm ? `landing at ${Math.round(panel.siteX)}, ${Math.round(panel.siteY)}` : "mark a spot first",
+        enabled: panel.canConfirm,
+        command: { kind: "intent", intent: jump },
+      },
+      {
+        id: "backToStarmap",
+        label: "Back to the starmap",
+        detail: "no jump, nothing spent",
+        enabled: true,
+        command: { kind: "screen", screen: "starmap" },
+      },
+    ],
+    // `override` is present only when the engine will overrule the pick, and it says so plainly —
+    // the same slot the doctrine commitment uses, for the same reason: it is the thing a player has
+    // to be told BEFORE they press the button, not after.
+    warning: panel.override,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // DOM binding. Everything above this line is testable without a browser.
 // ---------------------------------------------------------------------------
 
@@ -755,9 +1129,31 @@ export class HudView {
   private lastText = new Map<string, string>();
   private lastActionKey = "";
   private lastEconomyKey = "";
+  private lastScreen = "";
+  /**
+   * What each button node is currently for.
+   *
+   * A `WeakMap` because the key is the node: `replaceChildren` drops whole rows of buttons on a
+   * structural change and nothing else would ever remove their entries.
+   */
+  private readonly bound = new WeakMap<Element, HudAction>();
 
   constructor(private readonly root: HTMLElement, private readonly cb: HudCallbacks) {
     root.innerHTML = TEMPLATE;
+  }
+
+  /**
+   * Which screen the shell is showing, published to the stylesheet (P4-T13).
+   *
+   * One attribute, written only when it changes, and the CSS does the rest — the starmap replaces
+   * the battlefield's frame (ADR-0019 §1), so the minimap beside it is no longer looking at what
+   * the player is looking at, and the drawer has the whole bottom of the screen to itself once the
+   * world's action row is empty.
+   */
+  setScreen(screen: string): void {
+    if (this.lastScreen === screen) return;
+    this.lastScreen = screen;
+    this.root.dataset.screen = screen;
   }
 
   render(model: HudModel): void {
@@ -789,7 +1185,7 @@ export class HudView {
       this.lastActionKey = key;
       host.replaceChildren(...model.actions.map((a) => this.actionButton(a)));
     }
-    this.syncAffordability(host, model.actions.map((a) => a.enabled));
+    this.syncActions(host, model.actions);
   }
 
   /**
@@ -824,10 +1220,7 @@ export class HudView {
       const warning = this.root.querySelector<HTMLElement>(`[data-hud="econ:${s.id}:warning"]`);
       if (warning) warning.classList.toggle("visible", s.warning !== null);
       s.lines.forEach((line, i) => this.setText(`econ:${s.id}:line:${i}`, line));
-      this.syncAffordability(
-        this.root.querySelector<HTMLElement>(`[data-econ-actions="${s.id}"]`),
-        s.actions.map((a) => a.enabled),
-      );
+      this.syncActions(this.root.querySelector<HTMLElement>(`[data-econ-actions="${s.id}"]`), s.actions);
     }
   }
 
@@ -867,19 +1260,46 @@ export class HudView {
     const b = document.createElement("button");
     b.className = "hud-button";
     b.innerHTML = `<span class="hud-button-label"></span><span class="hud-button-cost"></span>`;
-    b.querySelector(".hud-button-label")!.textContent = action.label;
-    b.querySelector(".hud-button-cost")!.textContent = action.detail;
-    // The command is captured, not the index: a button that fired "action 3" would fire whatever
-    // the third action happened to be by the time it was clicked.
-    b.addEventListener("click", () => this.cb.onCommand(action.command));
+    this.bind(b, action);
+    // The command is read at the PRESS from whatever this button is currently bound to — not
+    // captured here, and not an index either.
+    //
+    // The index was never right: a button that fired "action 3" would fire whatever the third
+    // action happened to be by the time it was clicked. Capturing the command looked right and was
+    // subtly wrong in the other direction, because the node SET is only rebuilt when the button ids
+    // change (see `render`): a button whose id is stable while its payload flips kept the payload it
+    // was born with. That is not hypothetical — `pause:b7` carries `paused: !building.paused`, so a
+    // paused factory's button went on sending "pause" forever, and P4-T13's jump confirm carries the
+    // landing point the pointer is over, which changes without changing anything's id.
+    b.addEventListener("click", () => {
+      const bound = this.bound.get(b);
+      if (bound) this.cb.onCommand(bound.command);
+    });
     return b;
   }
 
-  private syncAffordability(host: HTMLElement | null, affordable: readonly boolean[]): void {
+  /**
+   * Point a button at its current action, writing only what changed.
+   *
+   * Same rule as `setText` and for the same reason (P1-T16): this runs for every button on screen
+   * every frame, and a label written unconditionally is a style recalculation the frame budget has
+   * not got. The previous action is what it is compared against, so the check costs one reference.
+   */
+  private bind(el: Element, action: HudAction): void {
+    const prev = this.bound.get(el);
+    this.bound.set(el, action);
+    if (!prev || prev.label !== action.label) el.querySelector(".hud-button-label")!.textContent = action.label;
+    if (!prev || prev.detail !== action.detail) el.querySelector(".hud-button-cost")!.textContent = action.detail;
+    el.classList.toggle("unaffordable", !action.enabled);
+  }
+
+  /** Re-bind a row of buttons that was NOT rebuilt this frame. Order is the model's, as built. */
+  private syncActions(host: HTMLElement | null, actions: readonly HudAction[]): void {
     if (!host) return;
     const children = host.children;
     for (let i = 0; i < children.length; i++) {
-      children[i]!.classList.toggle("unaffordable", !affordable[i]);
+      const action = actions[i];
+      if (action) this.bind(children[i]!, action);
     }
   }
 

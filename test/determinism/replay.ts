@@ -183,26 +183,19 @@ function runFixture(fixture: Fixture): WorldBridge {
 }
 
 /**
- * The bridge's galaxy, reached through its own field.
+ * The bridge's galaxy.
  *
  * `WorldBridge` exposes `state` — the seat — with the note that only the bridge and its own tests
- * may hold it, and exposes nothing at all for the worlds AROUND the seat. That was right while the
- * client had one world; from P4-T11 the determinism harness needs the others, because that is where
- * a jump's evidence lives.
+ * may hold it, and until P4-T13 it exposed nothing at all for the worlds AROUND the seat. That was
+ * right while the client had one world; from P4-T11 the determinism harness needed the others,
+ * because that is where a jump's evidence lives, and it read them through a guarded cast at the
+ * private field with a comment naming `get galaxy()` as the real fix.
  *
- * **The honest fix is a `get galaxy()` accessor on `WorldBridge`, beside `get state()`,** and this
- * cast is a stand-in for it because `src/bridge/` was outside this task's file scope — it is
- * recorded here rather than left as a silent reach-in. `private` is a compile-time marking with no
- * runtime effect, so this reads the same object the accessor would return; the guard is what keeps
- * a rename from silently hashing `undefined` and reporting it as a determinism failure.
+ * **That accessor exists now**, so the cast and its guard are gone: a rename is a compile error
+ * rather than a runtime check nobody would have written twice. The function stays because it is
+ * what the fixture recorder and the replay both call, and because "the harness reaches for the
+ * meta-layer" is worth having a name.
  */
 export function galaxyOf(bridge: WorldBridge): Galaxy {
-  const galaxy = (bridge as unknown as { galaxy?: Galaxy }).galaxy;
-  if (!galaxy?.planets) {
-    throw new Error(
-      "WorldBridge no longer holds its galaxy on `.galaxy` — the determinism harness reads it there "
-      + "to hash every world (P4-T11). Give the class a `get galaxy()` and use it here.",
-    );
-  }
-  return galaxy;
+  return bridge.galaxy;
 }

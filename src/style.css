@@ -204,6 +204,22 @@ html, body {
 }
 .hud-econ-warning.visible { display: block; }
 
+/* The galaxy screens (P4-T13). `HudView.setScreen` writes the attribute; everything below follows
+   from ADR-0019 §1's decision that the starmap REPLACES the battlefield's frame rather than floating
+   over it. There is no world action row on these screens, so the drawer takes the bottom of the
+   screen and the height it needs — a jump board lists every world in the roster. */
+#hud[data-screen="starmap"] .hud-economy,
+#hud[data-screen="approach"] .hud-economy {
+  bottom: 12px;
+  max-height: 76vh;
+}
+
+/* The battlefield's own instrument, dimmed while the battlefield is not what is on screen. Dimmed
+   rather than hidden: it is still a live picture of the world you left running, and removing it
+   would make the sidebar jump every time the galaxy opens. */
+#hud[data-screen="starmap"] ~ #sidebar #minimap,
+#hud[data-screen="approach"] ~ #sidebar #minimap { opacity: 0.35; }
+
 /* ---------- Sidebar ---------- */
 
 #sidebar {
