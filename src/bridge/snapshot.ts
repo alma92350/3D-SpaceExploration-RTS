@@ -256,6 +256,47 @@ export class ProductionTable {
   }
 }
 
+/**
+ * Guard-aura projectors — the Aegis unit and the Aegis Bastion (P3-T04).
+ *
+ * The engine rebuilds `state.anvils` every tick from live positions (`collectAnvils`, sim.js), so
+ * this is a copy of the engine's own list rather than anything derived: the radius is
+ * `guardAura.range` and nothing here recomputes it. Position is re-read every tick because the
+ * Aegis *unit* moves, and a ring left behind where it used to be would be worse than no ring.
+ *
+ * The damage multiplier deliberately does NOT cross. It is a number for a panel, not a shape, and
+ * carrying it beside a radius on the same row is how one gets drawn as the other.
+ */
+export class AuraTable {
+  capacity: number;
+  count = 0;
+  x: Float32Array;
+  y: Float32Array;
+  /** World units. The engine's `guardAura.range` — 96 for the Aegis, 130 for the Bastion. */
+  radius: Float32Array;
+  owner: Uint8Array;
+
+  constructor(capacity: number) {
+    this.capacity = capacity;
+    this.x = new Float32Array(capacity);
+    this.y = new Float32Array(capacity);
+    this.radius = new Float32Array(capacity);
+    this.owner = new Uint8Array(capacity);
+  }
+
+  ensure(needed: number): void {
+    if (needed <= this.capacity) return;
+    let next = this.capacity || 16;
+    while (next < needed) next *= 2;
+    const grown = new AuraTable(next);
+    this.capacity = next;
+    this.x = grown.x;
+    this.y = grown.y;
+    this.radius = grown.radius;
+    this.owner = grown.owner;
+  }
+}
+
 /** The full commodity buffers of one selected building. Only the selection gets these (Q-07). */
 export interface BuildingBuffers {
   input: Record<string, number>;
@@ -277,6 +318,8 @@ export interface Snapshot {
   version: number;
   entities: EntityTable;
   nodes: NodeTable;
+  /** Guard-aura projectors the player can see (P3-T04). */
+  auras: AuraTable;
   /** Stable index → engine type name. Grows only when a type is first seen. */
   typeNames: string[];
   comNames: string[];
@@ -431,6 +474,7 @@ export class SnapshotExtractor {
       version: 0,
       entities: new EntityTable(initialCapacity),
       nodes: new NodeTable(Math.max(32, map.nodes.length)),
+      auras: new AuraTable(16),
       typeNames: [],
       comNames: [],
       fog: { cols, rows, cell: FOG_CELL_SIZE, state: new Uint8Array(cols * rows), version: 0 },
@@ -531,6 +575,7 @@ export class SnapshotExtractor {
     e.count = n;
     this.diffLifetimes();
     this.extractNodes(state, fog);
+    this.extractAuras(state, fog);
     this.extractFog(fog);
     this.extractPower(state, opts.viewer);
 
@@ -745,6 +790,32 @@ export class SnapshotExtractor {
       n++;
     }
     nodes.count = n;
+  }
+
+  /**
+   * The engine's own aura list, fog-gated (P3-T04).
+   *
+   * `state.anvils` is rebuilt every tick by `collectAnvils` from live positions and already excludes
+   * a bastion that has not finished standing — so this copies rather than decides. The one judgement
+   * made here is visibility: an enemy aura shows only where the player can actually see its
+   * projector, because a ring visible through fog is a map hack with a nice name.
+   */
+  private extractAuras(state: State, fog: Fog): void {
+    const auras = this.snapshot.auras;
+    const anvils = state.anvils ?? [];
+    auras.ensure(anvils.length);
+    let n = 0;
+    for (const a of anvils) {
+      // Live vision, not memory: the Aegis unit moves, and an aura remembered where it used to be
+      // would tell a player their army is protected somewhere it is not.
+      if (a.owner !== "player" && !isVisibleAt(fog, a.x, a.y)) continue;
+      auras.x[n] = a.x;
+      auras.y[n] = a.y;
+      auras.radius[n] = a.range;
+      auras.owner[n] = a.owner === "player" ? SNAP_PLAYER : SNAP_AI;
+      n++;
+    }
+    auras.count = n;
   }
 
   private extractFog(fog: Fog): void {

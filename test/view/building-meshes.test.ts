@@ -11,6 +11,7 @@
 import { describe, expect, it } from "vitest";
 import { BUILDING_FAMILY, MESH_IDS, TRIANGLE_BUDGET, buildMeshes, meshIdForType } from "../../src/view/meshes/generators.js";
 import { BUILDINGS } from "../../src/engine/index.js";
+import { profileDistance, profileOf } from "./silhouette.js";
 
 const meshes = buildMeshes();
 const byId = new Map(meshes.map((m) => [m.id, m]));
@@ -67,9 +68,7 @@ describe("the building mesh set", () => {
 
     for (let i = 0; i < families.length; i++) {
       for (let j = i + 1; j < families.length; j++) {
-        const a = profiles.get(families[i]!)!;
-        const b = profiles.get(families[j]!)!;
-        const distance = a.reduce((sum, v, k) => sum + Math.abs(v - b[k]!) / Math.max(v, b[k]!, 1e-6), 0) / a.length;
+        const distance = profileDistance(profiles.get(families[i]!)!, profiles.get(families[j]!)!);
         expect(
           distance,
           `${families[i]} and ${families[j]} have the same profile — they would look identical on the field`,
@@ -88,18 +87,3 @@ describe("the building mesh set", () => {
     expect(shortestLandmark, "a landmark must stand above the ordinary roofline").toBeGreaterThan(tallestOrdinary);
   });
 });
-
-/** Footprint radius, height, and width at 25/50/75% of height — what a silhouette is, numerically. */
-function profileOf(mesh: { positions: Float32Array; radius: number; height: number }): number[] {
-  const widths = [0.25, 0.5, 0.75].map((f) => {
-    const y = mesh.height * f;
-    let widest = 0;
-    for (let i = 0; i < mesh.positions.length; i += 3) {
-      // A band around the sample height, so a mesh with few horizontal edges still registers.
-      if (Math.abs(mesh.positions[i + 1]! - y) > mesh.height * 0.15) continue;
-      widest = Math.max(widest, Math.hypot(mesh.positions[i]!, mesh.positions[i + 2]!));
-    }
-    return widest;
-  });
-  return [mesh.radius, mesh.height, ...widths];
-}

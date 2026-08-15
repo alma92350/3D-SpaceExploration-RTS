@@ -203,6 +203,7 @@ export class SceneComposer {
     }
 
     this.pushNodes(snap, camera, cullSq);
+    this.pushAuras(snap, camera, cullSq);
     if (ghost?.active) this.pushGhost(ghost);
 
     renderer.beginFrame(camera);
@@ -266,6 +267,30 @@ export class SceneComposer {
           x, height + entityBarHeight(e.radius[i]!, isBuilding) + 5, y, p.concern[i]!, p.activity[i]!,
         );
       }
+    }
+  }
+
+  /**
+   * Guard-aura rings (P3-T04). One overlay layer for every aura on the field, so the cue that makes
+   * the Aegis Bastion distinguishable from the two things it shares a mesh with costs one draw call
+   * for the whole frame rather than a mesh and two batches.
+   *
+   * The cull radius is widened by the aura's own radius: a bastion just off-screen still projects
+   * over ground the player is looking at, and clipping the projector would blink the ring away at
+   * the screen edge — exactly where a player is watching for an attack.
+   */
+  private pushAuras(snap: Snapshot, camera: CameraState, cullSq: number): void {
+    const auras = snap.auras;
+    const buf = this.overlays.get("aura")!;
+    for (let i = 0; i < auras.count; i++) {
+      const x = auras.x[i]!;
+      const y = auras.y[i]!;
+      const r = auras.radius[i]!;
+      const dx = x - camera.eyeX;
+      const dz = y - camera.eyeZ;
+      const reach = Math.sqrt(cullSq) + r;
+      if (dx * dx + dz * dz > reach * reach) continue;
+      buf.push(x, elevation(this.field, x, y) + 0.3, y, r, auras.owner[i]!);
     }
   }
 

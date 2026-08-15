@@ -151,6 +151,27 @@ export function drawOverlayLayer(
       break;
     }
 
+    case "aura": {
+      // The Aegis Bastion's whole function, and the Aegis unit's (P3-T04). Drawn as a ground ring
+      // like the selection circle, because it IS the same kind of object — a radius on the ground —
+      // and reusing `drawGroundEllipse` means it deforms over a slope the same way a selection ring
+      // does rather than floating flat above one.
+      //
+      // Dashed rather than solid, so it never reads as a selection at a glance: a player selects
+      // and deselects constantly, and a permanent solid ring around a building would look like a
+      // selection that would not clear. Owner colour is the SECOND cue, not the only one (N-05) —
+      // the dash pattern says "aura" on its own.
+      ctx.lineWidth = 1.2;
+      ctx.setLineDash([6, 5]);
+      for (let i = 0; i < layer.count; i++) {
+        const off = i * layer.stride;
+        ctx.strokeStyle = OWNER_CSS[d[off + 4]! | 0] ?? OWNER_CSS[2]!;
+        drawGroundEllipse(ctx, camera, d[off]!, d[off + 1]!, d[off + 2]!, d[off + 3]!);
+      }
+      ctx.setLineDash([]);
+      break;
+    }
+
     case "status": {
       // The building-state badge (P2-T08). One stroke colour for every state on purpose: the state
       // is carried by the SHAPE (N-05), and giving each glyph its own colour would let a future
