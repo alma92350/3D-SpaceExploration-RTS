@@ -432,21 +432,37 @@ describe("a corrupt save (N-08, P6-T05)", () => {
     }
   });
 
-  it("throws away the reason upstream took the trouble to write (open defect, P6-T05)", () => {
-    // Pinned rather than fixed here: `src/bridge/world.ts` is not this row's file. `load()`'s
-    // `catch { return false }` reduces eight distinguishable, quotable causes to one bit AND logs
-    // nothing — which is the exact failure this task names, live in the repo.
+  it("keeps the reason upstream took the trouble to write, and distinguishes the causes", () => {
+    // **Written the other way up.** This pinned an open defect: `load()`'s bare
+    // `catch { return false }` reduced eight distinguishable, quotable causes to one bit and logged
+    // none of them — "a caught exception that logs nothing is worse than a crash, because the crash
+    // at least has a stack". It was fixed in the same pass and inverted rather than deleted.
     //
-    // The mechanical fix is in the P6-T05 report: keep the message, and console.error it.
-    expect(() => deserializeGalaxy(structurallyWrongSave()))
-      .toThrow(/no active planet/);
+    // The pin as first written would NOT have noticed the fix: it asserted only that `load` returns
+    // false, which is true either way. That is the failure mode of a pin whose assertions describe
+    // the surroundings instead of the defect — so the assertion now is that the messages ARRIVE and
+    // that they DIFFER, which is the whole point of keeping them.
+    expect(() => deserializeGalaxy(structurallyWrongSave())).toThrow(/no active planet/);
     expect(() => deserializeGalaxy({ v: 99 })).toThrow(/unsupported galaxy save version/);
     expect(() => deserializeGalaxy(JSON.parse('{"v":1,"__proto__":{"x":1}}'))).toThrow(/forbidden key/);
 
-    // …and every one of those arrives at the player as the same six words.
     const bridge = new WorldBridge({ seed: SEED, worldId: "helix" });
-    expect(bridge.load(structurallyWrongSave())).toBe(false);
-    expect(bridge.load({ v: 99 })).toBe(false);
+    const reasons: string[] = [];
+    for (const payload of [structurallyWrongSave(), { v: 99 }, JSON.parse('{"v":1,"__proto__":{"x":1}}')]) {
+      expect(bridge.load(payload)).toBe(false);
+      const why = bridge.takeLoadError();
+      expect(why, "a refusal arrived with no reason at all").not.toBeNull();
+      reasons.push(why!);
+    }
+    expect(reasons[0]).toMatch(/no active planet/);
+    expect(reasons[1]).toMatch(/unsupported galaxy save version/);
+    expect(reasons[2]).toMatch(/forbidden key/);
+    // Three causes, three sentences. A fix that kept ONE message for all of them would pass every
+    // assertion above this line.
+    expect(new Set(reasons).size, "the causes collapsed back to one message").toBe(3);
+    // Drained on read, like `takeCommandError` — otherwise a stale reason outlives its refusal and
+    // gets attached to the next one.
+    expect(bridge.takeLoadError(), "the reason was not drained").toBeNull();
   });
 });
 
@@ -598,20 +614,30 @@ describe("the build stamp (P6-T06)", () => {
     expect(BUILD.label).toBe(`${BUILD.version} · ${BUILD.commit}`);
   });
 
-  it("carries the commit git actually reports, wherever there is a git to ask", () => {
+  it("carries a commit this repository actually has, wherever there is a git to ask", () => {
     // `unknown` is a legitimate answer in a source tarball with no `.git`, and the build must not
     // fail there — but permitting it unconditionally would let the commit quietly stop being
-    // injected at all. So the expectation is derived from the checkout the test is running in.
-    let head: string | null = null;
-    try {
-      head = execFileSync("git", ["rev-parse", "--short", "HEAD"], {
-        cwd: REPO, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"],
-      }).trim();
-    } catch {
-      head = null;
+    // injected at all. So the expectation is derived from the checkout the test runs in.
+    //
+    // The assertion is "git knows this object", NOT "this equals HEAD". A stamp is taken when the
+    // bundle is BUILT and HEAD moves afterwards — that is the whole reason a build carries one, and
+    // ADR-0022 says so in as many words. Comparing against HEAD would make this test fail whenever
+    // a commit lands between the config load and the assertion, which is a lie about the code.
+    const git = (args: string[]): string | null => {
+      try {
+        return execFileSync("git", args, { cwd: REPO, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+      } catch {
+        return null;
+      }
+    };
+
+    if (git(["rev-parse", "--git-dir"]) === null) {
+      expect(BUILD.commit, "no git, so the stamp must say so rather than invent one").toBe("unknown");
+      return;
     }
-    if (head) expect(BUILD.commit, "the build stopped stamping the commit").toBe(head);
-    else expect(BUILD.commit).toBe("unknown");
+    expect(BUILD.commit, "the build stopped stamping a commit").not.toBe("unknown");
+    expect(git(["rev-parse", "--verify", "--quiet", `${BUILD.commit}^{commit}`]),
+      `the stamped commit ${BUILD.commit} is not an object in this repository`).not.toBeNull();
   });
 
   it("never throws, whatever the document is", () => {

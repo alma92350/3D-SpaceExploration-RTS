@@ -299,6 +299,39 @@ export function settingsModel(input: SettingsInput): SettingsModel {
           },
         ],
       },
+      {
+        id: "motion",
+        label: "Motion",
+        // Three options rather than two, for the reason the tier row above gives for Auto:
+        // `prefers-reduced-motion` SEEDS this and never owns it, so the player can disagree with
+        // their machine in either direction. What each choice does to a frame is `view/motion.ts`'s
+        // header — every combat cue keeps its fact and loses its animation, and none is deleted.
+        detail: "Holds the moving cues still — tracers, death marks, impact marks — without removing "
+          + "any of them.",
+        options: [
+          {
+            id: "auto",
+            label: "Auto",
+            detail: "follow this machine's own accessibility setting",
+            active: s.motion === "auto",
+            settings: { ...s, motion: "auto" },
+          },
+          {
+            id: "full",
+            label: "Full",
+            detail: "animate the combat cues",
+            active: s.motion === "full",
+            settings: { ...s, motion: "full" },
+          },
+          {
+            id: "reduced",
+            label: "Reduced",
+            detail: "the same cues, held still",
+            active: s.motion === "reduced",
+            settings: { ...s, motion: "reduced" },
+          },
+        ],
+      },
     ],
   };
 }

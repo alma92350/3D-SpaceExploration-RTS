@@ -10,7 +10,7 @@ import { checkPlacement } from "../bridge/commands.js";
 import { GalaxySnapshotExtractor, type GalaxySnapshot } from "../bridge/galaxy-snapshot.js";
 import { FLAG_BUILDING_KIND, engineId, type Snapshot } from "../bridge/snapshot.js";
 import { FixedStepLoop, STEP_SECONDS } from "./loop.js";
-import { type Settings, saveSettings } from "./settings.js";
+import { type Settings, applyMotion, saveSettings } from "./settings.js";
 import { CameraRig, clamp } from "../input/camera.js";
 import { pickGround, projectToScreen } from "../input/picking.js";
 import { type PendingMode, type PointerGesture, translateKey, translatePointer } from "../input/intents.js";
@@ -31,6 +31,7 @@ import {
   type EconomyBoard, type EconomyModel, type GalaxyBoard, type HudAction, type HudCommand,
   type HudModel, EconomyCache, GalaxyCache, HudView, hudModel,
 } from "../ui/hud.js";
+import { HudFocus } from "../ui/hud-focus.js";
 import { NewsFeed, newsModel } from "../ui/news.js";
 import { loadOnboardingSeen, markOnboardingSeen } from "../ui/onboarding.js";
 import { type SaveCatalog, deleteSave, newSaveId, readCatalog, writeSave } from "../ui/save-panel.js";
@@ -159,6 +160,14 @@ export class Game {
    */
   private actions: readonly HudAction[] = [];
   /**
+   * The HUD's keyboard ring (P6-T03, N-05).
+   *
+   * Constructed with the HUD root and asked before every other key handler. It claims Tab, and
+   * Enter/Space only while it holds focus — see `ui/hud-focus.ts` for why Space in particular
+   * cannot be left to the browser here.
+   */
+  private readonly hudFocus: HudFocus;
+  /**
    * The economy model, rebuilt on a tick rather than on a frame.
    *
    * The panels behind it are dry runs of the engine's own gating (`researchPanelModel` calls
@@ -220,6 +229,9 @@ export class Game {
     this.terrain = this.terrainFor(this.field);
     this.tierMonitor = new TierMonitor(tier);
     if (settings.tierOverride) this.tierMonitor.setManual(settings.tierOverride);
+    // The motion preference, applied before the first frame (P6-T04): it reaches the effect pool
+    // and the stylesheet at once, and `auto` is where it asks the machine.
+    applyMotion(settings);
 
     this.renderer.registerMeshes(buildMeshes());
     this.renderer.setTier(tier);
@@ -227,6 +239,7 @@ export class Game {
     this.hud = new HudView(elements.hudRoot, {
       onCommand: (command) => this.runCommand(command),
     });
+    this.hudFocus = new HudFocus(elements.hudRoot);
     this.minimap = new MinimapView(elements.minimapCanvas, {
       pixelWidth: elements.minimapCanvas.width || 200,
       pixelHeight: elements.minimapCanvas.height || 125,
@@ -293,6 +306,12 @@ export class Game {
   start(): void {
     if (this.running) return;
     this.running = true;
+    // The clock's baseline is stale after any pause — a lost WebGL context, a renderer swap, a tab
+    // switch — and advancing on it charges the whole gap to `droppedSteps`, the number a reader
+    // consults to decide whether a machine is behind. It also clears a halted loop, which is what
+    // makes `setRenderer` + `start()` a real recovery rather than a reload (P6-T05). Nothing called
+    // `stop()`/`start()` mid-session before the context guard did, so this never bit until now.
+    this.loop.resume();
     const frame = (now: number): void => {
       if (!this.running) return;
       this.loop.advance(now);
@@ -409,6 +428,30 @@ export class Game {
     }
 
     const hud = hudModel(snap, this.bridge.state);
+    // A colony's news, which does NOT fit the alert board — see `takeColonyNotes`, and `news.ts`'s
+    // header for why it is beside `view/alerts.ts` rather than in it.
+    //
+    // **This used to go straight into `hud.notice`, and that was the defect.** The notice is ONE
+    // shared line, cleared only by the next notice and shared with the command error below it — so
+    // a colony falling was erased by the next refused order, several notes on one frame showed only
+    // the last, and the line then sat there forever because `notice` is only called when there is
+    // something to say. The feed gives it memory; the toast keeps the transient half.
+    //
+    // Once per frame is correct: `ingest` is idempotent with respect to the galaxy (it reads the
+    // engine's queues through a cursor and writes none of them), and the colony notes are already
+    // destroyed by the drain, which is why the shell does the draining and the model never does.
+    //
+    // **It has to come BEFORE the model is built, and that is not a nicety.** Reading first would
+    // put every toast one frame behind the event, which is invisible in a 60 Hz eyeball test and
+    // exactly the kind of thing that is never noticed again once it ships.
+    this.news.ingest({
+      galaxy: this.bridge.galaxy,
+      colonyNotes: this.bridge.takeColonyNotes(),
+      now: this.bridge.galaxy.time || 0,
+    });
+    // Built on EVERY screen, not only the galaxy one: the toast is how news from the worlds you are
+    // not standing on reaches a player standing on a battlefield, which is where they mostly are.
+    const news = newsModel(this.news, this.bridge.galaxy.time || 0);
     const drawer = screen.kind === "world"
       ? this.refreshEconomy(hud, snap)
       : this.galaxyCache.get({
@@ -422,7 +465,7 @@ export class Game {
         now: this.wallClock(),
         settings: this.settings,
         currentTier: this.tier,
-        news: newsModel(this.news, this.bridge.galaxy.time || 0),
+        news,
         newsVersion: this.news.version,
       });
     // The world's own action row is emptied on a galaxy screen. The positional keys must address
@@ -433,27 +476,22 @@ export class Game {
     // The positional row is the concatenation, in the order the two rows are drawn. Z is the first
     // button the player can see and N is the fifth, whichever panel it came from.
     this.actions = screen.kind === "world" ? [...hud.actions, ...drawer.actions] : drawer.actions;
+    // The same row, handed to the keyboard ring (P6-T03). Costs two property reads unless a
+    // rebuild has just destroyed the control the player was standing on.
+    this.hudFocus.sync(this.actions);
+    // The notice line, and who wins it. A refused order beats a toast every time: it is a direct
+    // answer to something the player just pressed, and the toast is a query — `NewsModel.toast` is
+    // the newest unread entry whose window is still open, so asking twice gives the same answer and
+    // skipping a frame loses nothing. A toast that overwrote a refusal would be the news board's own
+    // defect in reverse.
+    //
+    // **The toast was computed and rendered nowhere until P6-T03 found it** — a field-level orphan
+    // that the module-level import scan cannot see, because `news.ts` was reached and this one
+    // property of its model was not. The toast is the half of the news that reaches a player who
+    // never opens the board, which is most players.
     const error = this.bridge.takeCommandError();
     if (error) this.hud.notice(error);
-    // A colony's news, which does NOT fit the alert board — see `takeColonyNotes`, and `news.ts`'s
-    // header for why it is beside `view/alerts.ts` rather than in it.
-    //
-    // **This used to go straight into `hud.notice`, and that was the defect.** The notice is ONE
-    // shared line, cleared only by the next notice and shared with the command error above it — so
-    // a colony falling was erased by the next refused order, several notes on one frame showed only
-    // the last, and the line then sat there forever because `notice` is only called when there is
-    // something to say. The news was reaching the player and could not survive contact with the
-    // next thing that happened. The feed gives it memory; the toast keeps the transient half.
-    //
-    // Once per frame is correct: `ingest` is idempotent with respect to the galaxy (it reads the
-    // engine's queues through a cursor and writes none of them), and the colony notes are already
-    // destroyed by the drain, which is why the shell does the draining and the model never does.
-    this.news.ingest({
-      galaxy: this.bridge.galaxy,
-      colonyNotes: this.bridge.takeColonyNotes(),
-      now: this.bridge.galaxy.time || 0,
-    });
-
+    else if (news.toast !== null) this.hud.notice(news.toast.text);
     const correction = this.tierMonitor.sample(frameMs);
     if (correction.dropped) {
       this.setTier(correction.tier, false);
@@ -613,6 +651,10 @@ export class Game {
   }
 
   private onKeyDown(e: KeyboardEvent): void {
+    // The HUD's keyboard ring first (P6-T03). It claims Tab, and Enter/Space only while it holds
+    // focus — so Space is still "focus last alert" for a player who never pressed Tab, and a
+    // focused button can never be fired by the same press that jumps the camera.
+    if (this.hudFocus.handleKey(e)) return;
     this.keys.add(e.key.toLowerCase());
     const result = translateKey({ key: e.key, shift: e.shiftKey, ctrl: e.ctrlKey }, this.mode);
     // The galaxy screen (P4-T13). A toggle, like the economy boards: the same key closes what it
@@ -913,7 +955,13 @@ export class Game {
       // The panel already disabled the button for a payload this build cannot open; this is the
       // second half of the same rule, so a load that fails says so instead of doing nothing.
       const ok = save ? this.bridge.load(save.payload) : false;
-      if (!ok) { this.hud.notice("That save could not be loaded."); return; }
+      if (!ok) {
+        // The reason, not just the refusal. Upstream writes eight distinguishable ones and the
+        // bridge used to throw all of them away (P6-T05).
+        const why = this.bridge.takeLoadError();
+        this.hud.notice(why ? `That save could not be loaded: ${why}` : "That save could not be loaded.");
+        return;
+      }
       this.adoptSeat();
       this.setScreen({ kind: "world" });
       return;
@@ -929,6 +977,7 @@ export class Game {
       // keeps the decision in the panel that made it.
       Object.assign(this.settings, command.settings);
       saveSettings(this.settings);
+      applyMotion(this.settings);
       if (command.settings.tierOverride) this.setTier(command.settings.tierOverride, true);
       else this.tierMonitor.clearManual();
       return;

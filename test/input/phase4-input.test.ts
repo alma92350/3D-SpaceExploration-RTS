@@ -678,6 +678,38 @@ describe("a gesture opens each Phase 4 screen", () => {
     const notice = hudRoot.querySelector('[data-hud="notice"]')!;
     expect(notice.textContent, "nothing was written to the notice, so this proves nothing").not.toBe("");
     expect(drawer.textContent, "a refused order erased the news of a lost colony").toMatch(/lost/i);
+
+    // …and a refused order still WINS the line, which is the other half of the rule. The toast is a
+    // query — the newest unread entry whose window is still open — so it can be skipped for a frame
+    // and lose nothing, while a refusal is a direct answer to something just pressed and cannot.
+    expect(notice.textContent, "the toast overwrote a refused order").not.toMatch(/lost/i);
+  });
+
+  it("puts the news on the notice line without the player opening anything", () => {
+    // **The toast was computed and rendered nowhere until P6-T03 found it** — a field-level orphan
+    // the module-level import scan cannot see, because `news.ts` WAS reached and this one property
+    // of its model was not. It is the half of the news that reaches a player who never opens the
+    // board, which is most players, and it is why the board is not the whole feature.
+    const colonyId = [...game.bridge.galaxy.planets.keys()].find((id) => id !== SEAT)!;
+    const colony = game.bridge.galaxy.planets.get(colonyId)!;
+    const b = makeBuilding("habitat", "player", colony.map.bases.player.x + 60, colony.map.bases.player.y + 60);
+    b.constructing = false;
+    b.buildProgress = 1;
+    colony.buildings.set(b.id, b);
+    step();
+    colony.buildings.delete(b.id);
+    step();
+
+    // No key pressed, no board opened, still on the battlefield.
+    const notice = hudRoot.querySelector('[data-hud="notice"]')!;
+    expect(notice.textContent, "a colony fell and the battlefield said nothing").toMatch(/lost/i);
+    // The world's NAME, not its id — `news.ts` resolves through `PLANETS` so the toast and the
+    // Records board cannot disagree about what a world is called. Read from the engine here for the
+    // same reason: an id in this assertion would pass against a toast that printed raw ids.
+    const name = planetName(colonyId);
+    expect(name, "the roster has no name for this world, so this assertion proves nothing")
+      .not.toBe(colonyId);
+    expect(notice.textContent).toContain(name);
   });
 
   it("reads a button's payload at the press, not at the moment its node was built", () => {
