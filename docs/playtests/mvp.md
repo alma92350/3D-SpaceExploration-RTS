@@ -22,8 +22,8 @@ write down the question verbatim.
 **Controls, for the facilitator only — never read these to a tester.** Left-click selects,
 left-drag box-selects, double-click selects the type on screen, right-click orders. `Z` deploy ·
 `A` attack-move · `X` stop · `H` hold · `R` patrol · `WASD`/arrows/screen-edge pan · `,` `.` rotate ·
-`Space` focus base · mouse wheel zooms (and tilts). Whether a tester finds any of these unaided is
-the point of the exercise.
+`Space` focus base · mouse wheel **or `+`/`-`** zooms (and tilts). Whether a tester finds any of
+these unaided is the point of the exercise.
 
 ## Tasks (do not read the parenthetical to the tester)
 
