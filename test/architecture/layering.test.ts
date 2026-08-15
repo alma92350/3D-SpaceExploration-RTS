@@ -110,7 +110,13 @@ describe("allocation discipline", () => {
     // strong enough to check mechanically: a `new Float32Array` may appear in a constructor (once,
     // at setup) or in a method whose name starts with `ensure` (the power-of-two growth path,
     // which by contract runs off-frame). Anywhere else it is a per-frame allocation.
-    const HOT_FILES = ["src/view/scene.ts", "src/view/interpolate.ts", "src/bridge/snapshot.ts"];
+    const HOT_FILES = [
+      "src/view/scene.ts", "src/view/interpolate.ts", "src/bridge/snapshot.ts",
+      // P3-T06's effect pool. It is the newest place a per-frame allocation could hide, because
+      // `age` runs every frame and compacting a list is the one loop a reviewer would naturally
+      // write with `filter` or a fresh array.
+      "src/view/effects.ts",
+    ];
     const METHOD = /^\s{2}(?:private\s+|protected\s+|public\s+|static\s+|override\s+|readonly\s+|get\s+|\*)*([A-Za-z_][\w]*)\s*(?:<[^>]*>)?\(/gm;
 
     const offenders: string[] = [];

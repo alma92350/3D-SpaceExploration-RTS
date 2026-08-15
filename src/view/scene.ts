@@ -26,6 +26,7 @@ import {
 } from "./renderer/port.js";
 import { type TierConfig } from "./renderer/tiers.js";
 import { hasStatusGlyph } from "./renderer/glyphs.js";
+import { CombatEffects } from "./effects.js";
 
 const INITIAL_BATCH_CAPACITY = 64;
 const OWNER_SLOTS = 2;
@@ -115,11 +116,33 @@ export class SceneComposer {
   private readonly overlays = new Map<string, OverlayBuffer>();
   private interpX = new Float32Array(256);
   private interpY = new Float32Array(256);
+  /**
+   * Live combat effects (P3-T06). Owned by the composer rather than the snapshot because an effect
+   * outlives the tick that made it: the sim reports a shot once at 20 Hz and it stays on screen for
+   * the three frames until the next one.
+   */
+  readonly effects = new CombatEffects();
 
   constructor(private readonly field: ElevationField) {
     for (const kind of Object.keys(OVERLAY_STRIDE) as Array<keyof typeof OVERLAY_STRIDE>) {
       this.overlays.set(kind, new OverlayBuffer(OVERLAY_STRIDE[kind]));
     }
+  }
+
+  /**
+   * Take one tick's shots and deaths into the effect pool.
+   *
+   * **Once per simulation step, never per frame.** Calling it twice for one tick draws every tracer
+   * twice and doubles the apparent rate of fire — and because the snapshot is the same object
+   * across the frames between ticks, a `compose`-side ingest would do exactly that.
+   */
+  ingestTick(snap: Snapshot): void {
+    this.effects.ingestTick(snap);
+  }
+
+  /** Advance the effect pool by a frame. Retires expired effects; allocates nothing. */
+  ageEffects(seconds: number): void {
+    this.effects.age(seconds);
   }
 
   /**
@@ -204,6 +227,7 @@ export class SceneComposer {
 
     this.pushNodes(snap, camera, cullSq);
     this.pushAuras(snap, camera, cullSq);
+    this.pushEffects(camera, cullSq);
     if (ghost?.active) this.pushGhost(ghost);
 
     renderer.beginFrame(camera);
@@ -267,6 +291,45 @@ export class SceneComposer {
           x, height + entityBarHeight(e.radius[i]!, isBuilding) + 5, y, p.concern[i]!, p.activity[i]!,
         );
       }
+    }
+  }
+
+  /**
+   * Combat feedback — tracers and death marks (P3-T06).
+   *
+   * The pool is the composer's, not the snapshot's, because an effect outlives the tick that
+   * created it: the sim reports a shot once at 20 Hz and it has to stay on screen across the three
+   * frames before the next tick. `ingestTick` fills it, `ageEffects` retires from it, and this only
+   * reads — so the frame path allocates nothing.
+   */
+  private pushEffects(camera: CameraState, cullSq: number): void {
+    const fx = this.effects;
+    const tracers = this.overlays.get("tracer")!;
+    for (let i = 0; i < fx.tracerCount; i++) {
+      const x0 = fx.tx0[i]!;
+      const y0 = fx.ty0[i]!;
+      const dx = x0 - camera.eyeX;
+      const dz = y0 - camera.eyeZ;
+      if (dx * dx + dz * dz > cullSq) continue;
+      const x1 = fx.tx1[i]!;
+      const y1 = fx.ty1[i]!;
+      // Both ends are lifted off the ground by the same small amount: a tracer that followed the
+      // terrain would disappear into a slope it crosses.
+      tracers.push(
+        x0, elevation(this.field, x0, y0) + 2.2, y0,
+        x1, elevation(this.field, x1, y1) + 2.2, y1,
+        fx.tracerFade(i), fx.tOwner[i]!,
+      );
+    }
+
+    const blasts = this.overlays.get("blast")!;
+    for (let i = 0; i < fx.blastCount; i++) {
+      const x = fx.bx[i]!;
+      const y = fx.by[i]!;
+      const dx = x - camera.eyeX;
+      const dz = y - camera.eyeZ;
+      if (dx * dx + dz * dz > cullSq) continue;
+      blasts.push(x, elevation(this.field, x, y) + 1.0, y, fx.blastProgress(i), fx.bBig[i]!, fx.bOwner[i]!);
     }
   }
 
