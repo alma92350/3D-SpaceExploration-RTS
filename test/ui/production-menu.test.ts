@@ -463,3 +463,65 @@ describe("affordability is the engine's answer, over every commodity (P5-T14, ro
     }
   });
 });
+
+/* =================================================================================================
+   AND THEN THE PLAYER CAN SEE IT HAPPENING (PT-04)
+
+   The menu offering the right units is worth nothing if pressing one produces no visible result.
+   The first tester pressed a button, got no feedback of any kind, and reported *"cannot see any
+   progression, but i knwo they will appear"* — they had deduced the queue rather than read it.
+
+   This drives the REAL engine through the REAL bridge: no hand-built table, because the claim is
+   precisely that the number the engine advances reaches the panel a player is looking at.
+   ================================================================================================= */
+
+describe("a queued unit is visible while it is being trained (PT-04)", () => {
+  it("shows nothing before the order, rises while training, and clears when it finishes", () => {
+    const { bridge } = fullyTeched();
+    const barracks = [...bridge.state.buildings.values()]
+      .find((b) => b.owner === "player" && (BUILDINGS[b.type]!.produces ?? []).includes("skiff"))!;
+
+    bridge.enqueue({ kind: "select", ids: [barracks.id], additive: false });
+    bridge.step(STEP_SECONDS);
+    expect(
+      hudModel(bridge.snapshot, bridge.state).buildingDetail.trainingText,
+      "an idle barracks claimed to be training something",
+    ).toBeNull();
+
+    bridge.enqueue({ kind: "train", buildingId: barracks.id, unitType: "skiff" });
+    bridge.step(STEP_SECONDS);
+
+    // Sampled across the job rather than at one instant: the assertion is that it MOVES, which a
+    // single reading cannot make and a constant would satisfy.
+    const seen: number[] = [];
+    let cleared = false;
+    for (let i = 0; i < 400; i++) {
+      bridge.step(STEP_SECONDS);
+      const detail = hudModel(bridge.snapshot, bridge.state).buildingDetail;
+      if (detail.trainingText === null) { cleared = seen.length > 0; break; }
+      seen.push(detail.trainingProgress);
+    }
+
+    expect(seen.length, "the barracks never reported training at all").toBeGreaterThan(2);
+    expect(Math.max(...seen), "progress never advanced past its starting value")
+      .toBeGreaterThan(Math.min(...seen));
+    expect(Math.max(...seen), "progress left the 0..1 range the panel draws as a bar")
+      .toBeLessThanOrEqual(1);
+    expect(cleared, "the barracks was still training after the unit came out").toBe(true);
+  });
+
+  it("counts a second order as one behind the first", () => {
+    const { bridge } = fullyTeched();
+    const barracks = [...bridge.state.buildings.values()]
+      .find((b) => b.owner === "player" && (BUILDINGS[b.type]!.produces ?? []).includes("skiff"))!;
+
+    bridge.enqueue({ kind: "select", ids: [barracks.id], additive: false });
+    bridge.enqueue({ kind: "train", buildingId: barracks.id, unitType: "skiff" });
+    bridge.enqueue({ kind: "train", buildingId: barracks.id, unitType: "skiff" });
+    bridge.step(STEP_SECONDS);
+    bridge.step(STEP_SECONDS);
+
+    expect(hudModel(bridge.snapshot, bridge.state).buildingDetail.trainingText)
+      .toContain("1 queued behind");
+  });
+});

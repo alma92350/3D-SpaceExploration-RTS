@@ -39,11 +39,24 @@ export interface BuildingPanelModel {
   readonly outputs: readonly BufferEntry[];
   readonly canPause: boolean;
   readonly canElectrify: boolean;
+  /**
+   * "Skiff — 47%, 2 queued", or null when nothing is training (PT-04).
+   *
+   * The first tester's complaint was *"cannot see any progression, but i knwo they will appear"* —
+   * they had inferred from nothing on screen that a unit was coming. The engine has advanced this
+   * number every tick since Phase 0; it simply never crossed the bridge. Research has shown its
+   * own percentage the whole time, from an identically shaped field, which is why this reads as an
+   * omission rather than a decision.
+   */
+  readonly trainingText: string | null;
+  /** 0..1 for the bar. 0 when nothing is training — check `trainingText` for that, not this. */
+  readonly trainingProgress: number;
 }
 
 const EMPTY: BuildingPanelModel = {
   building: null, recipeText: null, statusText: "", severity: "ok",
   fed: 0, output: 0, inputs: [], outputs: [], canPause: false, canElectrify: false,
+  trainingText: null, trainingProgress: 0,
 };
 
 /**
@@ -94,7 +107,25 @@ export function buildingPanelModel(snap: Snapshot): BuildingPanelModel {
     // than no button (F-07: every control the HUD offers does something).
     canPause: recipeIndex >= 0,
     canElectrify: isElectrifiable(type),
+    trainingText: trainingTextOf(snap, index),
+    trainingProgress: snap.production.trainProgress[index]!,
   };
+}
+
+/**
+ * What the head of the training queue is doing, in words (PT-04).
+ *
+ * Deliberately does NOT name the unit type: the snapshot carries the queue's progress and depth
+ * but not what is in it, and inventing a name from the building's own roster would be a guess that
+ * is wrong the moment a player queues two different units. The percentage and the depth are what
+ * the engine actually told us, so they are what this says.
+ */
+function trainingTextOf(snap: Snapshot, index: number): string | null {
+  const queued = snap.production.trainQueued[index]!;
+  if (queued === 0) return null;
+  const pct = Math.round(snap.production.trainProgress[index]! * 100);
+  const behind = queued - 1;
+  return behind > 0 ? `Training — ${pct}%, ${behind} queued behind` : `Training — ${pct}%`;
 }
 
 function indexOfSelected(snap: Snapshot, id: string): number | null {

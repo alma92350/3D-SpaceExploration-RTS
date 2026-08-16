@@ -55,12 +55,18 @@ const CROWD_RANGE = 500;
  * The imposter batch as one frame at the given yaw snap saw it, plus the camera that drew it.
  *
  * **The crowd is placed relative to the camera, not the camera relative to the crowd**, and that is
- * not a convenience. The eye sits at `target − (sin yaw, cos yaw) × cos(pitch) × distance`, so
+ * not a convenience. The eye sits at `target + (sin yaw, cos yaw) × cos(pitch) × distance`, so
  * rotating the rig around a fixed crowd changes how far the crowd is from the eye — by up to 570
  * units here, which straddles T0's 340 threshold. Two of the eight snaps would then draw no
  * imposter at all and the assertions would have nothing to look at. Placing the crowd along the
  * view direction from the eye holds that distance at exactly `CROWD_RANGE` for every snap, so the
  * only thing that varies between the eight frames is the one thing under test.
+ *
+ * **The view direction is `−(sin yaw, cos yaw)`, and that sign is load-bearing** (PT-01,
+ * ADR-0025). It tracks `eyePosition` — when the eye moved to the other side of the target, this
+ * line kept placing the crowd on the old side, which is now BEHIND the camera, and the frame drew
+ * no imposter at all. The height and size assertions then read `NaN` and a one-element set rather
+ * than saying "the crowd is off screen", so the failure arrived disguised as three unrelated ones.
  */
 function imposterFrame(yawIndex: number) {
   const state = activeState(createGalaxy({ seed: SEED, startId: "ferros" }));
@@ -76,8 +82,8 @@ function imposterFrame(yawIndex: number) {
   rig.focusOn(field.width / 2, field.height / 2);
   const camera = rig.update(1280, 720);
 
-  const cx = camera.eyeX + Math.sin(rig.yaw) * CROWD_RANGE;
-  const cy = camera.eyeZ + Math.cos(rig.yaw) * CROWD_RANGE;
+  const cx = camera.eyeX - Math.sin(rig.yaw) * CROWD_RANGE;
+  const cy = camera.eyeZ - Math.cos(rig.yaw) * CROWD_RANGE;
   for (let i = 0; i < 40; i++) {
     const u = makeUnit("skiff", "player", cx + (i % 8) * 9 - 36, cy + Math.floor(i / 8) * 9 - 18);
     state.units.set(u.id, u);
@@ -264,8 +270,9 @@ function imposterSamples(tier: typeof TIER) {
       rig.focusOn(FLAT.width / 2, FLAT.height / 2);
       const camera = rig.update(raster.w, raster.h);
       for (const range of [tier.lodDistance, (tier.lodDistance + tier.cullDistance) / 2]) {
-        const ox = camera.eyeX + Math.sin(rig.yaw) * range;
-        const oz = camera.eyeZ + Math.cos(rig.yaw) * range;
+        // Minus: down the view direction, the same sign `imposterFrame` documents.
+        const ox = camera.eyeX - Math.sin(rig.yaw) * range;
+        const oz = camera.eyeZ - Math.cos(rig.yaw) * range;
         projectToScreen(camera, ox, 0, oz, SCREEN);
         if (SCREEN.behind || SCREEN.x < 0 || SCREEN.x > raster.w || SCREEN.y < 0 || SCREEN.y > raster.h) continue;
         samples.push({ camera, ox, oz, zoom, range });
@@ -306,7 +313,7 @@ describe("the imposter is the size of the mesh it replaces (P7-T02, ADR-0024)", 
         }
         const meshW = Math.exp(logW / facings.length);
         const meshH = Math.exp(logH / facings.length);
-        const q = screenBox(quad.positions, s.camera.yaw + Math.PI, IMPOSTER_SIZE[entry.mesh], s.ox, s.oz, s.camera);
+        const q = screenBox(quad.positions, s.camera.yaw, IMPOSTER_SIZE[entry.mesh], s.ox, s.oz, s.camera);
 
         const where = `${entry.type} (${entry.mesh}) at zoom ${s.zoom}, ${s.range} out`;
         for (const [ratio, worst] of [
@@ -385,11 +392,12 @@ describe("the imposter is the size of the mesh it replaces (P7-T02, ADR-0024)", 
       rig.focusOn(FLAT.width / 2, FLAT.height / 2);
       const camera = rig.update(960, 540);
       const pitch = rig.pitch;
-      const ox = camera.eyeX + Math.sin(rig.yaw) * TIER.lodDistance;
-      const oz = camera.eyeZ + Math.cos(rig.yaw) * TIER.lodDistance;
+      const ox = camera.eyeX - Math.sin(rig.yaw) * TIER.lodDistance;
+      const oz = camera.eyeZ - Math.cos(rig.yaw) * TIER.lodDistance;
       const face = [[-0.5, 0, 0], [0.5, 0, 0], [0.5, Math.cos(pitch), -Math.sin(pitch)],
         [-0.5, 0, 0], [0.5, Math.cos(pitch), -Math.sin(pitch)], [-0.5, Math.cos(pitch), -Math.sin(pitch)]];
-      const yaw = camera.yaw + Math.PI;
+      // Mirrors `SceneComposer`'s `imposterYaw`, which is now `camera.yaw` (PT-01, ADR-0025).
+      const yaw = camera.yaw;
       const ideal = screenBox(new Float32Array(face.flat()), yaw, 30, ox, oz, camera).h;
       leaning.push(screenBox(quad.positions, yaw, 30, ox, oz, camera).h / ideal);
       flat.push(screenBox(upright, yaw, 30, ox, oz, camera).h / ideal);
@@ -418,9 +426,10 @@ describe("the imposter is the size of the mesh it replaces (P7-T02, ADR-0024)", 
       rig.distance = zoom;
       rig.focusOn(FLAT.width / 2, FLAT.height / 2);
       const camera = rig.update(960, 540);
-      const ox = camera.eyeX + Math.sin(rig.yaw) * TIER.lodDistance;
-      const oz = camera.eyeZ + Math.cos(rig.yaw) * TIER.lodDistance;
-      const yaw = camera.yaw + Math.PI;
+      const ox = camera.eyeX - Math.sin(rig.yaw) * TIER.lodDistance;
+      const oz = camera.eyeZ - Math.cos(rig.yaw) * TIER.lodDistance;
+      // Mirrors `SceneComposer`'s `imposterYaw`, which is now `camera.yaw` (PT-01, ADR-0025).
+      const yaw = camera.yaw;
       const p = [0, 1, 2].map((k) => {
         const v = quad.indices[k]!;
         return place(quad.positions[v * 3]!, quad.positions[v * 3 + 1]!, quad.positions[v * 3 + 2]!,
@@ -466,8 +475,9 @@ describe("the imposter is the size of the mesh it replaces (P7-T02, ADR-0024)", 
     const camera = rig.update(1280, 720);
 
     // Every unit type the engine has, both owners, all of them past the LOD distance.
-    const cx = camera.eyeX + Math.sin(rig.yaw) * CROWD_RANGE;
-    const cy = camera.eyeZ + Math.cos(rig.yaw) * CROWD_RANGE;
+    // Minus: down the view direction — see `imposterFrame`'s header (PT-01).
+    const cx = camera.eyeX - Math.sin(rig.yaw) * CROWD_RANGE;
+    const cy = camera.eyeZ - Math.cos(rig.yaw) * CROWD_RANGE;
     const types = Object.keys(UNITS);
     types.forEach((type, i) => {
       const u = makeUnit(type, i % 2 === 0 ? "player" : "ai", cx + (i % 8) * 9 - 36, cy + Math.floor(i / 8) * 9 - 18);

@@ -399,6 +399,29 @@ export interface KeyGesture {
   readonly key: string;
   readonly shift: boolean;
   readonly ctrl: boolean;
+  /**
+   * `KeyboardEvent.code` — the key's PHYSICAL position, independent of layout (PT-02).
+   *
+   * Optional, and the fallback is `key`, for two reasons that are both real: `code` is empty on a
+   * synthetic `KeyboardEvent` unless a test sets it, and a browser may report nothing for an
+   * unusual input device. Either way the old label-based behaviour is what happens, so nothing
+   * that worked stops working.
+   */
+  readonly code?: string;
+}
+
+/**
+ * The letter at a physical key position, or null when the code is not a letter key.
+ *
+ * `KeyW` → `"w"` on every layout on earth, which is the whole point: on AZERTY the key at that
+ * position is *labelled* Z and `KeyboardEvent.key` says `"z"`. Only `Key*` codes are translated —
+ * `Digit1` deliberately is not, because the digit row is a mnemonic (control group **1**), not a
+ * position.
+ */
+export function physicalLetter(code: string | undefined): string | null {
+  if (!code || code.length !== 4 || !code.startsWith("Key")) return null;
+  const letter = code[3]!.toLowerCase();
+  return letter >= "a" && letter <= "z" ? letter : null;
 }
 
 export interface KeyResult {
@@ -584,7 +607,11 @@ export function translateKey(gesture: KeyGesture, mode: PendingMode = { kind: "n
   // The positional row, before the letter switch — Z used to return a hard-coded `deploy` intent,
   // and it still deploys, because Deploy is the first button the HUD shows a selected colony ship.
   // That was always the stated reason for the binding; it is now the actual mechanism.
-  const positional = POSITIONAL_KEYS.indexOf(gesture.key.toLowerCase());
+  // **By POSITION, not by label** (PT-02). This row is called positional in upstream's own naming
+  // and in the comment above, and on an AZERTY keyboard the letters are somewhere else entirely —
+  // so a French player pressing the key under their index finger has to reach the same button a US
+  // player does. Falls back to the label when no `code` came with the event.
+  const positional = POSITIONAL_KEYS.indexOf(physicalLetter(gesture.code) ?? gesture.key.toLowerCase());
   if (positional >= 0) return { ...NO_KEY, action: { index: positional } };
 
   switch (gesture.key.toLowerCase()) {

@@ -26,12 +26,16 @@ function snapshotWith(opts: {
   recipe?: number;
   buffers?: BuildingBuffers;
   selected?: boolean;
+  trainProgress?: number;
+  trainQueued?: number;
 } = {}): Snapshot {
   const production = new ProductionTable(4);
   production.concern[0] = opts.concern ?? CONCERN_NONE;
   production.fed[0] = opts.fed ?? 0.5;
   production.output[0] = opts.output ?? 0.25;
   production.recipe[0] = opts.recipe ?? 0;
+  production.trainProgress[0] = opts.trainProgress ?? 0;
+  production.trainQueued[0] = opts.trainQueued ?? 0;
 
   const entities = {
     count: 1,
@@ -134,5 +138,46 @@ describe("the building detail panel", () => {
   it("is a pure function — the same snapshot gives the same model", () => {
     const snap = snapshotWith({ concern: CONCERN_STARVED });
     expect(buildingPanelModel(snap)).toEqual(buildingPanelModel(snap));
+  });
+});
+
+/* =================================================================================================
+   WHAT IS BEING TRAINED, AND HOW FAR ALONG (PT-04)
+
+   The first playtest's words were *"cannot see any progression, but i knwo they will appear"* — a
+   player inferring a queue from an empty screen. The engine had the number the whole time and the
+   bridge dropped it; these pin the half that is this project's to keep.
+   ================================================================================================= */
+
+describe("the training queue reaches the panel (PT-04)", () => {
+  it("says nothing at all when nothing is training", () => {
+    const model = buildingPanelModel(snapshotWith({ trainQueued: 0, trainProgress: 0 }));
+    expect(model.trainingText, "an idle building claimed to be training").toBeNull();
+    expect(model.trainingProgress).toBe(0);
+  });
+
+  it("reports the head job's progress as a percentage in words, not only as a bar width", () => {
+    const model = buildingPanelModel(snapshotWith({ trainQueued: 1, trainProgress: 0.47 }));
+    // The number has to be READABLE, not just drawable: a bar alone is information by width, which
+    // is the failure N-05 names for colour and the reason research has always said "47% done".
+    expect(model.trainingText).toContain("47%");
+    expect(model.trainingProgress).toBeCloseTo(0.47, 6);
+  });
+
+  it("counts what is waiting BEHIND the head, not the whole queue", () => {
+    // Three queued is one training and two waiting. Reporting "3 queued behind" would tell the
+    // player they have one more unit coming than they do.
+    const model = buildingPanelModel(snapshotWith({ trainQueued: 3, trainProgress: 0.1 }));
+    expect(model.trainingText).toContain("2 queued behind");
+
+    const single = buildingPanelModel(snapshotWith({ trainQueued: 1, trainProgress: 0.1 }));
+    expect(single.trainingText, "a lone job invented a queue behind itself").not.toContain("behind");
+  });
+
+  it("does not name the unit, because the snapshot never told it which one", () => {
+    // The queue's progress and depth cross the bridge; its CONTENTS do not. Naming a type here
+    // would be a guess, and wrong the first time a player queues two different units.
+    const model = buildingPanelModel(snapshotWith({ trainQueued: 2, trainProgress: 0.5 }));
+    expect(model.trainingText).toBe("Training — 50%, 1 queued behind");
   });
 });
