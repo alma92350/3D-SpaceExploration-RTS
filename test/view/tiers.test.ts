@@ -2,7 +2,8 @@
 
 import { describe, expect, it } from "vitest";
 import {
-  CORRECTION_WINDOW_MS, TIERS, TIER_ORDER, TierMonitor, type DetectionInputs, detectTier, percentile,
+  CORRECTION_WINDOW_MS, TIERS, TIER_ORDER, TierMonitor, type DetectionInputs, detectTier,
+  isDedicatedGpu, percentile,
 } from "../../src/view/renderer/tiers.js";
 
 const CAPABLE: DetectionInputs = {
@@ -216,25 +217,71 @@ describe("detectTier disagrees with itself across browsers (N-04, P7-T01)", () =
 
   const CAPABLE_GPU = "ANGLE (NVIDIA GeForce RTX 4070)";
 
-  it("cannot reach T3 at all without deviceMemory, however capable the machine", () => {
+  // **PT-07 closed the sharpest half of this, and these two now pin the fix rather than the bug.**
+  // A named GPU is checked before anything CPU-shaped, and the renderer string does not depend on
+  // `deviceMemory` — so every machine whose browser will name its card gets the SAME tier in all
+  // four browsers. What is left disagreeing is machines with no recognised GPU name, which really
+  // are unknown machines, and there the conservative CPU-shaped guess still applies.
+  // Both of these were MUTATION SURVIVORS on the commit that added the GPU branch, and neither is
+  // an equivalent mutant — they are two real holes the sweep above cannot see, because it varies
+  // cores over [2, 4, 8, 12, 16] and renderer over four strings that are all either clearly
+  // dedicated or clearly Intel.
+  it("does not promote an integrated Radeon, which is what a bare \"radeon\" match would do", () => {
+    // AMD puts "Radeon" on integrated graphics too: every Ryzen APU reports something like
+    // "AMD Radeon(TM) Vega 8 Graphics", and matching the bare word would hand T3 to a laptop with
+    // no discrete card at all. `DEDICATED_GPUS` therefore lists "radeon rx" and "radeon pro".
+    const apu = { hardwareConcurrency: 8, deviceMemory: 8, hasWebGL2: true };
+    expect(isDedicatedGpu("AMD Radeon(TM) Vega 8 Graphics"), "an APU was read as a dedicated GPU")
+      .toBe(false);
+    expect(detectTier({ ...apu, rendererString: "ANGLE (AMD, AMD Radeon(TM) Vega 8 Graphics, D3D11)" }))
+      .toBe("T2");
+    // The discrete lines still pass, or the exclusion above went too far.
+    expect(isDedicatedGpu("AMD Radeon RX 7800 XT")).toBe(true);
+    expect(isDedicatedGpu("AMD Radeon Pro W6800")).toBe(true);
+  });
+
+  it("holds the four-core floor on the GPU branch, at the one core count that tests it", () => {
+    // The floor can only ever change an answer at EXACTLY 3 cores: 2 and below are already T0 from
+    // the guard above, and 4 and up satisfy it. So a sweep over [2, 4, 8, 12, 16] cannot see this
+    // line at all — the same shape as the "T1 is reachable only at exactly 3 cores" note recorded
+    // above, and the reason that note is worth keeping.
+    const gpu = { rendererString: CAPABLE_GPU, deviceMemory: 8, hasWebGL2: true };
+    expect(detectTier({ ...gpu, hardwareConcurrency: 3 }),
+      "three cores cannot feed T3 however good the card is — ADR-0006 puts sim and frame on "
+      + "separate threads, so below four the CPU is the bottleneck").toBe("T1");
+    expect(detectTier({ ...gpu, hardwareConcurrency: 4 }), "four cores is the floor, not above it")
+      .toBe("T3");
+    expect(detectTier({ ...gpu, hardwareConcurrency: 2 }), "two cores is T0 before the GPU is read")
+      .toBe("T0");
+  });
+
+  it("reaches T3 in every browser when the GPU is named, deviceMemory or not", () => {
     const machine = { rendererString: CAPABLE_GPU, hardwareConcurrency: 16, hasWebGL2: true };
     expect(detectTier({ ...machine, deviceMemory: 8 }), "Chrome/Edge on this machine").toBe("T3");
     expect(
       detectTier({ ...machine, deviceMemory: null }),
-      "the same machine in Firefox/Safari — T3's gate needs `memory >= 8` and `null` becomes 4",
-    ).toBe("T2");
+      "the same machine in Firefox/Safari, which expose no deviceMemory — the GPU decides now",
+    ).toBe("T3");
   });
 
-  it("loses the low-memory downgrade, which is the half that costs a first impression", () => {
-    const small = { rendererString: CAPABLE_GPU, hardwareConcurrency: 8, hasWebGL2: true };
-    expect(detectTier({ ...small, deviceMemory: 2 }), "Chrome/Edge sees 2 GB and picks T0").toBe("T0");
+  it("still loses the low-memory downgrade where no GPU is named", () => {
+    // The half PT-07 did NOT close, kept honest. `memory <= 2` fires only where the browser reports
+    // memory, so a 2 GB machine still reads differently — but ONLY when nothing names its GPU,
+    // because the GPU branch now answers first for everything that does.
+    const unnamed = { rendererString: "ANGLE (Unknown Renderer)", hardwareConcurrency: 8, hasWebGL2: true };
+    expect(detectTier({ ...unnamed, deviceMemory: 2 }), "Chrome/Edge sees 2 GB and picks T0").toBe("T0");
     expect(
-      detectTier({ ...small, deviceMemory: null }),
+      detectTier({ ...unnamed, deviceMemory: null }),
       "Firefox/Safari cannot see the 2 GB, so the `memory <= 2` guard never fires",
     ).toBe("T2");
+
+    // And a NAMED weak GPU on a 2 GB machine is still caught, in every browser, because the
+    // core/memory floor is checked before the GPU branch.
+    const named = { rendererString: CAPABLE_GPU, hardwareConcurrency: 8, hasWebGL2: true };
+    expect(detectTier({ ...named, deviceMemory: 2 }), "a 2 GB machine is T0 wherever it is seen").toBe("T0");
   });
 
-  it("disagrees on 22 of 60 plausible machines, and every disagreement has this one cause", () => {
+  it("disagrees on 16 of 60 plausible machines, all of them without a named GPU", () => {
     // Derived, not pasted: the sweep is here so the number can be re-checked, and so that changing
     // the heuristic makes this red instead of quietly changing what two of four browsers get.
     // `deviceMemory` is quantised by its spec and capped at 8, so these are the values that occur.
@@ -261,13 +308,27 @@ describe("detectTier disagrees with itself across browsers (N-04, P7-T01)", () =
     expect(total).toBe(60);
     expect(
       disagreements.length,
-      `the browser-dependent tier split moved. It was 22 of 60; it is now ${disagreements.length}:\n`
+      `the browser-dependent tier split moved. It was 22 of 60 before PT-07 and 16 after; it is `
+      + `now ${disagreements.length}:\n`
       + disagreements.map((d) => `  • ${d}`).join("\n")
       + `\nIf this changed because detectTier changed, say what Firefox and Safari now get and why.`,
-    ).toBe(22);
+    ).toBe(16);
 
-    // The shape matters as much as the count: no machine in the sweep reaches T3 without
-    // deviceMemory, so the top tier is Chromium-only by construction rather than by chance.
+    // **The shape matters more than the count, and it is the shape that PT-07 changed.** Every
+    // remaining disagreement is a machine whose renderer string names no GPU this build knows —
+    // the 2 GB rows, where `memory <= 2` fires only where memory is visible. Nothing with a named
+    // card disagrees any more, which is the property worth keeping.
+    // Every one of them is a **2 GB** row, and that is the whole remaining cause: `memory <= 2`
+    // can only fire where memory is visible, so Chrome drops such a machine to T0 while Firefox and
+    // Safari never see the constraint. It is the half PT-07 did not close, and it is now the ONLY
+    // half — no machine disagrees on the strength of its GPU any more, which is what changed.
+    for (const d of disagreements) {
+      expect(d, "a disagreement that is not about the invisible 2 GB floor — PT-07 closed those")
+        .toContain("/2GB:");
+    }
+
+    // And the top tier is no longer Chromium-only: T3 is reachable without `deviceMemory` for
+    // every GPU in this sweep that is actually a GPU.
     const reachableElsewhere = new Set(
       GPUS.flatMap((rendererString) =>
         CORES.map((hardwareConcurrency) =>
@@ -275,6 +336,7 @@ describe("detectTier disagrees with itself across browsers (N-04, P7-T01)", () =
         ),
       ),
     );
-    expect([...reachableElsewhere].sort(), "T3 must stay unreachable-without-deviceMemory, or this row is stale").toEqual(["T0", "T2"]);
+    expect([...reachableElsewhere].sort(), "T3 became unreachable without deviceMemory again")
+      .toEqual(["T0", "T2", "T3"]);
   });
 });

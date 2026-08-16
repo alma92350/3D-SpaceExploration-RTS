@@ -71,3 +71,4 @@ Template: [`0000-template.md`](0000-template.md). Keep it to a page. Sections:
 | [0023](0023-a-shot-is-the-engines-own-attackhit-event.md) | A shot is the engine's own `attackHit` event — the tracer set is what landed, not what fired | Accepted (supersedes ADR-0017) |
 | [0024](0024-the-imposter-is-the-mesh-it-replaces.md) | The LOD imposter is sized and shaped by the mesh it replaces, not by the entity's radius | Accepted |
 | [0025](0025-yaw-zero-looks-north-and-the-screen-basis-is-derived.md) | Yaw 0 looks north, and every screen-space control is derived from that basis | Accepted |
+| [0026](0026-the-gpu-decides-the-graphics-tier.md) | A named dedicated GPU selects the graphics tier, ahead of any CPU-shaped guess | Accepted |
