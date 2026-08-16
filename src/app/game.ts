@@ -388,6 +388,7 @@ export class Game {
   private terrainFor(field: ElevationField): TerrainMesh {
     return buildTerrainMesh(field, {
       relief: TIERS[this.tier].terrain === "relief", apron: TIERS[this.tier].apron,
+      subdivision: TIERS[this.tier].terrainSubdivision,
     });
   }
 

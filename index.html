@@ -79,6 +79,18 @@
       <canvas id="minimap" width="220" height="138"></canvas>
       <div id="tier-picker" class="tier-picker" title="Graphics tier"></div>
       <p id="fallback-notice" class="fallback-notice"></p>
+      <!-- PT-08. The three control paragraphs live inside a <details> because the sidebar is
+           `position: fixed; bottom: 0` and grows UPWARD: PT-03 named the twelve keys that had never
+           been advertised, the list roughly doubled, and the sidebar climbed far enough up the
+           right-hand side to cover buildings on the map. A reference list is read once and then in
+           the way, so it now opens on demand and takes one line when shut.
+
+           <details> rather than a class toggled by script, for two reasons: it is keyboard-operable
+           and screen-reader-labelled with no code at all (N-05), and the paragraphs stay in the
+           markup either way — `test/ui/onboarding.test.ts` parses this file for <p class="hint">,
+           and a list built by JavaScript would be a list that check could no longer read. -->
+      <details id="controls" class="hint-details">
+        <summary>Controls</summary>
       <p class="hint">
         <b>LMB</b> select · <b>drag</b> box-select · <b>RMB</b> order ·
         <b>Q</b> select next type (shift: one at a time) · <b>K</b> act at the screen centre ·
@@ -111,6 +123,7 @@
         the middle of the screen, and <b>K</b> acts on it — move, gather, attack, or place whatever
         you have armed.
       </p>
+      </details>
       <!-- P6-T06. Filled by `src/app/build.ts` from the version `vite.config.ts` injects, so no
            human ever retypes it. Every playtest script asks a tester which build they were on, and
            until this line the honest answer was "the one that was up on Tuesday". -->

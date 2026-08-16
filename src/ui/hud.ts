@@ -783,6 +783,19 @@ function marketSection(state: State, snap: Snapshot, credits: number): EconomySe
       enabled: row.canSell,
       command: { kind: "intent", intent: { kind: "trade", com: row.com, qty: model.lot, side: "sell" } },
     });
+    // **Sell all** (PT-09). `sellAllProceeds` is the engine's dry run of the whole lot walk, so the
+    // figure on the button is what the order actually pays after slippage — the one number a
+    // player cannot work out for themselves, and the reason this is worth a button rather than
+    // repeated clicking. Offered only above one lot: below that it duplicates the button above it.
+    if (row.sellAllQty > model.lot) {
+      actions.push({
+        id: `sellall:${row.com}`,
+        label: `Sell all ${row.com}`,
+        detail: `${row.sellAllQty} → ${Math.round(row.sellAllProceeds)} cr`,
+        enabled: row.canSell,
+        command: { kind: "intent", intent: { kind: "trade", com: row.com, qty: row.sellAllQty, side: "sell" } },
+      });
+    }
     actions.push({
       id: `buy:${row.com}`,
       label: `Buy ${row.com}`,
@@ -790,11 +803,28 @@ function marketSection(state: State, snap: Snapshot, credits: number): EconomySe
       enabled: row.canBuy,
       command: { kind: "intent", intent: { kind: "trade", com: row.com, qty: model.lot, side: "buy" } },
     });
+    // **Bulk buy**, shown only when the credits actually cover it, so the row never offers a button
+    // that is going to refuse. No total is printed: `buy` walks lots and slips between them exactly
+    // as `sell` does, and this file computes no prices (ADR-0012 §5).
+    if (row.buyLotsAffordable > 1) {
+      const qty = model.lot * row.buyLotsAffordable;
+      actions.push({
+        id: `buymax:${row.com}`,
+        label: `Buy ${qty} ${row.com}`,
+        detail: `${row.buyLotsAffordable} lots at ~${row.buyUnit.toFixed(1)} cr each`,
+        enabled: row.canBuy,
+        command: { kind: "intent", intent: { kind: "trade", com: row.com, qty, side: "buy" } },
+      });
+    }
   }
   return {
     id: "market",
     title: `Market · ${model.credits} credits`,
-    lines: model.rows.map((r) => `${r.com} ${r.held} held · sell ${r.sellUnit.toFixed(1)} · buy ${r.buyUnit.toFixed(1)}`),
+    // `pressureText` is the engine's own swing band said out loud (PT-09). It was computed and
+    // discarded for six phases, which made every price on this panel a number with no context —
+    // a player could read "sell 4.2" and had nothing to tell them whether that was good.
+    lines: model.rows.map((r) =>
+      `${r.com} ${r.held} held · sell ${r.sellUnit.toFixed(1)} · buy ${r.buyUnit.toFixed(1)} · ${r.pressureText}`),
     actions,
     warning: null,
   };

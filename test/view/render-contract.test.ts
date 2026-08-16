@@ -5,7 +5,7 @@
 import { describe, expect, it } from "vitest";
 import { RecordingRenderer } from "../../src/view/renderer/recording.js";
 import { SceneComposer } from "../../src/view/scene.js";
-import { TIERS } from "../../src/view/renderer/tiers.js";
+import { TIERS, TIER_ORDER } from "../../src/view/renderer/tiers.js";
 import { LOD_IMPOSTER, LOD_MESH } from "../../src/view/renderer/port.js";
 import { buildMeshes, TRIANGLE_BUDGET } from "../../src/view/meshes/generators.js";
 import { buildTerrainMesh, expectedTriangles } from "../../src/view/terrain/mesh.js";
@@ -144,12 +144,36 @@ describe("terrain mesh", () => {
     expect(brightest, "the apron is meant to recede, not compete with the play area").toBeLessThan(0.1);
   });
 
-  it("stays inside its vertex budget at MVP map size", () => {
+  it("stays inside its vertex budget at MVP map size, per tier", () => {
     const { field } = world();
-    const mesh = buildTerrainMesh(field, { relief: true, apron: 900 });
-    expect(mesh.triangles).toBe(expectedTriangles(field, 900));
-    // One draw call, and small next to 200 instanced units — the argument for merging it.
-    expect(mesh.triangles).toBeLessThan(12_000);
+
+    // **The budget is per tier since PT-10**, because terrain resolution is now a tier property.
+    // It has to be: at SUBDIVISION 2 the drawn ground disagreed with where entities stand by up to
+    // 3.9 world units on the Helix ridge — against a smallest unit radius of 6 — which a player
+    // reported as units sinking into the hillside and reappearing. Closing that costs vertices, and
+    // deciding how many to spend per machine is the tier ladder's whole job.
+    for (const tier of TIER_ORDER) {
+      const config = TIERS[tier];
+      const mesh = buildTerrainMesh(field, {
+        relief: config.terrain === "relief", apron: config.apron, subdivision: config.terrainSubdivision,
+      });
+      expect(mesh.triangles, `${tier} terrain does not match its own subdivision`)
+        .toBe(expectedTriangles(field, config.apron, config.terrainSubdivision));
+    }
+
+    // T0 is the one that must stay tiny: it is the no-GPU tier, and it is flat, so its samples buy
+    // nothing. One draw call and small next to 200 instanced units — the argument for merging it.
+    const t0 = buildTerrainMesh(field, {
+      relief: false, apron: TIERS.T0.apron, subdivision: TIERS.T0.terrainSubdivision,
+    });
+    expect(t0.triangles, "the compatibility tier grew geometry it cannot use").toBeLessThan(12_000);
+
+    // And the top tier still has to be one modest draw call rather than a reason to buy a GPU.
+    const t3 = buildTerrainMesh(field, {
+      relief: true, apron: TIERS.T3.apron, subdivision: TIERS.T3.terrainSubdivision,
+    });
+    expect(t3.triangles, "the top tier's terrain is no longer small next to the units on it")
+      .toBeLessThan(80_000);
   });
 });
 

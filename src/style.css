@@ -247,6 +247,13 @@ html, body {
   border-top: 1px solid var(--edge);
   border-left: 1px solid var(--edge);
   border-top-left-radius: 6px;
+  /* PT-08. Anchored to the bottom, so every line added here grows the panel UPWARD over the map —
+     which is how PT-03's twelve new key names ended up hiding buildings. The bound is the fix, not
+     the shorter list: whatever this panel comes to hold, it stops at three-quarters of the window
+     and scrolls inside itself instead of covering the thing the player is looking at. */
+  max-height: 75vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 #minimap {
@@ -275,4 +282,18 @@ html, body {
 .fallback-notice.visible { display: block; }
 
 .hint { margin: 8px 0 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
+
+/* PT-08 — the collapsed controls reference. Shut by default: it is read once and then in the way. */
+.hint-details { margin: 8px 0 0; }
+.hint-details > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+  user-select: none;
+}
+.hint-details > summary:hover { color: var(--text); }
+/* The focus ring is the only thing telling a keyboard player where they are (N-05). */
+.hint-details > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.hint-details[open] > summary { color: var(--text); margin-bottom: 2px; }
 .hint b { color: var(--text); font-weight: 600; }

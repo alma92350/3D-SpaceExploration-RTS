@@ -76,6 +76,18 @@ export interface TierConfig {
   /** Terrain: `flat` paints the terrain types on one plane; `relief` builds the heightfield. */
   readonly terrain: "flat" | "relief";
   readonly shadows: "none" | "blob" | "map";
+  /**
+   * Terrain samples per elevation cell (PT-10).
+   *
+   * The drawn ground is flat triangles between samples and entities stand on the smooth curve
+   * those samples come from, so this is how closely the two agree — at 2 the worst gap on Helix
+   * was 3.9 units of burial against a smallest unit radius of 6, which a player reported as units
+   * sinking into the ridge and popping out. See `SUBDIVISION` in `terrain/mesh.ts` for the table,
+   * including why 6 is worse than 4.
+   *
+   * 1 on a flat tier because with no relief every height is 0 and more samples buy only memory.
+   */
+  readonly terrainSubdivision: number;
   readonly antialias: boolean;
   /**
    * How far the dark apron extends past the map edge, in world units.
@@ -101,21 +113,25 @@ export const TIERS: Readonly<Record<Tier, TierConfig>> = {
     tier: "T0", label: "Compatibility (no GPU)", frameBudgetMs: 33, renderScale: 0.75,
     lodDistance: 340, cullDistance: 1100, terrain: "flat", shadows: "none",
     antialias: false, apron: 700,
+      terrainSubdivision: 1,
   },
   T1: {
     tier: "T1", label: "Low", frameBudgetMs: 16.6, renderScale: 0.9,
     lodDistance: 520, cullDistance: 1500, terrain: "relief", shadows: "blob",
     antialias: false, apron: 900,
+      terrainSubdivision: 2,
   },
   T2: {
     tier: "T2", label: "Standard", frameBudgetMs: 16.6, renderScale: 1,
     lodDistance: 800, cullDistance: 2200, terrain: "relief", shadows: "blob",
     antialias: true, apron: 1200,
+      terrainSubdivision: 4,
   },
   T3: {
     tier: "T3", label: "High", frameBudgetMs: 16.6, renderScale: 1,
     lodDistance: 2400, cullDistance: 4000, terrain: "relief", shadows: "map",
     antialias: true, apron: 1800,
+      terrainSubdivision: 4,
   },
 };
 
@@ -123,6 +139,50 @@ export const TIER_ORDER: readonly Tier[] = ["T0", "T1", "T2", "T3"];
 
 /** Renderer strings that mean "there is no GPU here". Matched case-insensitively, as substrings. */
 const SOFTWARE_RENDERERS = ["swiftshader", "llvmpipe", "software", "softpipe", "mesa offscreen", "microsoft basic render"];
+
+/**
+ * Renderer strings that name a GPU built for 3D, rather than one that comes with a CPU.
+ *
+ * **This list is the only POSITIVE evidence about graphics that a browser will give us**, and until
+ * PT-07 it was used solely as a veto — `SOFTWARE_RENDERERS` to force T0, and a bare `!includes
+ * ("intel")` to block T3. Everything that actually chose a tier was `hardwareConcurrency` and
+ * `deviceMemory`, which describe the CPU and the RAM. A graphics setting was being decided by
+ * asking about everything except the graphics.
+ *
+ * What that cost, measured with `detectTier` itself: a GeForce GTX 1060 6 GB behind an i7-4790K —
+ * four cores, eight threads — could not reach T3, because T3 required twelve. It got **T2, the same
+ * tier as an integrated Intel UHD 620 in a sixteen-thread laptop**. On a Small map (1600 x 1000,
+ * diagonal ~1886) that is the difference between a `lodDistance` of 800, where most of the field is
+ * a flat imposter quad, and 2400, where nothing on the map is ever an imposter at all.
+ *
+ * **Deliberately a family list and not a model list.** A model list is a thing somebody has to
+ * maintain forever and that is wrong the week a card ships; these prefixes have named the same
+ * product lines for over a decade. They are matched case-insensitively against the whole string
+ * because vendors wrap them differently — Chrome reports ANGLE's paraphrase, Firefox reports the
+ * driver's own.
+ *
+ * **The known imprecision, stated rather than hidden.** `geforce` matches a GeForce MX150, which is
+ * a weak laptop part; `apple m` matches Apple Silicon, which is integrated by construction and
+ * still fast. Both are guesses on the optimistic side, and being wrong here is cheap **because the
+ * guess is not the answer**: this module's own header says the sequence is "guess from the renderer
+ * string, then correct by measurement", and `TierMonitor` drops a tier that misses its budget
+ * within `CORRECTION_WINDOW_MS`. What it will not do is raise one — so a guess that is too LOW is
+ * the one that is permanent, and that is the failure this list exists to stop.
+ */
+const DEDICATED_GPUS = [
+  "nvidia", "geforce", "quadro", "titan",   // covers GTX and RTX, which never appear without one of these
+  "radeon rx", "radeon pro", "firepro",     // NOT bare "radeon": Ryzen APUs report "Radeon Vega 8" and are integrated
+  "intel arc", "arc a",                     // Intel's discrete line, which the bare "intel" veto would otherwise catch
+  "apple m",                                // Apple Silicon: integrated, and comfortably past this bar
+];
+
+/** Does the renderer string name a GPU built for 3D? See `DEDICATED_GPUS`. */
+export function isDedicatedGpu(rendererString: string | null): boolean {
+  const renderer = (rendererString ?? "").toLowerCase();
+  if (!renderer) return false;
+  if (SOFTWARE_RENDERERS.some((sw) => renderer.includes(sw))) return false;
+  return DEDICATED_GPUS.some((gpu) => renderer.includes(gpu));
+}
 
 export interface DetectionInputs {
   /** `WEBGL_debug_renderer_info`'s UNMASKED_RENDERER_WEBGL, when the browser gives it up. */
@@ -145,8 +205,21 @@ export function detectTier(inputs: DetectionInputs): Tier {
   const cores = inputs.hardwareConcurrency || 2;
   const memory = inputs.deviceMemory ?? 4;
   if (cores <= 2 || memory <= 2) return "T0";
+
+  // **The GPU decides the graphics tier, when the browser names one** (PT-07). A dedicated card
+  // with a CPU able to feed it is the strongest evidence available, and it is checked FIRST so it
+  // is not overridden by a thread count that says nothing about rendering. Four is the floor
+  // because ADR-0006 puts the whole simulation on one thread and the frame on another — below that
+  // the CPU is the bottleneck whatever the card is, and T3 would be a promise the machine cannot
+  // keep.
+  if (isDedicatedGpu(inputs.rendererString) && cores >= 4) return "T3";
+
+  // No named GPU. Fall back to the CPU-shaped guess, which is what this function had always done —
+  // and it is deliberately still conservative, because an unnamed renderer really is an unknown
+  // machine. `deviceMemory` is Chromium-only and defaults to 4 elsewhere, so this branch is the one
+  // that reads differently across browsers; the GPU branch above does not, which is how PT-07's
+  // sharpest case stops mattering for anyone whose browser will name their card.
   if (cores >= 12 && memory >= 8 && renderer && !renderer.includes("intel")) return "T3";
-  if (cores >= 8 && memory >= 8) return "T2";
   if (cores >= 4) return "T2";
   return "T1";
 }
