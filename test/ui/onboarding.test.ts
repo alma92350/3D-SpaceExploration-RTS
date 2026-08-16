@@ -603,3 +603,59 @@ function restoreStorage(): void {
        the opening and is not in the snapshot at all, so an owner test that had been deleted made no
        difference. Fixed with a VISIBLE enemy Command Center beside the player's own base.
    ================================================================================================= */
+
+/* =================================================================================================
+   THE SIDEBAR CANNOT GROW OVER THE MAP (PT-08)
+
+   `#sidebar` is `position: fixed; bottom: 0`, so it grows UPWARD: every line added to it climbs
+   further over the battlefield. PT-03 named the twelve keys that had never been advertised, the
+   control list roughly doubled, and the panel reached far enough up the right-hand side to hide
+   buildings — reported by the same tester, one session later.
+
+   The shorter list is not the fix; the BOUND is. These assert the two properties that make a
+   future addition safe rather than the current length, which anybody may change.
+   ================================================================================================= */
+
+describe("the sidebar is bounded, whatever it comes to hold (PT-08)", () => {
+  const css = readFileSync(join(ROOT, "src", "style.css"), "utf8");
+  const html = readFileSync(join(ROOT, "index.html"), "utf8");
+
+  /** The body of the first rule whose selector is exactly `#sidebar`. */
+  const sidebarRule = (): string => {
+    const m = css.match(/#sidebar\s*\{([^}]*)\}/);
+    expect(m, "index.html still has a #sidebar but style.css no longer styles one").not.toBeNull();
+    return m![1]!;
+  };
+
+  it("caps its height and scrolls inside itself, rather than climbing over the battlefield", () => {
+    const rule = sidebarRule();
+    expect(rule, "#sidebar is anchored to the bottom with no height cap, so anything added to it "
+      + "grows upward over the map — which is exactly how the control list came to hide buildings")
+      .toMatch(/max-height\s*:/);
+    expect(rule, "#sidebar is capped but does not scroll, so the overflow is simply unreachable")
+      .toMatch(/overflow-y\s*:\s*auto/);
+  });
+
+  it("keeps the bottom anchor that makes the cap necessary, so this test stays about the real risk", () => {
+    // If the panel ever stops being bottom-anchored the growth direction changes and the reasoning
+    // above no longer applies. Better to fail here and be re-thought than to guard a stale shape.
+    expect(sidebarRule()).toMatch(/position\s*:\s*fixed/);
+    expect(sidebarRule()).toMatch(/bottom\s*:\s*0/);
+  });
+
+  it("ships the controls collapsed, because a reference list is read once and then in the way", () => {
+    const details = html.match(/<details[^>]*id="controls"[^>]*>/);
+    expect(details, "the control paragraphs are no longer inside a <details>").not.toBeNull();
+    expect(details![0], "the controls ship OPEN, which is the state that covered the map")
+      .not.toMatch(/\sopen[\s>]/);
+  });
+
+  it("still keeps every control paragraph in the markup, where the hint checks can read them", () => {
+    // The reason this is <details> and not a script-built list: both hint checks above parse this
+    // file. A list assembled at runtime would be a list they could no longer see, which would
+    // silently retire the guard PT-03 exists to provide.
+    const paragraphs = [...html.matchAll(/<p class="hint">/g)];
+    expect(paragraphs.length, "the control paragraphs left index.html, so the hint checks now pass "
+      + "by reading nothing").toBeGreaterThanOrEqual(3);
+  });
+});
