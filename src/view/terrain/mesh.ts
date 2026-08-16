@@ -23,14 +23,52 @@ const TERRAIN_COLOR: readonly (readonly [number, number, number])[] = [
   [0.30, 0.36, 0.42],   // high ground — lighter and bluer, reads as raised even head-on
 ];
 
-/** Subdivisions per terrain cell. 1 = one quad per 40-unit cell; 2 softens the ramps. */
-export const SUBDIVISION = 2;
+/**
+ * Subdivisions per terrain cell. 1 = one quad per 40-unit cell.
+ *
+ * **Four, and the number is measured rather than chosen** (PT-10). This mesh draws flat triangles
+ * between its samples; `elevation()` is a smooth ramped curve. They agree exactly AT the samples
+ * and nowhere else, so the drawn ground sits above the true curve in places and below it in
+ * others — and entities are placed at the true curve. A player walking the Helix ridge saw units
+ * sink into the hillside and pop back out, which is that disagreement, seen.
+ *
+ * Measured on Helix (a 55-cell high-ground ridge, 18 world units tall) as the worst gap in either
+ * direction over the whole map, against a smallest unit radius of 6:
+ *
+ *   SUB   step   verts    worst BURIED   worst FLOATING
+ *     2     20    4 131          3.909            7.776     <- shipped through Phase 7
+ *     3   13.3    9 196          1.760            3.029
+ *     4     10   16 261          0.867            1.186     <- here
+ *     6    6.7   36 391          1.132            2.232     <- WORSE than 4, at 2.2x the vertices
+ *     8      5   64 521          0.458            0.936
+ *
+ * **The error is not monotonic in the subdivision count**, which is the part worth writing down:
+ * 6 is worse than 4 despite 2.2x the geometry, because only divisors that land the sample lattice
+ * back on the elevation cell's own points inherit its exactness there. Powers of two do; 3 and 6 do
+ * not. Anyone "improving" this by nudging it upward can make it worse, and the table above is how
+ * to tell.
+ *
+ * 8 halves the residual again for four times the vertices. Not taken: the mesh is built once per
+ * world load and uploaded once, but 64k vertices is real memory on the T1 machines this tier ladder
+ * exists to serve, and 0.87 of a 6-unit radius is under a sixth of the smallest unit. If a player
+ * still reports sinking, this is the dial and that is the cost.
+ */
+export const SUBDIVISION = 4;
 
 let nextVersion = 1;
 
 export interface TerrainBuildOptions {
   /** `flat` is the T0 variant: same colours, zero relief, minimum vertices. */
   readonly relief: boolean;
+  /**
+   * Samples per terrain cell. Omitted means `SUBDIVISION` — see that constant for the measurement.
+   *
+   * A TIER property (PT-10), because this is the dial that trades vertices for how closely the
+   * drawn ground matches where entities actually stand, and that is exactly the trade the tier
+   * ladder exists to make. A flat tier ignores it: with `relief: false` every height is 0 and more
+   * samples buy nothing but memory.
+   */
+  readonly subdivision?: number;
   /** How far the dark border extends past the map edge, in world units. 0 disables it. */
   readonly apron: number;
 }
@@ -54,7 +92,7 @@ const APRON_COLOR: readonly [number, number, number] = [0.055, 0.062, 0.078];
  * unless the tier actually changes the `relief` flag.
  */
 export function buildTerrainMesh(field: ElevationField, opts: TerrainBuildOptions): TerrainMesh {
-  const step = field.cell / SUBDIVISION;
+  const step = field.cell / (opts.subdivision ?? SUBDIVISION);
   const cols = Math.ceil(field.width / step);
   const rows = Math.ceil(field.height / step);
   const vertsX = cols + 1;
@@ -173,8 +211,8 @@ function codeAtWorld(field: ElevationField, x: number, y: number): number {
  * That is one draw call and a rounding error next to 200 instanced units, which is the whole
  * argument for merging it (ADR-0006).
  */
-export function expectedTriangles(field: ElevationField, apron = 0): number {
-  const step = field.cell / SUBDIVISION;
+export function expectedTriangles(field: ElevationField, apron = 0, subdivision = SUBDIVISION): number {
+  const step = field.cell / subdivision;
   const grid = Math.ceil(field.width / step) * Math.ceil(field.height / step) * 2;
   return grid + (apron > 0 ? 8 : 0);
 }

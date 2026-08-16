@@ -588,6 +588,10 @@ export class PerfScene {
     this.field = elevationFieldFrom(state.map.terrain, state.map.width, state.map.height);
     this.terrain = buildTerrainMesh(this.field, {
       relief: TIERS[spec.tier].terrain === "relief", apron: TIERS[spec.tier].apron,
+      // The tier's own subdivision, so this scene draws the terrain the app draws (PT-10). It read
+      // the tier for relief and apron and not for this, which would have measured a mesh no player
+      // gets. Built once here, not per frame, which is why the count does not move frame times.
+      subdivision: TIERS[spec.tier].terrainSubdivision,
     });
     this.composer = new SceneComposer(this.field);
     this.rig = new CameraRig({ mapWidth: state.map.width, mapHeight: state.map.height }, this.field);

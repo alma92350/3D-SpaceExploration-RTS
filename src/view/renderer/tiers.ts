@@ -76,6 +76,18 @@ export interface TierConfig {
   /** Terrain: `flat` paints the terrain types on one plane; `relief` builds the heightfield. */
   readonly terrain: "flat" | "relief";
   readonly shadows: "none" | "blob" | "map";
+  /**
+   * Terrain samples per elevation cell (PT-10).
+   *
+   * The drawn ground is flat triangles between samples and entities stand on the smooth curve
+   * those samples come from, so this is how closely the two agree — at 2 the worst gap on Helix
+   * was 3.9 units of burial against a smallest unit radius of 6, which a player reported as units
+   * sinking into the ridge and popping out. See `SUBDIVISION` in `terrain/mesh.ts` for the table,
+   * including why 6 is worse than 4.
+   *
+   * 1 on a flat tier because with no relief every height is 0 and more samples buy only memory.
+   */
+  readonly terrainSubdivision: number;
   readonly antialias: boolean;
   /**
    * How far the dark apron extends past the map edge, in world units.
@@ -101,21 +113,25 @@ export const TIERS: Readonly<Record<Tier, TierConfig>> = {
     tier: "T0", label: "Compatibility (no GPU)", frameBudgetMs: 33, renderScale: 0.75,
     lodDistance: 340, cullDistance: 1100, terrain: "flat", shadows: "none",
     antialias: false, apron: 700,
+      terrainSubdivision: 1,
   },
   T1: {
     tier: "T1", label: "Low", frameBudgetMs: 16.6, renderScale: 0.9,
     lodDistance: 520, cullDistance: 1500, terrain: "relief", shadows: "blob",
     antialias: false, apron: 900,
+      terrainSubdivision: 2,
   },
   T2: {
     tier: "T2", label: "Standard", frameBudgetMs: 16.6, renderScale: 1,
     lodDistance: 800, cullDistance: 2200, terrain: "relief", shadows: "blob",
     antialias: true, apron: 1200,
+      terrainSubdivision: 4,
   },
   T3: {
     tier: "T3", label: "High", frameBudgetMs: 16.6, renderScale: 1,
     lodDistance: 2400, cullDistance: 4000, terrain: "relief", shadows: "map",
     antialias: true, apron: 1800,
+      terrainSubdivision: 4,
   },
 };
 
